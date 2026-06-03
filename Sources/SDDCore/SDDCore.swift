@@ -74,12 +74,20 @@ public final class SDDCore {
     private let workspace: SDDWorkspaceConfiguration
     private let artifactStore: OpenSpecArtifactStore
     private let telemetrySink: LocalJSONLTelemetrySink
+    private let metricsRecorder: any SDDMetricsRecorder
+    private let traceRecorder: any SDDTraceRecorder
     private let workflowEngine: WorkflowEngine
 
-    public init(workspace: SDDWorkspaceConfiguration) {
+    public init(
+        workspace: SDDWorkspaceConfiguration,
+        metricsRecorder: any SDDMetricsRecorder = NoopSDDMetricsRecorder(),
+        traceRecorder: any SDDTraceRecorder = NoopSDDTraceRecorder()
+    ) {
         self.workspace = workspace
         self.artifactStore = OpenSpecArtifactStore(workspace: workspace)
         self.telemetrySink = LocalJSONLTelemetrySink(path: workspace.telemetryPath)
+        self.metricsRecorder = metricsRecorder
+        self.traceRecorder = traceRecorder
         self.workflowEngine = WorkflowEngine()
     }
 
@@ -628,5 +636,39 @@ public final class SDDCore {
             properties: properties
         )
         try telemetrySink.emit(event)
+        emitMetricsAndTrace(for: event)
+    }
+
+    private func emitMetricsAndTrace(for event: TelemetryEvent) {
+        let attributes = telemetryAttributes(for: event)
+        metricsRecorder.incrementCounter(name: "sdd.events.emitted", by: 1, attributes: attributes)
+        metricsRecorder.incrementCounter(name: "sdd.workflow.status.\(event.status.rawValue)", by: 1, attributes: attributes)
+        traceRecorder.recordSpan(
+            SDDTraceSpan(
+                name: event.eventName,
+                runId: event.runId,
+                featureSlug: event.featureSlug,
+                phase: event.phase,
+                status: event.status,
+                attributes: attributes.merging(event.properties) { current, _ in current }
+            )
+        )
+    }
+
+    private func telemetryAttributes(for event: TelemetryEvent) -> [String: String] {
+        var attributes = [
+            "event_name": event.eventName,
+            "feature_slug": event.featureSlug,
+            "phase": event.phase.rawValue,
+            "status": event.status.rawValue,
+            "interface": event.interface.rawValue,
+            "repo_id": workspace.repoId,
+            "workspace_id": workspace.workspaceId,
+            "stack": workspace.stack
+        ]
+        if let adapter = event.adapter {
+            attributes["adapter"] = adapter.rawValue
+        }
+        return attributes
     }
 }

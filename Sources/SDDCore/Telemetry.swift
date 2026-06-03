@@ -5,6 +5,51 @@ public protocol TelemetrySink {
     func emit(_ event: TelemetryEvent) throws
 }
 
+public protocol SDDMetricsRecorder {
+    func incrementCounter(name: String, by value: Int, attributes: [String: String])
+}
+
+public protocol SDDTraceRecorder {
+    func recordSpan(_ span: SDDTraceSpan)
+}
+
+public struct SDDTraceSpan: Equatable {
+    public var name: String
+    public var runId: String
+    public var featureSlug: String
+    public var phase: WorkflowPhase
+    public var status: WorkflowStatus
+    public var attributes: [String: String]
+
+    public init(
+        name: String,
+        runId: String,
+        featureSlug: String,
+        phase: WorkflowPhase,
+        status: WorkflowStatus,
+        attributes: [String: String]
+    ) {
+        self.name = name
+        self.runId = runId
+        self.featureSlug = featureSlug
+        self.phase = phase
+        self.status = status
+        self.attributes = attributes
+    }
+}
+
+public struct NoopSDDMetricsRecorder: SDDMetricsRecorder {
+    public init() {}
+
+    public func incrementCounter(name: String, by value: Int, attributes: [String: String]) {}
+}
+
+public struct NoopSDDTraceRecorder: SDDTraceRecorder {
+    public init() {}
+
+    public func recordSpan(_ span: SDDTraceSpan) {}
+}
+
 public final class LocalJSONLTelemetrySink: TelemetrySink {
     private let path: URL
     private let fileManager: FileManager

@@ -487,6 +487,44 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(events.last?.status, .approvalRequired)
     }
 
+    func testTelemetryEventsFlowThroughMetricsAndTraceAdapters() throws {
+        let workspace = try temporaryWorkspace()
+        let metricsRecorder = RecordingMetricsRecorder()
+        let traceRecorder = RecordingTraceRecorder()
+        let core = SDDCore(
+            workspace: workspace,
+            metricsRecorder: metricsRecorder,
+            traceRecorder: traceRecorder
+        )
+
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        XCTAssertEqual(started.status, .actionRequired)
+        XCTAssertEqual(metricsRecorder.counters.count, 4)
+        XCTAssertEqual(metricsRecorder.counters.map(\.name), [
+            "sdd.events.emitted",
+            "sdd.workflow.status.action_required",
+            "sdd.events.emitted",
+            "sdd.workflow.status.action_required"
+        ])
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["event_name"], "sdd.run.started")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["feature_slug"], "checkout-flow")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["adapter"], "codex")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["repo_id"], "test/repo")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["workspace_id"], "test-workspace")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["stack"], "swift")
+
+        XCTAssertEqual(traceRecorder.spans.map(\.name), [
+            "sdd.run.started",
+            "sdd.transition.evaluated"
+        ])
+        XCTAssertEqual(traceRecorder.spans.first?.runId, started.runId)
+        XCTAssertEqual(traceRecorder.spans.first?.featureSlug, "checkout-flow")
+        XCTAssertEqual(traceRecorder.spans.first?.phase, .plan)
+        XCTAssertEqual(traceRecorder.spans.first?.status, .actionRequired)
+        XCTAssertEqual(traceRecorder.spans.first?.attributes["interface"], "cli")
+    }
+
     func testSubmitResultPersistsAndEmitsTokenAttribution() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)
@@ -700,5 +738,27 @@ final class SDDCoreTests: XCTestCase {
             path: "openspec/changes/checkout-flow/tasks.md",
             content: "# Tasks\n\n- [x] Define payment adapter.\n"
         )
+    }
+}
+
+private final class RecordingMetricsRecorder: SDDMetricsRecorder {
+    struct Counter: Equatable {
+        var name: String
+        var value: Int
+        var attributes: [String: String]
+    }
+
+    private(set) var counters: [Counter] = []
+
+    func incrementCounter(name: String, by value: Int, attributes: [String: String]) {
+        counters.append(Counter(name: name, value: value, attributes: attributes))
+    }
+}
+
+private final class RecordingTraceRecorder: SDDTraceRecorder {
+    private(set) var spans: [SDDTraceSpan] = []
+
+    func recordSpan(_ span: SDDTraceSpan) {
+        spans.append(span)
     }
 }
