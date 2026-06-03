@@ -5,6 +5,15 @@ public final class OpenSpecArtifactStore {
     private let workspace: SDDWorkspaceConfiguration
     private let fileManager: FileManager
 
+    private let artifactDefinitions: [(type: String, file: String, required: Bool, description: String)] = [
+        ("openspec_proposal", "proposal.md", true, "Product intent and feature proposal."),
+        ("openspec_design", "design.md", true, "Decision-closed design and implementation plan."),
+        ("openspec_tasks", "tasks.md", true, "Implementation checklist."),
+        ("openspec_review", "review.md", true, "Review verdict and findings."),
+        ("openspec_decisions", "decisions.md", true, "Closed decisions attached to the change."),
+        ("openspec_run_summary", "run-summary.json", true, "Compact run summary for audit and telemetry correlation.")
+    ]
+
     public init(workspace: SDDWorkspaceConfiguration, fileManager: FileManager = .default) {
         self.workspace = workspace
         self.fileManager = fileManager
@@ -31,14 +40,74 @@ public final class OpenSpecArtifactStore {
     }
 
     public func artifactRefs(featureSlug: String) -> [ArtifactRef] {
-        [
-            ArtifactRef(type: "openspec_proposal", path: relativePath(featureSlug: featureSlug, file: "proposal.md")),
-            ArtifactRef(type: "openspec_design", path: relativePath(featureSlug: featureSlug, file: "design.md")),
-            ArtifactRef(type: "openspec_tasks", path: relativePath(featureSlug: featureSlug, file: "tasks.md")),
-            ArtifactRef(type: "openspec_review", path: relativePath(featureSlug: featureSlug, file: "review.md")),
-            ArtifactRef(type: "openspec_decisions", path: relativePath(featureSlug: featureSlug, file: "decisions.md")),
-            ArtifactRef(type: "openspec_run_summary", path: relativePath(featureSlug: featureSlug, file: "run-summary.json"))
-        ]
+        artifactDefinitions.map { definition in
+            ArtifactRef(type: definition.type, path: relativePath(featureSlug: featureSlug, file: definition.file))
+        }
+    }
+
+    public func artifactDescriptors(featureSlug: String) -> [ArtifactDescriptor] {
+        artifactDefinitions.map { definition in
+            ArtifactDescriptor(
+                ref: ArtifactRef(type: definition.type, path: relativePath(featureSlug: featureSlug, file: definition.file)),
+                required: definition.required,
+                description: definition.description
+            )
+        }
+    }
+
+    public func readArtifact(featureSlug: String, type: String) throws -> ArtifactContent {
+        guard let descriptor = artifactDescriptors(featureSlug: featureSlug).first(where: { $0.ref.type == type }) else {
+            throw SDDCoreError.artifactNotFound(type)
+        }
+
+        let url = workspace.root.appendingPathComponent(descriptor.ref.path)
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw SDDCoreError.artifactNotFound(descriptor.ref.path)
+        }
+
+        let data = try Data(contentsOf: url)
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw SDDCoreError.artifactReadFailed(descriptor.ref.path)
+        }
+
+        return ArtifactContent(ref: descriptor.ref, content: content, byteCount: data.count)
+    }
+
+    public func validateArtifacts(featureSlug: String) -> ArtifactValidationReport {
+        let statuses = artifactDescriptors(featureSlug: featureSlug).map { descriptor in
+            artifactStatus(for: descriptor)
+        }
+        let issues = statuses.compactMap { status -> ArtifactValidationIssue? in
+            switch status.state {
+            case .missing:
+                return ArtifactValidationIssue(
+                    ref: status.ref,
+                    reason: .missing,
+                    message: "Required OpenSpec artifact is missing."
+                )
+            case .empty:
+                return ArtifactValidationIssue(
+                    ref: status.ref,
+                    reason: .empty,
+                    message: "Required OpenSpec artifact is empty."
+                )
+            case .placeholder:
+                return ArtifactValidationIssue(
+                    ref: status.ref,
+                    reason: .placeholder,
+                    message: "Required OpenSpec artifact still contains scaffold placeholder content."
+                )
+            case .ready:
+                return nil
+            }
+        }
+
+        return ArtifactValidationReport(
+            featureSlug: featureSlug,
+            valid: issues.isEmpty,
+            artifacts: statuses,
+            issues: issues
+        )
     }
 
     public func writeRunSummary(_ summary: RunSummary) throws {
@@ -83,5 +152,37 @@ public final class OpenSpecArtifactStore {
 
     private func relativePath(featureSlug: String, file: String) -> String {
         "openspec/changes/\(featureSlug)/\(file)"
+    }
+
+    private func artifactStatus(for descriptor: ArtifactDescriptor) -> ArtifactStatus {
+        let url = workspace.root.appendingPathComponent(descriptor.ref.path)
+        guard fileManager.fileExists(atPath: url.path) else {
+            return ArtifactStatus(ref: descriptor.ref, required: descriptor.required, state: .missing, byteCount: nil)
+        }
+
+        guard let data = try? Data(contentsOf: url) else {
+            return ArtifactStatus(ref: descriptor.ref, required: descriptor.required, state: .missing, byteCount: nil)
+        }
+
+        guard let content = String(data: data, encoding: .utf8) else {
+            return ArtifactStatus(ref: descriptor.ref, required: descriptor.required, state: .empty, byteCount: data.count)
+        }
+
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return ArtifactStatus(ref: descriptor.ref, required: descriptor.required, state: .empty, byteCount: data.count)
+        }
+
+        if containsScaffoldPlaceholder(trimmed) {
+            return ArtifactStatus(ref: descriptor.ref, required: descriptor.required, state: .placeholder, byteCount: data.count)
+        }
+
+        return ArtifactStatus(ref: descriptor.ref, required: descriptor.required, state: .ready, byteCount: data.count)
+    }
+
+    private func containsScaffoldPlaceholder(_ content: String) -> Bool {
+        content.contains("_To be completed") ||
+            content.contains("- [ ] To be completed") ||
+            content.contains("_No closed decisions recorded yet._")
     }
 }

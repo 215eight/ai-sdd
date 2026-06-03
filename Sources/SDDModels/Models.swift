@@ -92,6 +92,83 @@ public struct ArtifactRef: Codable, Equatable {
     }
 }
 
+public enum ArtifactState: String, Codable, CaseIterable {
+    case missing
+    case empty
+    case placeholder
+    case ready
+}
+
+public enum ArtifactValidationIssueReason: String, Codable, CaseIterable {
+    case missing
+    case empty
+    case placeholder
+}
+
+public struct ArtifactDescriptor: Codable, Equatable {
+    public var ref: ArtifactRef
+    public var required: Bool
+    public var description: String
+
+    public init(ref: ArtifactRef, required: Bool, description: String) {
+        self.ref = ref
+        self.required = required
+        self.description = description
+    }
+}
+
+public struct ArtifactContent: Codable, Equatable {
+    public var ref: ArtifactRef
+    public var content: String
+    public var byteCount: Int
+
+    public init(ref: ArtifactRef, content: String, byteCount: Int) {
+        self.ref = ref
+        self.content = content
+        self.byteCount = byteCount
+    }
+}
+
+public struct ArtifactStatus: Codable, Equatable {
+    public var ref: ArtifactRef
+    public var required: Bool
+    public var state: ArtifactState
+    public var byteCount: Int?
+
+    public init(ref: ArtifactRef, required: Bool, state: ArtifactState, byteCount: Int?) {
+        self.ref = ref
+        self.required = required
+        self.state = state
+        self.byteCount = byteCount
+    }
+}
+
+public struct ArtifactValidationIssue: Codable, Equatable {
+    public var ref: ArtifactRef
+    public var reason: ArtifactValidationIssueReason
+    public var message: String
+
+    public init(ref: ArtifactRef, reason: ArtifactValidationIssueReason, message: String) {
+        self.ref = ref
+        self.reason = reason
+        self.message = message
+    }
+}
+
+public struct ArtifactValidationReport: Codable, Equatable {
+    public var featureSlug: String
+    public var valid: Bool
+    public var artifacts: [ArtifactStatus]
+    public var issues: [ArtifactValidationIssue]
+
+    public init(featureSlug: String, valid: Bool, artifacts: [ArtifactStatus], issues: [ArtifactValidationIssue]) {
+        self.featureSlug = featureSlug
+        self.valid = valid
+        self.artifacts = artifacts
+        self.issues = issues
+    }
+}
+
 public struct LockInfo: Codable, Equatable {
     public var owner: String
     public var acquiredAt: Date

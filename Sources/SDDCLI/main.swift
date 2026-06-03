@@ -15,7 +15,10 @@ struct SDDCommand: ParsableCommand {
             SubmitResultCommand.self,
             AnswerPromptCommand.self,
             ApproveGateCommand.self,
-            StatusCommand.self
+            StatusCommand.self,
+            ListArtifactsCommand.self,
+            GetArtifactCommand.self,
+            ValidateArtifactsCommand.self
         ]
     )
 }
@@ -151,6 +154,48 @@ struct StatusCommand: ParsableCommand {
 
     func run() throws {
         try emit(try common.core().status(runId: runId))
+    }
+}
+
+struct ListArtifactsCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "list-artifacts")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Feature slug.")
+    var feature: String
+
+    func run() throws {
+        try emit(try common.core().listArtifacts(featureSlug: feature))
+    }
+}
+
+struct GetArtifactCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "get-artifact")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Feature slug.")
+    var feature: String
+
+    @Option(help: "Artifact type, for example openspec_design.")
+    var type: String
+
+    func run() throws {
+        try emit(try common.core().getArtifact(featureSlug: feature, type: type))
+    }
+}
+
+struct ValidateArtifactsCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "validate-artifacts")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Feature slug.")
+    var feature: String
+
+    func run() throws {
+        try emit(try common.core().validateArtifacts(featureSlug: feature))
     }
 }
 

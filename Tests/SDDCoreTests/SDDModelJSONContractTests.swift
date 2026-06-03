@@ -169,6 +169,46 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(decoded, capabilities)
     }
 
+    func testArtifactValidationReportJSONContract() throws {
+        let report = ArtifactValidationReport(
+            featureSlug: "checkout-flow",
+            valid: false,
+            artifacts: [
+                ArtifactStatus(
+                    ref: ArtifactRef(type: "openspec_design", path: "openspec/changes/checkout-flow/design.md"),
+                    required: true,
+                    state: .placeholder,
+                    byteCount: 64
+                )
+            ],
+            issues: [
+                ArtifactValidationIssue(
+                    ref: ArtifactRef(type: "openspec_design", path: "openspec/changes/checkout-flow/design.md"),
+                    reason: .placeholder,
+                    message: "Required OpenSpec artifact still contains scaffold placeholder content."
+                )
+            ]
+        )
+        let object = try jsonObject(report)
+
+        XCTAssertEqual(object["feature_slug"] as? String, "checkout-flow")
+        XCTAssertEqual(object["valid"] as? Bool, false)
+        XCTAssertNotNil(object["artifacts"])
+        XCTAssertNotNil(object["issues"])
+
+        let artifacts = try XCTUnwrap(object["artifacts"] as? [[String: Any]])
+        XCTAssertEqual(artifacts.first?["required"] as? Bool, true)
+        XCTAssertEqual(artifacts.first?["state"] as? String, "placeholder")
+        XCTAssertEqual(artifacts.first?["byte_count"] as? Int, 64)
+
+        let issues = try XCTUnwrap(object["issues"] as? [[String: Any]])
+        XCTAssertEqual(issues.first?["reason"] as? String, "placeholder")
+        XCTAssertEqual(issues.first?["message"] as? String, "Required OpenSpec artifact still contains scaffold placeholder content.")
+
+        let decoded = try decode(ArtifactValidationReport.self, from: report)
+        XCTAssertEqual(decoded, report)
+    }
+
     private func sampleRunSummary() -> RunSummary {
         RunSummary(
             runId: "run_contract",

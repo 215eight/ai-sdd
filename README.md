@@ -32,3 +32,13 @@ Local MVP telemetry is written to:
 swift test
 swift run sdd capabilities --json
 ```
+
+Useful MVP commands:
+
+```bash
+swift run sdd start --feature checkout-flow --json
+swift run sdd list-artifacts --feature checkout-flow --json
+swift run sdd get-artifact --feature checkout-flow --type openspec_design --json
+swift run sdd validate-artifacts --feature checkout-flow --json
+swift run sdd next --run-id <run_id> --json
+```

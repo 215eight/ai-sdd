@@ -6,6 +6,8 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
     case invalidFeatureSlug(String)
     case invalidTransition(String)
     case adapterResultFailed(String?)
+    case artifactNotFound(String)
+    case artifactReadFailed(String)
     case openspecWriteFailed(String)
     case telemetryWriteFailed(String)
 
@@ -19,6 +21,10 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
             return message
         case .adapterResultFailed(let message):
             return message ?? "Execution adapter failed."
+        case .artifactNotFound(let artifact):
+            return "Artifact not found: \(artifact)"
+        case .artifactReadFailed(let artifact):
+            return "Artifact could not be read as UTF-8 text: \(artifact)"
         case .openspecWriteFailed(let message):
             return "OpenSpec write failed: \(message)"
         case .telemetryWriteFailed(let message):
@@ -74,7 +80,10 @@ public final class SDDCore {
                 "submit-result",
                 "answer-prompt",
                 "approve-gate",
-                "status"
+                "status",
+                "list-artifacts",
+                "get-artifact",
+                "validate-artifacts"
             ],
             supportedOperations: [
                 "start_run",
@@ -82,7 +91,10 @@ public final class SDDCore {
                 "submit_result",
                 "answer_prompt",
                 "approve_gate",
-                "get_status"
+                "get_status",
+                "list_artifacts",
+                "get_artifact",
+                "validate_artifacts"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -217,6 +229,21 @@ public final class SDDCore {
 
     public func status(runId: String) throws -> RunSummary {
         try artifactStore.findRunSummary(runId: runId)
+    }
+
+    public func listArtifacts(featureSlug: String) throws -> [ArtifactDescriptor] {
+        try validateFeatureSlug(featureSlug)
+        return artifactStore.artifactDescriptors(featureSlug: featureSlug)
+    }
+
+    public func getArtifact(featureSlug: String, type: String) throws -> ArtifactContent {
+        try validateFeatureSlug(featureSlug)
+        return try artifactStore.readArtifact(featureSlug: featureSlug, type: type)
+    }
+
+    public func validateArtifacts(featureSlug: String) throws -> ArtifactValidationReport {
+        try validateFeatureSlug(featureSlug)
+        return artifactStore.validateArtifacts(featureSlug: featureSlug)
     }
 
     private func validateFeatureSlug(_ featureSlug: String) throws {
