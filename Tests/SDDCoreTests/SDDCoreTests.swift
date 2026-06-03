@@ -487,6 +487,58 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(events.last?.status, .approvalRequired)
     }
 
+    func testSubmitResultPersistsAndEmitsTokenAttribution() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .claudeCode, owner: "tester")
+        try writePlanArtifacts(workspace: workspace)
+
+        let tokenUsage = TokenAttribution(
+            provider: "anthropic",
+            model: "claude-sonnet-4",
+            inputTokens: 12_345,
+            outputTokens: 678,
+            cachedTokens: 90,
+            reasoningTokens: nil,
+            confidence: .sessionScoped
+        )
+        _ = try core.submitResult(
+            runId: started.runId,
+            phase: .plan,
+            result: ExecutionAdapterResult(
+                adapter: .claudeCode,
+                status: .ok,
+                artifactRefs: [],
+                logRef: "logs/\(started.runId).log",
+                telemetryRefs: [
+                    TelemetryRef(eventId: "evt_adapter", traceId: "trace_adapter")
+                ],
+                tokenUsage: tokenUsage,
+                error: nil
+            )
+        )
+
+        let summary = try core.getRunSummary(runId: started.runId)
+        XCTAssertEqual(summary.tokenUsageSummary, [tokenUsage])
+        XCTAssertEqual(summary.telemetryRefs, [
+            TelemetryRef(eventId: "evt_adapter", traceId: "trace_adapter")
+        ])
+
+        let events = try core.listRunEvents(runId: started.runId)
+        let submitted = try XCTUnwrap(events.first(where: { $0.eventName == "sdd.result.submitted" }))
+        XCTAssertEqual(submitted.properties["phase"], "plan")
+        XCTAssertEqual(submitted.properties["result_adapter"], "claude-code")
+        XCTAssertEqual(submitted.properties["log_ref"], "logs/\(started.runId).log")
+        XCTAssertEqual(submitted.properties["telemetry_ref_count"], "1")
+        XCTAssertEqual(submitted.properties["token_provider"], "anthropic")
+        XCTAssertEqual(submitted.properties["token_model"], "claude-sonnet-4")
+        XCTAssertEqual(submitted.properties["input_tokens"], "12345")
+        XCTAssertEqual(submitted.properties["output_tokens"], "678")
+        XCTAssertEqual(submitted.properties["cached_tokens"], "90")
+        XCTAssertNil(submitted.properties["reasoning_tokens"])
+        XCTAssertEqual(submitted.properties["token_confidence"], "session_scoped")
+    }
+
     func testPrepareExecutionUsesActiveAdapterAndNextAction() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)

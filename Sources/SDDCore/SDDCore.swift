@@ -320,7 +320,7 @@ public final class SDDCore {
         }
 
         try artifactStore.writeRunSummary(summary)
-        try emit(eventName: "sdd.result.submitted", summary: summary, properties: ["phase": phase.rawValue])
+        try emit(eventName: "sdd.result.submitted", summary: summary, properties: resultSubmittedProperties(phase: phase, result: result))
         return try nextAction(runId: runId)
     }
 
@@ -575,6 +575,43 @@ public final class SDDCore {
             .map { "\($0.ref.type)=\($0.reason.rawValue)" }
             .joined(separator: ", ")
         return "Required artifacts are not ready for \(report.featureSlug): \(issueSummary)"
+    }
+
+    private func resultSubmittedProperties(phase: WorkflowPhase, result: ExecutionAdapterResult) -> [String: String] {
+        var properties = [
+            "phase": phase.rawValue,
+            "result_adapter": result.adapter.rawValue
+        ]
+
+        if let logRef = result.logRef {
+            properties["log_ref"] = logRef
+        }
+        if !result.telemetryRefs.isEmpty {
+            properties["telemetry_ref_count"] = String(result.telemetryRefs.count)
+        }
+        if let tokenUsage = result.tokenUsage {
+            properties["token_confidence"] = tokenUsage.confidence.rawValue
+            if let provider = tokenUsage.provider {
+                properties["token_provider"] = provider
+            }
+            if let model = tokenUsage.model {
+                properties["token_model"] = model
+            }
+            if let inputTokens = tokenUsage.inputTokens {
+                properties["input_tokens"] = String(inputTokens)
+            }
+            if let outputTokens = tokenUsage.outputTokens {
+                properties["output_tokens"] = String(outputTokens)
+            }
+            if let cachedTokens = tokenUsage.cachedTokens {
+                properties["cached_tokens"] = String(cachedTokens)
+            }
+            if let reasoningTokens = tokenUsage.reasoningTokens {
+                properties["reasoning_tokens"] = String(reasoningTokens)
+            }
+        }
+
+        return properties
     }
 
     private func emit(eventName: String, summary: RunSummary, properties: [String: String]) throws {
