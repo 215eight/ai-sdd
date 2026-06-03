@@ -13,6 +13,7 @@ public struct IntakeNormalizer {
         let featureSlug = slugify(document.title)
         let body = document.body.trimmingCharacters(in: .whitespacesAndNewlines)
         let description = firstParagraph(from: body)
+        let acceptanceSurface = document.acceptanceSurface ?? inferAcceptanceSurface(from: body)
         let alternativesRequired = body.localizedCaseInsensitiveContains("alternative") ||
             body.localizedCaseInsensitiveContains("options considered") ||
             body.localizedCaseInsensitiveContains("open question")
@@ -43,7 +44,7 @@ public struct IntakeNormalizer {
                     featureSlug: featureSlug,
                     title: document.title,
                     body: body,
-                    acceptanceSurface: .none,
+                    acceptanceSurface: acceptanceSurface,
                     alternativesRequired: alternativesRequired
                 )
             ]
@@ -75,14 +76,27 @@ public struct IntakeNormalizer {
         guard let title = metadata["title"], !title.isEmpty else {
             throw SDDCoreError.intakeParseFailed("Intake front matter requires title.")
         }
+        let acceptanceSurface = try parseAcceptanceSurface(metadata["acceptance_surface"])
 
         return IntakeDocument(
             intakeType: intakeType,
             title: title,
             sourceId: emptyToNil(metadata["source_id"]),
             owner: emptyToNil(metadata["owner"]),
+            acceptanceSurface: acceptanceSurface,
             body: body
         )
+    }
+
+    private func parseAcceptanceSurface(_ rawValue: String?) throws -> AcceptanceSurface? {
+        guard let rawValue = emptyToNil(rawValue) else {
+            return nil
+        }
+        guard let acceptanceSurface = AcceptanceSurface(rawValue: rawValue) else {
+            let supported = AcceptanceSurface.allCases.map(\.rawValue).joined(separator: ", ")
+            throw SDDCoreError.intakeParseFailed("Unsupported acceptance_surface `\(rawValue)`. Supported values: \(supported).")
+        }
+        return acceptanceSurface
     }
 
     private func parseFrontMatter(_ frontMatter: String) throws -> [String: String] {
@@ -129,6 +143,29 @@ public struct IntakeNormalizer {
             .filter { !$0.isEmpty && !$0.hasPrefix("#") }
 
         return lines.first ?? body
+    }
+
+    private func inferAcceptanceSurface(from body: String) -> AcceptanceSurface {
+        let lowercased = body.lowercased()
+
+        if containsAny(lowercased, ["ui", "ux", "screen", "page", "form", "user workflow", "click", "navigation"]) {
+            return .uiUserWorkflow
+        }
+        if containsAny(lowercased, ["public api", "api endpoint", "rest api", "graphql", "sdk", "developer experience"]) {
+            return .publicAPI
+        }
+        if containsAny(lowercased, ["cli", "command line", "terminal command", "subcommand"]) {
+            return .cliWorkflow
+        }
+        if containsAny(lowercased, ["operator", "runbook", "on-call", "operational", "incident response"]) {
+            return .operatorWorkflow
+        }
+
+        return .none
+    }
+
+    private func containsAny(_ text: String, _ needles: [String]) -> Bool {
+        needles.contains { text.contains($0) }
     }
 
     private func slugify(_ title: String) -> String {

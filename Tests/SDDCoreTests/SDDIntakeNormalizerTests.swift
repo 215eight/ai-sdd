@@ -76,6 +76,55 @@ final class SDDIntakeNormalizerTests: XCTestCase {
         XCTAssertEqual(normalized.sliceReadyRequirements.first?.alternativesRequired, true)
     }
 
+    func testNormalizeUsesExplicitAcceptanceSurfaceFrontMatter() throws {
+        let core = SDDCore(workspace: SDDWorkspaceConfiguration(root: temporaryWorkspace(), stack: "swift"))
+
+        let normalized = try core.normalizeIntake(markdown: """
+        ---
+        intake_type: prd
+        title: Import Customers CLI
+        acceptance_surface: cli_workflow
+        ---
+        Operators import customers with a terminal command.
+        """)
+
+        XCTAssertEqual(normalized.sliceReadyRequirements.first?.acceptanceSurface, .cliWorkflow)
+    }
+
+    func testNormalizeInfersAcceptanceSurfaceWhenFrontMatterIsOmitted() throws {
+        let core = SDDCore(workspace: SDDWorkspaceConfiguration(root: temporaryWorkspace(), stack: "swift"))
+
+        let normalized = try core.normalizeIntake(markdown: """
+        ---
+        intake_type: prd
+        title: Billing API
+        ---
+        Expose a public API endpoint for billing account lookup.
+        """)
+
+        XCTAssertEqual(normalized.sliceReadyRequirements.first?.acceptanceSurface, .publicAPI)
+    }
+
+    func testNormalizeRejectsUnsupportedAcceptanceSurface() throws {
+        let core = SDDCore(workspace: SDDWorkspaceConfiguration(root: temporaryWorkspace()))
+
+        XCTAssertThrowsError(
+            try core.normalizeIntake(markdown: """
+            ---
+            intake_type: prd
+            title: Checkout Flow
+            acceptance_surface: funnel
+            ---
+            Checkout flow body.
+            """)
+        ) { error in
+            XCTAssertEqual(
+                error as? SDDCoreError,
+                .intakeParseFailed("Unsupported acceptance_surface `funnel`. Supported values: none, ui_user_workflow, public_api, cli_workflow, operator_workflow.")
+            )
+        }
+    }
+
     func testNormalizeRejectsUnsupportedIntakeType() throws {
         let core = SDDCore(workspace: SDDWorkspaceConfiguration(root: temporaryWorkspace()))
 

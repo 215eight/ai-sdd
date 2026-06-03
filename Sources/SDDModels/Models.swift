@@ -360,6 +360,7 @@ public struct IntakeDocument: Codable, Equatable {
     public var title: String
     public var sourceId: String?
     public var owner: String?
+    public var acceptanceSurface: AcceptanceSurface?
     public var body: String
 
     public init(
@@ -368,6 +369,7 @@ public struct IntakeDocument: Codable, Equatable {
         title: String,
         sourceId: String?,
         owner: String?,
+        acceptanceSurface: AcceptanceSurface? = nil,
         body: String
     ) {
         self.schemaVersion = schemaVersion
@@ -375,6 +377,7 @@ public struct IntakeDocument: Codable, Equatable {
         self.title = title
         self.sourceId = sourceId
         self.owner = owner
+        self.acceptanceSurface = acceptanceSurface
         self.body = body
     }
 }
