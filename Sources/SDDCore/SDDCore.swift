@@ -99,7 +99,8 @@ public final class SDDCore {
                 "normalize-intake",
                 "get-run-summary",
                 "list-run-events",
-                "prepare-execution"
+                "prepare-execution",
+                "clear-lock"
             ],
             supportedOperations: [
                 "start_run",
@@ -114,7 +115,8 @@ public final class SDDCore {
                 "normalize_intake",
                 "get_run_summary",
                 "list_run_events",
-                "prepare_execution"
+                "prepare_execution",
+                "clear_lock"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -124,7 +126,7 @@ public final class SDDCore {
 
     public func startRun(featureSlug: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
         try validateFeatureSlug(featureSlug)
-        if let existing = try activeLockedRun(featureSlug: featureSlug) {
+        if let existing = try activeRun(featureSlug: featureSlug) {
             return lockHeldResult(existing)
         }
         try artifactStore.createFeatureArtifacts(featureSlug: featureSlug)
@@ -137,7 +139,7 @@ public final class SDDCore {
             throw SDDCoreError.intakeParseFailed("Normalized intake must include at least one slice-ready requirement.")
         }
         try validateFeatureSlug(featureSlug)
-        if let existing = try activeLockedRun(featureSlug: featureSlug) {
+        if let existing = try activeRun(featureSlug: featureSlug) {
             return lockHeldResult(existing)
         }
         try artifactStore.createFeatureArtifacts(featureSlug: featureSlug, intake: intake)
@@ -310,6 +312,27 @@ public final class SDDCore {
         )
     }
 
+    public func clearLock(runId: String, clearedBy: String) throws -> RunSummary {
+        var summary = try artifactStore.findRunSummary(runId: runId)
+        guard summary.lock != nil else {
+            throw SDDCoreError.invalidTransition("Run \(runId) does not have an active lock.")
+        }
+
+        summary.lock = nil
+        summary.phaseHistory.append(
+            PhaseHistoryEntry(
+                phase: summary.currentPhase,
+                status: summary.status,
+                at: Date(),
+                note: "lock_cleared:\(clearedBy)"
+            )
+        )
+
+        try artifactStore.writeRunSummary(summary)
+        try emit(eventName: "sdd.lock.cleared", summary: summary, properties: ["cleared_by": clearedBy])
+        return summary
+    }
+
     public func listArtifacts(featureSlug: String) throws -> [ArtifactDescriptor] {
         try validateFeatureSlug(featureSlug)
         return artifactStore.artifactDescriptors(featureSlug: featureSlug)
@@ -336,9 +359,8 @@ public final class SDDCore {
         }
     }
 
-    private func activeLockedRun(featureSlug: String) throws -> RunSummary? {
+    private func activeRun(featureSlug: String) throws -> RunSummary? {
         guard let summary = try artifactStore.runSummary(featureSlug: featureSlug),
-              summary.lock != nil,
               !isTerminal(summary.status) else {
             return nil
         }

@@ -115,6 +115,55 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertFalse(proposal.content.contains("Replacement product intent."))
     }
 
+    func testClearLockRemovesRunLockAndRecordsRecoveryEvent() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+
+        let cleared = try core.clearLock(runId: started.runId, clearedBy: "operator")
+
+        XCTAssertNil(cleared.lock)
+        XCTAssertEqual(cleared.status, .actionRequired)
+        XCTAssertEqual(cleared.currentPhase, .plan)
+        XCTAssertEqual(cleared.phaseHistory.last?.note, "lock_cleared:operator")
+
+        let persisted = try core.getRunSummary(runId: started.runId)
+        XCTAssertNil(persisted.lock)
+
+        let events = try core.listRunEvents(runId: started.runId)
+        XCTAssertEqual(events.last?.eventName, "sdd.lock.cleared")
+        XCTAssertEqual(events.last?.properties["cleared_by"], "operator")
+    }
+
+    func testStartRunStillBlocksWhenActiveRunHasNoLock() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+        _ = try core.clearLock(runId: started.runId, clearedBy: "operator")
+
+        let second = try core.startRun(featureSlug: "checkout-flow", adapter: .claudeCode, owner: "other")
+
+        XCTAssertEqual(second.runId, started.runId)
+        XCTAssertEqual(second.status, .blocked)
+        XCTAssertEqual(second.blockedReason, .lockHeld)
+    }
+
+    func testClearLockRejectsRunsWithoutActiveLock() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+        _ = try core.clearLock(runId: started.runId, clearedBy: "operator")
+
+        XCTAssertThrowsError(
+            try core.clearLock(runId: started.runId, clearedBy: "operator")
+        ) { error in
+            XCTAssertEqual(
+                error as? SDDCoreError,
+                .invalidTransition("Run \(started.runId) does not have an active lock.")
+            )
+        }
+    }
+
     func testSubmitPlanRequiresApprovalAndApproveMovesToImplement() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)
@@ -205,6 +254,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("list-run-events"))
         XCTAssertTrue(capabilities.supportedOperations.contains("prepare_execution"))
         XCTAssertTrue(capabilities.supportedCommands.contains("prepare-execution"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("clear_lock"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("clear-lock"))
     }
 
     func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {

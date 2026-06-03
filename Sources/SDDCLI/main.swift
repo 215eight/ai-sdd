@@ -22,7 +22,8 @@ struct SDDCommand: ParsableCommand {
             NormalizeIntakeCommand.self,
             GetRunSummaryCommand.self,
             ListRunEventsCommand.self,
-            PrepareExecutionCommand.self
+            PrepareExecutionCommand.self,
+            ClearLockCommand.self
         ]
     )
 }
@@ -214,6 +215,22 @@ struct PrepareExecutionCommand: ParsableCommand {
 
     func run() throws {
         try emit(try common.core().prepareExecution(runId: runId, adapter: adapter))
+    }
+}
+
+struct ClearLockCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "clear-lock")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(help: "Actor clearing the lock.")
+    var clearedBy: String = NSUserName()
+
+    func run() throws {
+        try emit(try common.core().clearLock(runId: runId, clearedBy: clearedBy))
     }
 }
 
