@@ -82,6 +82,24 @@ public enum FailedReason: String, Codable, CaseIterable {
     case unexpectedError = "unexpected_error"
 }
 
+public enum SecretSource: String, Codable, CaseIterable {
+    case environment = "env"
+    case ci
+    case keychain
+}
+
+public struct SecretReference: Codable, Equatable {
+    public var name: String
+    public var source: SecretSource
+    public var key: String
+
+    public init(name: String, source: SecretSource, key: String) {
+        self.name = name
+        self.source = source
+        self.key = key
+    }
+}
+
 public struct ArtifactRef: Codable, Equatable {
     public var type: String
     public var path: String
@@ -810,6 +828,38 @@ public struct WorkspaceValidationReport: Codable, Equatable {
         self.stack = stack
         self.machineId = machineId
         self.organizationId = organizationId
+        self.checks = checks
+    }
+}
+
+public struct SecretValidationCheck: Codable, Equatable {
+    public var name: String
+    public var source: SecretSource
+    public var key: String
+    public var configured: Bool
+    public var message: String
+
+    public init(name: String, source: SecretSource, key: String, configured: Bool, message: String) {
+        self.name = name
+        self.source = source
+        self.key = key
+        self.configured = configured
+        self.message = message
+    }
+}
+
+public struct SecretValidationReport: Codable, Equatable {
+    public var schemaVersion: String
+    public var valid: Bool
+    public var checks: [SecretValidationCheck]
+
+    public init(
+        schemaVersion: String = SDDConstants.schemaVersion,
+        valid: Bool,
+        checks: [SecretValidationCheck]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.valid = valid
         self.checks = checks
     }
 }

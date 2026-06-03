@@ -15,6 +15,8 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
     case telemetryReadFailed(String)
     case telemetryWriteFailed(String)
     case configurationReadFailed(String)
+    case secretReferenceInvalid(String)
+    case secretMissing(String)
 
     public var errorDescription: String? {
         switch self {
@@ -44,6 +46,10 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
             return "Telemetry write failed: \(message)"
         case .configurationReadFailed(let message):
             return "Configuration read failed: \(message)"
+        case .secretReferenceInvalid(let message):
+            return "Secret reference is invalid: \(message)"
+        case .secretMissing(let message):
+            return message
         }
     }
 }
@@ -56,6 +62,7 @@ public struct SDDWorkspaceConfigDocument: Codable, Equatable {
     public var stack: String?
     public var machineId: String?
     public var organizationId: String?
+    public var secrets: [String: String]?
 
     public init(
         openspecRoot: String? = nil,
@@ -64,7 +71,8 @@ public struct SDDWorkspaceConfigDocument: Codable, Equatable {
         workspaceId: String? = nil,
         stack: String? = nil,
         machineId: String? = nil,
-        organizationId: String? = nil
+        organizationId: String? = nil,
+        secrets: [String: String]? = nil
     ) {
         self.openspecRoot = openspecRoot
         self.telemetryPath = telemetryPath
@@ -73,6 +81,7 @@ public struct SDDWorkspaceConfigDocument: Codable, Equatable {
         self.stack = stack
         self.machineId = machineId
         self.organizationId = organizationId
+        self.secrets = secrets
     }
 }
 
@@ -85,6 +94,7 @@ public struct SDDWorkspaceConfiguration: Equatable {
     public var stack: String
     public var machineId: String
     public var organizationId: String?
+    public var secretReferences: [SecretReference]
 
     public init(
         root: URL,
@@ -94,7 +104,8 @@ public struct SDDWorkspaceConfiguration: Equatable {
         workspaceId: String = "local",
         stack: String = "swift",
         machineId: String = SDDWorkspaceConfiguration.defaultMachineId(),
-        organizationId: String? = nil
+        organizationId: String? = nil,
+        secretReferences: [SecretReference] = []
     ) {
         self.root = root
         self.openspecRoot = openspecRoot ?? root.appendingPathComponent("openspec")
@@ -104,6 +115,7 @@ public struct SDDWorkspaceConfiguration: Equatable {
         self.stack = stack
         self.machineId = machineId
         self.organizationId = organizationId
+        self.secretReferences = secretReferences
     }
 
     public static func load(root: URL) throws -> SDDWorkspaceConfiguration {
@@ -125,7 +137,8 @@ public struct SDDWorkspaceConfiguration: Equatable {
                 workspaceId: nonEmpty(document.workspaceId) ?? "local",
                 stack: nonEmpty(document.stack) ?? "swift",
                 machineId: nonEmpty(document.machineId) ?? defaultMachineId(),
-                organizationId: nonEmpty(document.organizationId)
+                organizationId: nonEmpty(document.organizationId),
+                secretReferences: try parseSecretReferences(document.secrets ?? [:])
             )
         } catch {
             throw SDDCoreError.configurationReadFailed(error.localizedDescription)
@@ -142,6 +155,20 @@ public struct SDDWorkspaceConfiguration: Equatable {
             machineId: machineId,
             organizationId: organizationId
         )
+    }
+
+    private static func parseSecretReferences(_ raw: [String: String]) throws -> [SecretReference] {
+        try raw
+            .sorted { $0.key < $1.key }
+            .map { name, reference in
+                let pieces = reference.split(separator: ":", maxSplits: 1).map(String.init)
+                guard pieces.count == 2,
+                      let source = SecretSource(rawValue: pieces[0]),
+                      let key = nonEmpty(pieces[1]) else {
+                    throw SDDCoreError.secretReferenceInvalid("\(name)=\(reference)")
+                }
+                return SecretReference(name: name, source: source, key: key)
+            }
     }
 
     private static func resolveConfiguredPath(_ value: String, root: URL) -> URL {
@@ -170,18 +197,21 @@ public final class SDDCore {
     private let telemetrySink: LocalJSONLTelemetrySink
     private let metricsRecorder: any SDDMetricsRecorder
     private let traceRecorder: any SDDTraceRecorder
+    private let secretResolver: any SecretResolving
     private let workflowEngine: WorkflowEngine
 
     public init(
         workspace: SDDWorkspaceConfiguration,
         metricsRecorder: any SDDMetricsRecorder = NoopSDDMetricsRecorder(),
-        traceRecorder: any SDDTraceRecorder = NoopSDDTraceRecorder()
+        traceRecorder: any SDDTraceRecorder = NoopSDDTraceRecorder(),
+        secretResolver: any SecretResolving = RuntimeSecretResolver()
     ) {
         self.workspace = workspace
         self.artifactStore = OpenSpecArtifactStore(workspace: workspace)
         self.telemetrySink = LocalJSONLTelemetrySink(path: workspace.telemetryPath)
         self.metricsRecorder = metricsRecorder
         self.traceRecorder = traceRecorder
+        self.secretResolver = secretResolver
         self.workflowEngine = WorkflowEngine()
     }
 
@@ -206,7 +236,8 @@ public final class SDDCore {
                 "clear-lock",
                 "mark-blocked",
                 "retry-action",
-                "validate-workspace"
+                "validate-workspace",
+                "validate-secrets"
             ],
             supportedOperations: [
                 "start_run",
@@ -226,7 +257,8 @@ public final class SDDCore {
                 "clear_lock",
                 "mark_blocked",
                 "retry_action",
-                "validate_workspace"
+                "validate_workspace",
+                "validate_secrets"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -336,6 +368,17 @@ public final class SDDCore {
             organizationId: workspace.organizationId,
             checks: checks
         )
+    }
+
+    public func validateSecrets() -> SecretValidationReport {
+        secretResolver.validate(workspace.secretReferences)
+    }
+
+    public func resolveSecret(name: String) throws -> String {
+        guard let reference = workspace.secretReferences.first(where: { $0.name == name }) else {
+            throw SDDCoreError.secretMissing("Secret \(name) is not configured.")
+        }
+        return try secretResolver.resolve(reference)
     }
 
     public func startRun(featureSlug: String, adapter: AgentAdapter, owner: String, actorType: ActorType = .human) throws -> TransitionResult {
@@ -782,7 +825,7 @@ public final class SDDCore {
             interface: .cli,
             timestamp: Date(),
             identityAttribution: summary.identityAttribution,
-            properties: properties
+            properties: TelemetryRedactor.redact(properties)
         )
         try telemetrySink.emit(event)
         emitMetricsAndTrace(for: event)

@@ -285,6 +285,33 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(decoded, report)
     }
 
+    func testSecretValidationReportJSONContract() throws {
+        let report = SecretValidationReport(
+            valid: false,
+            checks: [
+                SecretValidationCheck(
+                    name: "telemetry_api_key",
+                    source: .environment,
+                    key: "SDD_TELEMETRY_API_KEY",
+                    configured: false,
+                    message: "Missing secret reference env:SDD_TELEMETRY_API_KEY."
+                )
+            ]
+        )
+        let object = try jsonObject(report)
+
+        XCTAssertEqual(object["schema_version"] as? String, "1.0.0")
+        XCTAssertEqual(object["valid"] as? Bool, false)
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+        XCTAssertEqual(checks.first?["name"] as? String, "telemetry_api_key")
+        XCTAssertEqual(checks.first?["source"] as? String, "env")
+        XCTAssertEqual(checks.first?["key"] as? String, "SDD_TELEMETRY_API_KEY")
+        XCTAssertEqual(checks.first?["configured"] as? Bool, false)
+
+        let decoded = try decode(SecretValidationReport.self, from: report)
+        XCTAssertEqual(decoded, report)
+    }
+
     func testArtifactValidationReportJSONContract() throws {
         let report = ArtifactValidationReport(
             featureSlug: "checkout-flow",

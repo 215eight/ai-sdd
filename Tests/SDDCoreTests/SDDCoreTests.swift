@@ -457,6 +457,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("retry-action"))
         XCTAssertTrue(capabilities.supportedOperations.contains("validate_workspace"))
         XCTAssertTrue(capabilities.supportedCommands.contains("validate-workspace"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("validate_secrets"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("validate-secrets"))
     }
 
     func testValidateWorkspacePassesForDefaultTemporaryWorkspace() throws {
@@ -553,6 +555,86 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(identity.workspaceId, "configured-workspace")
         XCTAssertEqual(identity.machineId, "configured-machine")
         XCTAssertEqual(identity.organizationId, "configured-org")
+    }
+
+    func testSecretValidationUsesConfiguredReferencesWithoutExposingValues() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-sdd-tests")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".sdd"), withIntermediateDirectories: true)
+        try """
+        {
+          "secrets": {
+            "telemetry_api_key": "env:SDD_TELEMETRY_API_KEY",
+            "warehouse_token": "ci:WAREHOUSE_TOKEN",
+            "missing_secret": "env:MISSING_SECRET"
+          }
+        }
+        """.write(to: root.appendingPathComponent(".sdd/config.json"), atomically: true, encoding: .utf8)
+        let workspace = try SDDWorkspaceConfiguration.load(root: root)
+        let core = SDDCore(
+            workspace: workspace,
+            secretResolver: RuntimeSecretResolver(
+                environment: [
+                    "SDD_TELEMETRY_API_KEY": "secret-value",
+                    "WAREHOUSE_TOKEN": "ci-secret-value"
+                ]
+            )
+        )
+
+        let report = core.validateSecrets()
+
+        XCTAssertFalse(report.valid)
+        XCTAssertEqual(report.checks.map(\.name), ["missing_secret", "telemetry_api_key", "warehouse_token"])
+        XCTAssertEqual(report.checks.map(\.configured), [false, true, true])
+        XCTAssertFalse(report.checks.map(\.message).joined(separator: " ").contains("secret-value"))
+        XCTAssertEqual(try core.resolveSecret(name: "telemetry_api_key"), "secret-value")
+        XCTAssertThrowsError(try core.resolveSecret(name: "missing_secret")) { error in
+            XCTAssertEqual(error as? SDDCoreError, .secretMissing("Secret missing_secret is not configured."))
+        }
+    }
+
+    func testTelemetryRedactsSensitivePropertiesBeforePersistenceAndAdapters() throws {
+        let workspace = try temporaryWorkspace()
+        let metricsRecorder = RecordingMetricsRecorder()
+        let traceRecorder = RecordingTraceRecorder()
+        let core = SDDCore(
+            workspace: workspace,
+            metricsRecorder: metricsRecorder,
+            traceRecorder: traceRecorder
+        )
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+        try writePlanArtifacts(workspace: workspace)
+
+        _ = try core.submitResult(
+            runId: started.runId,
+            phase: .plan,
+            result: ExecutionAdapterResult(
+                adapter: .codex,
+                status: .ok,
+                artifactRefs: [],
+                logRef: "https://logs.example/run?sig=signed-secret",
+                telemetryRefs: [],
+                tokenUsage: TokenAttribution(
+                    provider: "openai",
+                    model: "gpt-5.5",
+                    inputTokens: 1,
+                    outputTokens: 2,
+                    cachedTokens: nil,
+                    reasoningTokens: nil,
+                    confidence: .directRequest
+                ),
+                error: nil
+            )
+        )
+
+        let event = try XCTUnwrap(try core.listRunEvents(runId: started.runId).first { $0.eventName == "sdd.result.submitted" })
+        XCTAssertEqual(event.properties["log_ref"], "[REDACTED]")
+        XCTAssertEqual(event.properties["token_model"], "gpt-5.5")
+
+        let span = try XCTUnwrap(traceRecorder.spans.first { $0.name == "sdd.result.submitted" })
+        XCTAssertEqual(span.attributes["log_ref"], "[REDACTED]")
+        XCTAssertEqual(span.attributes["token_model"], "gpt-5.5")
     }
 
     func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {

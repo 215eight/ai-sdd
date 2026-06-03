@@ -21,6 +21,12 @@ openspec/changes/<feature_slug>/run-summary.json
 `.sdd/telemetry/events.jsonl` is the MVP telemetry sink. It is an event log,
 not workflow state.
 
+Workspace-local non-secret configuration is read from `.sdd/config.json` when
+present. Secret configuration is reference-only, for example
+`env:SDD_TELEMETRY_API_KEY` or `keychain:service/account`; raw secret values
+must be resolved at runtime through `SDDCore` and must not be written to
+OpenSpec or telemetry.
+
 ## Package Boundaries
 
 ### SDDModels

@@ -36,7 +36,10 @@ Workspace configuration can be supplied at `.sdd/config.json`:
   "workspace_id": "local-workspace",
   "stack": "swift",
   "machine_id": "developer-machine",
-  "organization_id": "optional-org"
+  "organization_id": "optional-org",
+  "secrets": {
+    "telemetry_api_key": "env:SDD_TELEMETRY_API_KEY"
+  }
 }
 ```
 
@@ -46,12 +49,14 @@ Workspace configuration can be supplied at `.sdd/config.json`:
 swift test
 swift run sdd capabilities --json
 swift run sdd validate-workspace --json
+swift run sdd validate-secrets --json
 ```
 
 Useful MVP commands:
 
 ```bash
 swift run sdd validate-workspace --json
+swift run sdd validate-secrets --json
 swift run sdd start --feature checkout-flow --owner agent-session --actor-type agent --json
 swift run sdd start --intake-file docs/intake/checkout.md --json
 swift run sdd normalize-intake --file docs/intake/checkout.md --json
