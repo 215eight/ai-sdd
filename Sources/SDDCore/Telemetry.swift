@@ -35,4 +35,28 @@ public final class LocalJSONLTelemetrySink: TelemetrySink {
             throw SDDCoreError.telemetryWriteFailed(error.localizedDescription)
         }
     }
+
+    public func listEvents(runId: String) throws -> [TelemetryEvent] {
+        guard fileManager.fileExists(atPath: path.path) else {
+            return []
+        }
+
+        do {
+            let data = try Data(contentsOf: path)
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw SDDCoreError.telemetryReadFailed("Telemetry file is not valid UTF-8.")
+            }
+
+            return try text
+                .split(separator: "\n")
+                .map { line in
+                    try SDDJSON.decoder().decode(TelemetryEvent.self, from: Data(line.utf8))
+                }
+                .filter { $0.runId == runId }
+        } catch let error as SDDCoreError {
+            throw error
+        } catch {
+            throw SDDCoreError.telemetryReadFailed(error.localizedDescription)
+        }
+    }
 }

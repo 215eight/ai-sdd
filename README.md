@@ -43,4 +43,6 @@ swift run sdd list-artifacts --feature checkout-flow --json
 swift run sdd get-artifact --feature checkout-flow --type openspec_design --json
 swift run sdd validate-artifacts --feature checkout-flow --json
 swift run sdd next --run-id <run_id> --json
+swift run sdd get-run-summary --run-id <run_id> --json
+swift run sdd list-run-events --run-id <run_id> --json
 ```

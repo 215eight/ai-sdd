@@ -12,6 +12,7 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
     case intakeParseFailed(String)
     case unsupportedIntakeType(String)
     case openspecWriteFailed(String)
+    case telemetryReadFailed(String)
     case telemetryWriteFailed(String)
 
     public var errorDescription: String? {
@@ -36,6 +37,8 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
             return "Unsupported intake type: \(intakeType)"
         case .openspecWriteFailed(let message):
             return "OpenSpec write failed: \(message)"
+        case .telemetryReadFailed(let message):
+            return "Telemetry read failed: \(message)"
         case .telemetryWriteFailed(let message):
             return "Telemetry write failed: \(message)"
         }
@@ -93,7 +96,9 @@ public final class SDDCore {
                 "list-artifacts",
                 "get-artifact",
                 "validate-artifacts",
-                "normalize-intake"
+                "normalize-intake",
+                "get-run-summary",
+                "list-run-events"
             ],
             supportedOperations: [
                 "start_run",
@@ -105,7 +110,9 @@ public final class SDDCore {
                 "list_artifacts",
                 "get_artifact",
                 "validate_artifacts",
-                "normalize_intake"
+                "normalize_intake",
+                "get_run_summary",
+                "list_run_events"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -261,6 +268,15 @@ public final class SDDCore {
 
     public func status(runId: String) throws -> RunSummary {
         try artifactStore.findRunSummary(runId: runId)
+    }
+
+    public func getRunSummary(runId: String) throws -> RunSummary {
+        try status(runId: runId)
+    }
+
+    public func listRunEvents(runId: String) throws -> [TelemetryEvent] {
+        _ = try artifactStore.findRunSummary(runId: runId)
+        return try telemetrySink.listEvents(runId: runId)
     }
 
     public func listArtifacts(featureSlug: String) throws -> [ArtifactDescriptor] {

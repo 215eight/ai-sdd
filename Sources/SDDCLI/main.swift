@@ -19,7 +19,9 @@ struct SDDCommand: ParsableCommand {
             ListArtifactsCommand.self,
             GetArtifactCommand.self,
             ValidateArtifactsCommand.self,
-            NormalizeIntakeCommand.self
+            NormalizeIntakeCommand.self,
+            GetRunSummaryCommand.self,
+            ListRunEventsCommand.self
         ]
     )
 }
@@ -169,6 +171,32 @@ struct StatusCommand: ParsableCommand {
 
     func run() throws {
         try emit(try common.core().status(runId: runId))
+    }
+}
+
+struct GetRunSummaryCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "get-run-summary")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    func run() throws {
+        try emit(try common.core().getRunSummary(runId: runId))
+    }
+}
+
+struct ListRunEventsCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "list-run-events")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    func run() throws {
+        try emit(try common.core().listRunEvents(runId: runId))
     }
 }
 

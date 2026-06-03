@@ -142,6 +142,48 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("validate-artifacts"))
         XCTAssertTrue(capabilities.supportedOperations.contains("normalize_intake"))
         XCTAssertTrue(capabilities.supportedCommands.contains("normalize-intake"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("get_run_summary"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("get-run-summary"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("list_run_events"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("list-run-events"))
+    }
+
+    func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        let summary = try core.getRunSummary(runId: started.runId)
+
+        XCTAssertEqual(summary.runId, started.runId)
+        XCTAssertEqual(summary.featureSlug, "checkout-flow")
+        XCTAssertEqual(summary.status, .actionRequired)
+        XCTAssertEqual(summary.currentPhase, .plan)
+    }
+
+    func testListRunEventsReturnsLocalTelemetryForRun() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        var events = try core.listRunEvents(runId: started.runId)
+        XCTAssertEqual(events.map(\.eventName), [
+            "sdd.run.started",
+            "sdd.transition.evaluated"
+        ])
+        XCTAssertTrue(events.allSatisfy { $0.runId == started.runId })
+
+        try writePlanArtifacts(workspace: workspace)
+        _ = try core.submitResult(runId: started.runId, phase: .plan, result: okResult(adapter: .codex))
+
+        events = try core.listRunEvents(runId: started.runId)
+        XCTAssertEqual(events.map(\.eventName), [
+            "sdd.run.started",
+            "sdd.transition.evaluated",
+            "sdd.result.submitted",
+            "sdd.transition.evaluated"
+        ])
+        XCTAssertEqual(events.last?.status, .approvalRequired)
     }
 
     func testArtifactOperationsExposeCanonicalOpenSpecChangeArtifacts() throws {
