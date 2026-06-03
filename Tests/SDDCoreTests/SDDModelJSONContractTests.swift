@@ -12,6 +12,7 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "action_required")
         XCTAssertEqual(object["current_phase"] as? String, "plan")
         XCTAssertEqual(object["active_adapter"] as? String, "codex")
+        XCTAssertNotNil(object["identity_attribution"])
         XCTAssertNotNil(object["lock"])
         XCTAssertNotNil(object["phase_history"])
         XCTAssertNotNil(object["approvals"])
@@ -19,8 +20,43 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertNotNil(object["telemetry_refs"])
         XCTAssertNotNil(object["token_usage_summary"])
 
+        let identity = try XCTUnwrap(object["identity_attribution"] as? [String: Any])
+        XCTAssertEqual(identity["actor_id"] as? String, "agent_session_123")
+        XCTAssertEqual(identity["actor_type"] as? String, "agent")
+        XCTAssertEqual(identity["agent_adapter"] as? String, "codex")
+        XCTAssertEqual(identity["repo_id"] as? String, "example/checkout")
+        XCTAssertEqual(identity["workspace_id"] as? String, "workspace-contract")
+        XCTAssertEqual(identity["machine_id"] as? String, "machine-contract")
+        XCTAssertEqual(identity["organization_id"] as? String, "org-contract")
+
         let decoded = try decode(RunSummary.self, from: summary)
         XCTAssertEqual(decoded, summary)
+    }
+
+    func testRunSummaryDecodesLegacyPayloadWithoutIdentityAttribution() throws {
+        let data = Data(
+            """
+            {
+              "run_id": "run_legacy",
+              "feature_slug": "checkout-flow",
+              "status": "action_required",
+              "current_phase": "plan",
+              "active_adapter": "codex",
+              "lock": null,
+              "phase_history": [],
+              "approvals": [],
+              "blockers": [],
+              "telemetry_refs": [],
+              "token_usage_summary": []
+            }
+            """.utf8
+        )
+
+        let decoded = try decoder().decode(RunSummary.self, from: data)
+
+        XCTAssertEqual(decoded.identityAttribution.actorId, "unknown")
+        XCTAssertEqual(decoded.identityAttribution.actorType, .agent)
+        XCTAssertEqual(decoded.identityAttribution.agentAdapter, .codex)
     }
 
     func testTransitionInputJSONContract() throws {
@@ -146,6 +182,7 @@ final class SDDModelJSONContractTests: XCTestCase {
             adapter: .codex,
             interface: .cli,
             timestamp: sampleDate(),
+            identityAttribution: sampleIdentityAttribution(),
             properties: ["policy": "passed"]
         )
         let object = try jsonObject(event)
@@ -159,6 +196,7 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(object["adapter"] as? String, "codex")
         XCTAssertEqual(object["interface"] as? String, "cli")
         XCTAssertEqual(object["timestamp"] as? String, "2026-06-03T20:00:00Z")
+        XCTAssertNotNil(object["identity_attribution"])
         XCTAssertNotNil(object["properties"])
 
         let decoded = try decode(TelemetryEvent.self, from: event)
@@ -213,6 +251,8 @@ final class SDDModelJSONContractTests: XCTestCase {
             repoId: "example/repo",
             workspaceId: "local",
             stack: "swift",
+            machineId: "machine-contract",
+            organizationId: "org-contract",
             checks: [
                 WorkspaceValidationCheck(
                     name: "workspace_root_exists",
@@ -232,6 +272,8 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(object["repo_id"] as? String, "example/repo")
         XCTAssertEqual(object["workspace_id"] as? String, "local")
         XCTAssertEqual(object["stack"] as? String, "swift")
+        XCTAssertEqual(object["machine_id"] as? String, "machine-contract")
+        XCTAssertEqual(object["organization_id"] as? String, "org-contract")
 
         let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
         XCTAssertEqual(checks.first?["name"] as? String, "workspace_root_exists")
@@ -345,6 +387,7 @@ final class SDDModelJSONContractTests: XCTestCase {
             status: .actionRequired,
             currentPhase: .plan,
             activeAdapter: .codex,
+            identityAttribution: sampleIdentityAttribution(),
             lock: LockInfo(owner: "agent_session_123", acquiredAt: sampleDate(), expiresAt: sampleDate().addingTimeInterval(3600)),
             phaseHistory: [
                 PhaseHistoryEntry(phase: .plan, status: .actionRequired, at: sampleDate(), note: "run_started")
@@ -383,6 +426,18 @@ final class SDDModelJSONContractTests: XCTestCase {
             cachedTokens: 31_616,
             reasoningTokens: 275,
             confidence: .sessionScoped
+        )
+    }
+
+    private func sampleIdentityAttribution() -> IdentityAttribution {
+        IdentityAttribution(
+            actorId: "agent_session_123",
+            actorType: .agent,
+            agentAdapter: .codex,
+            repoId: "example/checkout",
+            workspaceId: "workspace-contract",
+            machineId: "machine-contract",
+            organizationId: "org-contract"
         )
     }
 

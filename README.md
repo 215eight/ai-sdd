@@ -26,6 +26,20 @@ Local MVP telemetry is written to:
 .sdd/telemetry/events.jsonl
 ```
 
+Workspace configuration can be supplied at `.sdd/config.json`:
+
+```json
+{
+  "openspec_root": "openspec",
+  "telemetry_path": ".sdd/telemetry/events.jsonl",
+  "repo_id": "org/repo",
+  "workspace_id": "local-workspace",
+  "stack": "swift",
+  "machine_id": "developer-machine",
+  "organization_id": "optional-org"
+}
+```
+
 ## Build And Test
 
 ```bash
@@ -38,7 +52,7 @@ Useful MVP commands:
 
 ```bash
 swift run sdd validate-workspace --json
-swift run sdd start --feature checkout-flow --json
+swift run sdd start --feature checkout-flow --owner agent-session --actor-type agent --json
 swift run sdd start --intake-file docs/intake/checkout.md --json
 swift run sdd normalize-intake --file docs/intake/checkout.md --json
 swift run sdd list-artifacts --feature checkout-flow --json

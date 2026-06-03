@@ -16,6 +16,15 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.root.appendingPathComponent("openspec/changes/checkout-flow/proposal.md").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.root.appendingPathComponent("openspec/changes/checkout-flow/run-summary.json").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.root.appendingPathComponent(".sdd/telemetry/events.jsonl").path))
+
+        let summary = try core.getRunSummary(runId: result.runId)
+        XCTAssertEqual(summary.identityAttribution.actorId, "tester")
+        XCTAssertEqual(summary.identityAttribution.actorType, .human)
+        XCTAssertEqual(summary.identityAttribution.agentAdapter, .codex)
+        XCTAssertEqual(summary.identityAttribution.repoId, "test/repo")
+        XCTAssertEqual(summary.identityAttribution.workspaceId, "test-workspace")
+        XCTAssertEqual(summary.identityAttribution.machineId, "test-machine")
+        XCTAssertEqual(summary.identityAttribution.organizationId, "test-org")
     }
 
     func testStartRunFromIntakeSeedsOpenSpecProposalAndDecisions() throws {
@@ -464,6 +473,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(report.repoId, "test/repo")
         XCTAssertEqual(report.workspaceId, "test-workspace")
         XCTAssertEqual(report.stack, "swift")
+        XCTAssertEqual(report.machineId, "test-machine")
+        XCTAssertEqual(report.organizationId, "test-org")
         XCTAssertEqual(report.checks.map(\.status), Array(repeating: .passed, count: report.checks.count))
         XCTAssertEqual(report.checks.map(\.name), [
             "workspace_root_exists",
@@ -473,7 +484,8 @@ final class SDDCoreTests: XCTestCase {
             "telemetry_path_inside_workspace",
             "repo_id_configured",
             "workspace_id_configured",
-            "stack_configured"
+            "stack_configured",
+            "machine_id_configured"
         ])
     }
 
@@ -487,7 +499,8 @@ final class SDDCoreTests: XCTestCase {
             telemetryPath: FileManager.default.temporaryDirectory.appendingPathComponent("external-events.jsonl"),
             repoId: "",
             workspaceId: "",
-            stack: ""
+            stack: "",
+            machineId: ""
         )
         let core = SDDCore(workspace: workspace)
 
@@ -502,6 +515,44 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(report.checks.first(where: { $0.name == "repo_id_configured" })?.status, .failed)
         XCTAssertEqual(report.checks.first(where: { $0.name == "workspace_id_configured" })?.status, .failed)
         XCTAssertEqual(report.checks.first(where: { $0.name == "stack_configured" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "machine_id_configured" })?.status, .failed)
+    }
+
+    func testWorkspaceConfigurationLoadsLocalConfig() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-sdd-tests")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".sdd"), withIntermediateDirectories: true)
+        try """
+        {
+          "openspec_root": "specs",
+          "telemetry_path": ".telemetry/events.jsonl",
+          "repo_id": "configured/repo",
+          "workspace_id": "configured-workspace",
+          "stack": "configured-stack",
+          "machine_id": "configured-machine",
+          "organization_id": "configured-org"
+        }
+        """.write(to: root.appendingPathComponent(".sdd/config.json"), atomically: true, encoding: .utf8)
+
+        let workspace = try SDDWorkspaceConfiguration.load(root: root)
+
+        XCTAssertEqual(workspace.openspecRoot.path, root.appendingPathComponent("specs").path)
+        XCTAssertEqual(workspace.telemetryPath.path, root.appendingPathComponent(".telemetry/events.jsonl").path)
+        XCTAssertEqual(workspace.repoId, "configured/repo")
+        XCTAssertEqual(workspace.workspaceId, "configured-workspace")
+        XCTAssertEqual(workspace.stack, "configured-stack")
+        XCTAssertEqual(workspace.machineId, "configured-machine")
+        XCTAssertEqual(workspace.organizationId, "configured-org")
+
+        let identity = workspace.identityAttribution(actorId: "agent-1", actorType: .agent, adapter: .claudeCode)
+        XCTAssertEqual(identity.actorId, "agent-1")
+        XCTAssertEqual(identity.actorType, .agent)
+        XCTAssertEqual(identity.agentAdapter, .claudeCode)
+        XCTAssertEqual(identity.repoId, "configured/repo")
+        XCTAssertEqual(identity.workspaceId, "configured-workspace")
+        XCTAssertEqual(identity.machineId, "configured-machine")
+        XCTAssertEqual(identity.organizationId, "configured-org")
     }
 
     func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {
@@ -568,6 +619,10 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(metricsRecorder.counters.first?.attributes["repo_id"], "test/repo")
         XCTAssertEqual(metricsRecorder.counters.first?.attributes["workspace_id"], "test-workspace")
         XCTAssertEqual(metricsRecorder.counters.first?.attributes["stack"], "swift")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["actor_id"], "tester")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["actor_type"], "human")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["machine_id"], "test-machine")
+        XCTAssertEqual(metricsRecorder.counters.first?.attributes["organization_id"], "test-org")
 
         XCTAssertEqual(traceRecorder.spans.map(\.name), [
             "sdd.run.started",
@@ -578,6 +633,7 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(traceRecorder.spans.first?.phase, .plan)
         XCTAssertEqual(traceRecorder.spans.first?.status, .actionRequired)
         XCTAssertEqual(traceRecorder.spans.first?.attributes["interface"], "cli")
+        XCTAssertEqual(traceRecorder.spans.first?.attributes["actor_id"], "tester")
     }
 
     func testSubmitResultPersistsAndEmitsTokenAttribution() throws {
@@ -771,7 +827,14 @@ final class SDDCoreTests: XCTestCase {
             .appendingPathComponent("ai-sdd-tests")
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return SDDWorkspaceConfiguration(root: url, repoId: "test/repo", workspaceId: "test-workspace", stack: "swift")
+        return SDDWorkspaceConfiguration(
+            root: url,
+            repoId: "test/repo",
+            workspaceId: "test-workspace",
+            stack: "swift",
+            machineId: "test-machine",
+            organizationId: "test-org"
+        )
     }
 
     private func writeArtifact(workspace: SDDWorkspaceConfiguration, path: String, content: String) throws {

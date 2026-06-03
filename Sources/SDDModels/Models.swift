@@ -293,6 +293,7 @@ public struct RunSummary: Codable, Equatable {
     public var status: WorkflowStatus
     public var currentPhase: WorkflowPhase
     public var activeAdapter: AgentAdapter
+    public var identityAttribution: IdentityAttribution
     public var lock: LockInfo?
     public var phaseHistory: [PhaseHistoryEntry]
     public var approvals: [ApprovalRecord]
@@ -300,12 +301,28 @@ public struct RunSummary: Codable, Equatable {
     public var telemetryRefs: [TelemetryRef]
     public var tokenUsageSummary: [TokenAttribution]
 
+    enum CodingKeys: String, CodingKey {
+        case runId
+        case featureSlug
+        case status
+        case currentPhase
+        case activeAdapter
+        case identityAttribution
+        case lock
+        case phaseHistory
+        case approvals
+        case blockers
+        case telemetryRefs
+        case tokenUsageSummary
+    }
+
     public init(
         runId: String,
         featureSlug: String,
         status: WorkflowStatus,
         currentPhase: WorkflowPhase,
         activeAdapter: AgentAdapter,
+        identityAttribution: IdentityAttribution,
         lock: LockInfo?,
         phaseHistory: [PhaseHistoryEntry],
         approvals: [ApprovalRecord],
@@ -318,12 +335,37 @@ public struct RunSummary: Codable, Equatable {
         self.status = status
         self.currentPhase = currentPhase
         self.activeAdapter = activeAdapter
+        self.identityAttribution = identityAttribution
         self.lock = lock
         self.phaseHistory = phaseHistory
         self.approvals = approvals
         self.blockers = blockers
         self.telemetryRefs = telemetryRefs
         self.tokenUsageSummary = tokenUsageSummary
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.runId = try container.decode(String.self, forKey: .runId)
+        self.featureSlug = try container.decode(String.self, forKey: .featureSlug)
+        self.status = try container.decode(WorkflowStatus.self, forKey: .status)
+        self.currentPhase = try container.decode(WorkflowPhase.self, forKey: .currentPhase)
+        self.activeAdapter = try container.decode(AgentAdapter.self, forKey: .activeAdapter)
+        self.identityAttribution = try container.decodeIfPresent(IdentityAttribution.self, forKey: .identityAttribution) ?? IdentityAttribution(
+            actorId: "unknown",
+            actorType: .agent,
+            agentAdapter: self.activeAdapter,
+            repoId: "local",
+            workspaceId: "local",
+            machineId: "unknown",
+            organizationId: nil
+        )
+        self.lock = try container.decodeIfPresent(LockInfo.self, forKey: .lock)
+        self.phaseHistory = try container.decode([PhaseHistoryEntry].self, forKey: .phaseHistory)
+        self.approvals = try container.decode([ApprovalRecord].self, forKey: .approvals)
+        self.blockers = try container.decode([BlockerRecord].self, forKey: .blockers)
+        self.telemetryRefs = try container.decode([TelemetryRef].self, forKey: .telemetryRefs)
+        self.tokenUsageSummary = try container.decode([TokenAttribution].self, forKey: .tokenUsageSummary)
     }
 }
 
@@ -652,6 +694,7 @@ public struct TelemetryEvent: Codable, Equatable {
     public var adapter: AgentAdapter?
     public var interface: InterfaceMode
     public var timestamp: Date
+    public var identityAttribution: IdentityAttribution?
     public var properties: [String: String]
 
     public init(
@@ -664,6 +707,7 @@ public struct TelemetryEvent: Codable, Equatable {
         adapter: AgentAdapter?,
         interface: InterfaceMode,
         timestamp: Date,
+        identityAttribution: IdentityAttribution? = nil,
         properties: [String: String]
     ) {
         self.eventId = eventId
@@ -675,6 +719,7 @@ public struct TelemetryEvent: Codable, Equatable {
         self.adapter = adapter
         self.interface = interface
         self.timestamp = timestamp
+        self.identityAttribution = identityAttribution
         self.properties = properties
     }
 }
@@ -738,6 +783,8 @@ public struct WorkspaceValidationReport: Codable, Equatable {
     public var repoId: String
     public var workspaceId: String
     public var stack: String
+    public var machineId: String
+    public var organizationId: String?
     public var checks: [WorkspaceValidationCheck]
 
     public init(
@@ -749,6 +796,8 @@ public struct WorkspaceValidationReport: Codable, Equatable {
         repoId: String,
         workspaceId: String,
         stack: String,
+        machineId: String,
+        organizationId: String?,
         checks: [WorkspaceValidationCheck]
     ) {
         self.schemaVersion = schemaVersion
@@ -759,6 +808,8 @@ public struct WorkspaceValidationReport: Codable, Equatable {
         self.repoId = repoId
         self.workspaceId = workspaceId
         self.stack = stack
+        self.machineId = machineId
+        self.organizationId = organizationId
         self.checks = checks
     }
 }

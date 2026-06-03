@@ -39,9 +39,9 @@ struct CommonOptions: ParsableArguments {
     @Flag(help: "Emit structured JSON output.")
     var json = false
 
-    func core() -> SDDCore {
+    func core() throws -> SDDCore {
         let root = URL(fileURLWithPath: workspace)
-        return SDDCore(workspace: SDDWorkspaceConfiguration(root: root))
+        return SDDCore(workspace: try SDDWorkspaceConfiguration.load(root: root))
     }
 }
 
@@ -51,7 +51,7 @@ struct CapabilitiesCommand: ParsableCommand {
     @OptionGroup var common: CommonOptions
 
     func run() throws {
-        try emit(common.core().capabilities())
+        try emit(try common.core().capabilities())
     }
 }
 
@@ -61,7 +61,7 @@ struct ValidateWorkspaceCommand: ParsableCommand {
     @OptionGroup var common: CommonOptions
 
     func run() throws {
-        try emit(common.core().validateWorkspace())
+        try emit(try common.core().validateWorkspace())
     }
 }
 
@@ -82,14 +82,17 @@ struct StartCommand: ParsableCommand {
     @Option(help: "Lock owner.")
     var owner: String = NSUserName()
 
+    @Option(help: "Actor type for attribution.")
+    var actorType: ActorType = .human
+
     func run() throws {
         let result: TransitionResult
         switch (feature, intakeFile) {
         case (.some(let feature), .none):
-            result = try common.core().startRun(featureSlug: feature, adapter: adapter, owner: owner)
+            result = try common.core().startRun(featureSlug: feature, adapter: adapter, owner: owner, actorType: actorType)
         case (.none, .some(let intakeFile)):
             let markdown = try String(contentsOf: URL(fileURLWithPath: intakeFile), encoding: .utf8)
-            result = try common.core().startRun(intakeMarkdown: markdown, adapter: adapter, owner: owner)
+            result = try common.core().startRun(intakeMarkdown: markdown, adapter: adapter, owner: owner, actorType: actorType)
         case (.some, .some):
             throw ValidationError("Use either --feature or --intake-file, not both.")
         case (.none, .none):
@@ -409,4 +412,5 @@ func emit<Payload: Encodable>(_ payload: Payload) throws {
 
 extension WorkflowPhase: ExpressibleByArgument {}
 extension AgentAdapter: ExpressibleByArgument {}
+extension ActorType: ExpressibleByArgument {}
 extension BlockedReason: ExpressibleByArgument {}

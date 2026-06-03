@@ -14,6 +14,7 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
     case openspecWriteFailed(String)
     case telemetryReadFailed(String)
     case telemetryWriteFailed(String)
+    case configurationReadFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -41,7 +42,37 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
             return "Telemetry read failed: \(message)"
         case .telemetryWriteFailed(let message):
             return "Telemetry write failed: \(message)"
+        case .configurationReadFailed(let message):
+            return "Configuration read failed: \(message)"
         }
+    }
+}
+
+public struct SDDWorkspaceConfigDocument: Codable, Equatable {
+    public var openspecRoot: String?
+    public var telemetryPath: String?
+    public var repoId: String?
+    public var workspaceId: String?
+    public var stack: String?
+    public var machineId: String?
+    public var organizationId: String?
+
+    public init(
+        openspecRoot: String? = nil,
+        telemetryPath: String? = nil,
+        repoId: String? = nil,
+        workspaceId: String? = nil,
+        stack: String? = nil,
+        machineId: String? = nil,
+        organizationId: String? = nil
+    ) {
+        self.openspecRoot = openspecRoot
+        self.telemetryPath = telemetryPath
+        self.repoId = repoId
+        self.workspaceId = workspaceId
+        self.stack = stack
+        self.machineId = machineId
+        self.organizationId = organizationId
     }
 }
 
@@ -52,6 +83,8 @@ public struct SDDWorkspaceConfiguration: Equatable {
     public var repoId: String
     public var workspaceId: String
     public var stack: String
+    public var machineId: String
+    public var organizationId: String?
 
     public init(
         root: URL,
@@ -59,7 +92,9 @@ public struct SDDWorkspaceConfiguration: Equatable {
         telemetryPath: URL? = nil,
         repoId: String = "local",
         workspaceId: String = "local",
-        stack: String = "swift"
+        stack: String = "swift",
+        machineId: String = SDDWorkspaceConfiguration.defaultMachineId(),
+        organizationId: String? = nil
     ) {
         self.root = root
         self.openspecRoot = openspecRoot ?? root.appendingPathComponent("openspec")
@@ -67,6 +102,65 @@ public struct SDDWorkspaceConfiguration: Equatable {
         self.repoId = repoId
         self.workspaceId = workspaceId
         self.stack = stack
+        self.machineId = machineId
+        self.organizationId = organizationId
+    }
+
+    public static func load(root: URL) throws -> SDDWorkspaceConfiguration {
+        let configURL = root.appendingPathComponent(".sdd/config.json")
+        guard FileManager.default.fileExists(atPath: configURL.path) else {
+            return SDDWorkspaceConfiguration(root: root)
+        }
+
+        do {
+            let document = try SDDJSON.decoder().decode(
+                SDDWorkspaceConfigDocument.self,
+                from: Data(contentsOf: configURL)
+            )
+            return SDDWorkspaceConfiguration(
+                root: root,
+                openspecRoot: document.openspecRoot.map { resolveConfiguredPath($0, root: root) },
+                telemetryPath: document.telemetryPath.map { resolveConfiguredPath($0, root: root) },
+                repoId: nonEmpty(document.repoId) ?? "local",
+                workspaceId: nonEmpty(document.workspaceId) ?? "local",
+                stack: nonEmpty(document.stack) ?? "swift",
+                machineId: nonEmpty(document.machineId) ?? defaultMachineId(),
+                organizationId: nonEmpty(document.organizationId)
+            )
+        } catch {
+            throw SDDCoreError.configurationReadFailed(error.localizedDescription)
+        }
+    }
+
+    public func identityAttribution(actorId: String, actorType: ActorType, adapter: AgentAdapter?) -> IdentityAttribution {
+        IdentityAttribution(
+            actorId: actorId,
+            actorType: actorType,
+            agentAdapter: adapter,
+            repoId: repoId,
+            workspaceId: workspaceId,
+            machineId: machineId,
+            organizationId: organizationId
+        )
+    }
+
+    private static func resolveConfiguredPath(_ value: String, root: URL) -> URL {
+        if value.hasPrefix("/") {
+            return URL(fileURLWithPath: value)
+        }
+        return root.appendingPathComponent(value)
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    public static func defaultMachineId() -> String {
+        Host.current().localizedName ?? "local-machine"
     }
 }
 
@@ -155,6 +249,7 @@ public final class SDDCore {
         let repoIDConfigured = !workspace.repoId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let workspaceIDConfigured = !workspace.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let stackConfigured = !workspace.stack.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let machineIDConfigured = !workspace.machineId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         checks.append(
             WorkspaceValidationCheck(
@@ -220,6 +315,14 @@ public final class SDDCore {
                 message: stackConfigured ? "Stack is configured." : "Stack is empty."
             )
         )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "machine_id_configured",
+                status: machineIDConfigured ? .passed : .failed,
+                path: nil,
+                message: machineIDConfigured ? "Machine identifier is configured." : "Machine identifier is empty."
+            )
+        )
 
         return WorkspaceValidationReport(
             valid: checks.allSatisfy { $0.status == .passed },
@@ -229,20 +332,22 @@ public final class SDDCore {
             repoId: workspace.repoId,
             workspaceId: workspace.workspaceId,
             stack: workspace.stack,
+            machineId: workspace.machineId,
+            organizationId: workspace.organizationId,
             checks: checks
         )
     }
 
-    public func startRun(featureSlug: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
+    public func startRun(featureSlug: String, adapter: AgentAdapter, owner: String, actorType: ActorType = .human) throws -> TransitionResult {
         try validateFeatureSlug(featureSlug)
         if let existing = try activeRun(featureSlug: featureSlug) {
             return lockHeldResult(existing)
         }
         try artifactStore.createFeatureArtifacts(featureSlug: featureSlug)
-        return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner)
+        return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner, actorType: actorType)
     }
 
-    public func startRun(intakeMarkdown: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
+    public func startRun(intakeMarkdown: String, adapter: AgentAdapter, owner: String, actorType: ActorType = .human) throws -> TransitionResult {
         let intake = try normalizeIntake(markdown: intakeMarkdown)
         guard let featureSlug = intake.sliceReadyRequirements.first?.featureSlug else {
             throw SDDCoreError.intakeParseFailed("Normalized intake must include at least one slice-ready requirement.")
@@ -252,10 +357,10 @@ public final class SDDCore {
             return lockHeldResult(existing)
         }
         try artifactStore.createFeatureArtifacts(featureSlug: featureSlug, intake: intake)
-        return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner)
+        return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner, actorType: actorType)
     }
 
-    private func createRun(featureSlug: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
+    private func createRun(featureSlug: String, adapter: AgentAdapter, owner: String, actorType: ActorType) throws -> TransitionResult {
         let now = Date()
         let runSummary = RunSummary(
             runId: "run_\(UUID().uuidString.lowercased())",
@@ -263,6 +368,7 @@ public final class SDDCore {
             status: .actionRequired,
             currentPhase: .plan,
             activeAdapter: adapter,
+            identityAttribution: workspace.identityAttribution(actorId: owner, actorType: actorType, adapter: adapter),
             lock: LockInfo(owner: owner, acquiredAt: now, expiresAt: nil),
             phaseHistory: [
                 PhaseHistoryEntry(phase: .plan, status: .actionRequired, at: now, note: "run_started")
@@ -675,6 +781,7 @@ public final class SDDCore {
             adapter: summary.activeAdapter,
             interface: .cli,
             timestamp: Date(),
+            identityAttribution: summary.identityAttribution,
             properties: properties
         )
         try telemetrySink.emit(event)
@@ -706,11 +813,19 @@ public final class SDDCore {
             "interface": event.interface.rawValue,
             "repo_id": workspace.repoId,
             "workspace_id": workspace.workspaceId,
-            "stack": workspace.stack
+            "stack": workspace.stack,
+            "actor_id": event.identityAttribution?.actorId ?? summaryFallbackActorID,
+            "actor_type": event.identityAttribution?.actorType.rawValue ?? "unknown",
+            "machine_id": event.identityAttribution?.machineId ?? workspace.machineId
         ]
+        if let organizationId = event.identityAttribution?.organizationId ?? workspace.organizationId {
+            attributes["organization_id"] = organizationId
+        }
         if let adapter = event.adapter {
             attributes["adapter"] = adapter.rawValue
         }
         return attributes
     }
 }
+
+private let summaryFallbackActorID = "unknown"
