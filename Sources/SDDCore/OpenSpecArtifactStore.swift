@@ -74,10 +74,21 @@ public final class OpenSpecArtifactStore {
     }
 
     public func validateArtifacts(featureSlug: String) -> ArtifactValidationReport {
+        validateArtifacts(featureSlug: featureSlug, requiredTypes: nil)
+    }
+
+    public func validateArtifacts(featureSlug: String, requiredTypes: [String]?) -> ArtifactValidationReport {
         let statuses = artifactDescriptors(featureSlug: featureSlug).map { descriptor in
             artifactStatus(for: descriptor)
         }
-        let issues = statuses.compactMap { status -> ArtifactValidationIssue? in
+        let requiredTypeSet = requiredTypes.map(Set.init)
+        let scopedStatuses = statuses.filter { status in
+            guard let requiredTypeSet else {
+                return true
+            }
+            return requiredTypeSet.contains(status.ref.type)
+        }
+        let issues = scopedStatuses.compactMap { status -> ArtifactValidationIssue? in
             switch status.state {
             case .missing:
                 return ArtifactValidationIssue(
@@ -105,7 +116,7 @@ public final class OpenSpecArtifactStore {
         return ArtifactValidationReport(
             featureSlug: featureSlug,
             valid: issues.isEmpty,
-            artifacts: statuses,
+            artifacts: scopedStatuses,
             issues: issues
         )
     }

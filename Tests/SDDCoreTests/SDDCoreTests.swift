@@ -62,6 +62,7 @@ final class SDDCoreTests: XCTestCase {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)
         let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+        try writePlanArtifacts(workspace: workspace)
 
         let submitted = try core.submitResult(
             runId: started.runId,
@@ -87,10 +88,33 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(approved.action?.kind, .executeTasks)
     }
 
+    func testSubmitPlanRejectsPlaceholderDesignAndTasksWithoutAdvancing() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        XCTAssertThrowsError(
+            try core.submitResult(runId: started.runId, phase: .plan, result: okResult(adapter: .codex))
+        ) { error in
+            guard let coreError = error as? SDDCoreError else {
+                return XCTFail("Expected SDDCoreError.")
+            }
+            XCTAssertEqual(
+                coreError,
+                .artifactValidationFailed("Required artifacts are not ready for checkout-flow: openspec_design=placeholder, openspec_tasks=placeholder")
+            )
+        }
+
+        let summary = try core.status(runId: started.runId)
+        XCTAssertEqual(summary.status, .actionRequired)
+        XCTAssertEqual(summary.currentPhase, .plan)
+    }
+
     func testSubmitImplementMovesToReviewAndSubmitReviewCompletes() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)
         let started = try core.startRun(featureSlug: "checkout-flow", adapter: .claudeCode, owner: "tester")
+        try writePlanArtifacts(workspace: workspace)
 
         _ = try core.submitResult(runId: started.runId, phase: .plan, result: okResult(adapter: .claudeCode))
         _ = try core.approveGate(runId: started.runId, phase: .plan, approvedBy: "tester")
@@ -100,6 +124,7 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(review.phase, .review)
         XCTAssertEqual(review.action?.kind, .reviewChanges)
 
+        try writeArtifact(workspace: workspace, path: "openspec/changes/checkout-flow/review.md", content: "# Review\n\n## Verdict\n\nAPPROVE\n")
         let completed = try core.submitResult(runId: started.runId, phase: .review, result: okResult(adapter: .claudeCode))
         XCTAssertEqual(completed.status, .completed)
         XCTAssertNil(completed.action)
@@ -218,6 +243,19 @@ final class SDDCoreTests: XCTestCase {
             to: workspace.root.appendingPathComponent(path),
             atomically: true,
             encoding: .utf8
+        )
+    }
+
+    private func writePlanArtifacts(workspace: SDDWorkspaceConfiguration) throws {
+        try writeArtifact(
+            workspace: workspace,
+            path: "openspec/changes/checkout-flow/design.md",
+            content: "# Design\n\nUse the payment service boundary.\n"
+        )
+        try writeArtifact(
+            workspace: workspace,
+            path: "openspec/changes/checkout-flow/tasks.md",
+            content: "# Tasks\n\n- [x] Define payment adapter.\n"
         )
     }
 }

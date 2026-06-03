@@ -8,6 +8,7 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
     case adapterResultFailed(String?)
     case artifactNotFound(String)
     case artifactReadFailed(String)
+    case artifactValidationFailed(String)
     case intakeParseFailed(String)
     case unsupportedIntakeType(String)
     case openspecWriteFailed(String)
@@ -27,6 +28,8 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
             return "Artifact not found: \(artifact)"
         case .artifactReadFailed(let artifact):
             return "Artifact could not be read as UTF-8 text: \(artifact)"
+        case .artifactValidationFailed(let message):
+            return message
         case .intakeParseFailed(let message):
             return message
         case .unsupportedIntakeType(let intakeType):
@@ -174,6 +177,14 @@ public final class SDDCore {
             throw SDDCoreError.adapterResultFailed(result.error)
         }
 
+        let validation = artifactStore.validateArtifacts(
+            featureSlug: summary.featureSlug,
+            requiredTypes: requiredArtifactTypes(for: phase)
+        )
+        guard validation.valid else {
+            throw SDDCoreError.artifactValidationFailed(validationMessage(for: validation))
+        }
+
         if let tokenUsage = result.tokenUsage {
             summary.tokenUsageSummary.append(tokenUsage)
         }
@@ -276,6 +287,24 @@ public final class SDDCore {
         if featureSlug.range(of: pattern, options: .regularExpression) == nil {
             throw SDDCoreError.invalidFeatureSlug(featureSlug)
         }
+    }
+
+    private func requiredArtifactTypes(for phase: WorkflowPhase) -> [String] {
+        switch phase {
+        case .plan:
+            return ["openspec_design", "openspec_tasks"]
+        case .implement:
+            return []
+        case .review:
+            return ["openspec_review"]
+        }
+    }
+
+    private func validationMessage(for report: ArtifactValidationReport) -> String {
+        let issueSummary = report.issues
+            .map { "\($0.ref.type)=\($0.reason.rawValue)" }
+            .joined(separator: ", ")
+        return "Required artifacts are not ready for \(report.featureSlug): \(issueSummary)"
     }
 
     private func emit(eventName: String, summary: RunSummary, properties: [String: String]) throws {
