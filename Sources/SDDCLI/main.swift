@@ -15,6 +15,7 @@ struct SDDCommand: ParsableCommand {
             SubmitResultCommand.self,
             AnswerPromptCommand.self,
             ApproveGateCommand.self,
+            RejectGateCommand.self,
             StatusCommand.self,
             ListArtifactsCommand.self,
             GetArtifactCommand.self,
@@ -173,6 +174,28 @@ struct ApproveGateCommand: ParsableCommand {
 
     func run() throws {
         try emit(try common.core().approveGate(runId: runId, phase: phase, approvedBy: approvedBy))
+    }
+}
+
+struct RejectGateCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "reject-gate")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(help: "Rejected workflow phase.")
+    var phase: WorkflowPhase
+
+    @Option(help: "Rejecting actor.")
+    var rejectedBy: String = NSUserName()
+
+    @Option(help: "Reason for rejecting the gate.")
+    var reason: String
+
+    func run() throws {
+        try emit(try common.core().rejectGate(runId: runId, phase: phase, rejectedBy: rejectedBy, reason: reason))
     }
 }
 

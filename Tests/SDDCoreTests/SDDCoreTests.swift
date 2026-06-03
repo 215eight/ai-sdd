@@ -325,6 +325,59 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(approved.action?.kind, .executeTasks)
     }
 
+    func testRejectGateBlocksApprovalRequiredRun() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+        try writePlanArtifacts(workspace: workspace)
+        _ = try core.submitResult(runId: started.runId, phase: .plan, result: okResult(adapter: .codex))
+
+        let rejected = try core.rejectGate(
+            runId: started.runId,
+            phase: .plan,
+            rejectedBy: "reviewer",
+            reason: "Design does not cover rollback."
+        )
+
+        XCTAssertEqual(rejected.status, .blocked)
+        XCTAssertEqual(rejected.phase, .plan)
+        XCTAssertEqual(rejected.blockedReason, .approvalRequired)
+        XCTAssertNil(rejected.action)
+
+        let summary = try core.getRunSummary(runId: started.runId)
+        XCTAssertEqual(summary.status, .blocked)
+        XCTAssertNil(summary.lock)
+        XCTAssertEqual(summary.blockers.last?.reason, .approvalRequired)
+        XCTAssertEqual(summary.blockers.last?.message, "Approval rejected: Design does not cover rollback.")
+        XCTAssertEqual(summary.phaseHistory.last?.note, "gate_rejected:plan:reviewer")
+
+        let events = try core.listRunEvents(runId: started.runId)
+        let rejectedEvent = try XCTUnwrap(events.first(where: { $0.eventName == "sdd.gate.rejected" }))
+        XCTAssertEqual(rejectedEvent.properties["phase"], "plan")
+        XCTAssertEqual(rejectedEvent.properties["rejected_by"], "reviewer")
+        XCTAssertEqual(rejectedEvent.properties["reason"], "Design does not cover rollback.")
+    }
+
+    func testRejectGateRequiresApprovalRequiredRun() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        XCTAssertThrowsError(
+            try core.rejectGate(
+                runId: started.runId,
+                phase: .plan,
+                rejectedBy: "reviewer",
+                reason: "No approval requested."
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SDDCoreError,
+                .invalidTransition("Run \(started.runId) is not waiting for approval.")
+            )
+        }
+    }
+
     func testSubmitPlanRejectsPlaceholderDesignAndTasksWithoutAdvancing() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)
@@ -375,6 +428,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(capabilities.supportedInterfaceModes, [.cli])
         XCTAssertTrue(capabilities.supportedOperations.contains("get_next_action"))
         XCTAssertTrue(capabilities.supportedCommands.contains("submit-result"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("reject_gate"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("reject-gate"))
         XCTAssertTrue(capabilities.supportedOperations.contains("validate_artifacts"))
         XCTAssertTrue(capabilities.supportedCommands.contains("validate-artifacts"))
         XCTAssertTrue(capabilities.supportedOperations.contains("normalize_intake"))

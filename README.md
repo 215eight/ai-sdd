@@ -46,6 +46,7 @@ swift run sdd get-artifact --feature checkout-flow --type openspec_design --json
 swift run sdd validate-artifacts --feature checkout-flow --json
 swift run sdd next --run-id <run_id> --json
 swift run sdd prepare-execution --run-id <run_id> --json
+swift run sdd reject-gate --run-id <run_id> --phase plan --reason "Plan needs changes." --json
 swift run sdd clear-lock --run-id <run_id> --json
 swift run sdd mark-blocked --run-id <run_id> --reason missing_input --message "Waiting for input." --json
 swift run sdd retry-action --run-id <run_id> --json

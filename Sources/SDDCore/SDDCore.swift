@@ -100,6 +100,7 @@ public final class SDDCore {
                 "submit-result",
                 "answer-prompt",
                 "approve-gate",
+                "reject-gate",
                 "status",
                 "list-artifacts",
                 "get-artifact",
@@ -119,6 +120,7 @@ public final class SDDCore {
                 "submit_result",
                 "answer_prompt",
                 "approve_gate",
+                "reject_gate",
                 "get_status",
                 "list_artifacts",
                 "get_artifact",
@@ -380,6 +382,46 @@ public final class SDDCore {
 
         try artifactStore.writeRunSummary(summary)
         try emit(eventName: "sdd.gate.approved", summary: summary, properties: ["phase": phase.rawValue])
+        return try nextAction(runId: runId)
+    }
+
+    public func rejectGate(runId: String, phase: WorkflowPhase, rejectedBy: String, reason: String) throws -> TransitionResult {
+        var summary = try artifactStore.findRunSummary(runId: runId)
+        guard summary.status == .approvalRequired else {
+            throw SDDCoreError.invalidTransition("Run \(runId) is not waiting for approval.")
+        }
+        guard summary.currentPhase == phase else {
+            throw SDDCoreError.invalidTransition("Cannot reject phase \(phase.rawValue) while current phase is \(summary.currentPhase.rawValue).")
+        }
+
+        summary.status = .blocked
+        summary.lock = nil
+        summary.blockers.append(
+            BlockerRecord(
+                reason: .approvalRequired,
+                message: "Approval rejected: \(reason)",
+                at: Date()
+            )
+        )
+        summary.phaseHistory.append(
+            PhaseHistoryEntry(
+                phase: phase,
+                status: .blocked,
+                at: Date(),
+                note: "gate_rejected:\(phase.rawValue):\(rejectedBy)"
+            )
+        )
+
+        try artifactStore.writeRunSummary(summary)
+        try emit(
+            eventName: "sdd.gate.rejected",
+            summary: summary,
+            properties: [
+                "phase": phase.rawValue,
+                "rejected_by": rejectedBy,
+                "reason": reason
+            ]
+        )
         return try nextAction(runId: runId)
     }
 
