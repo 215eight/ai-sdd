@@ -209,6 +209,61 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(decoded, report)
     }
 
+    func testNormalizedIntakeJSONContract() throws {
+        let normalized = NormalizedIntake(
+            intakeType: .prd,
+            title: "Checkout Flow",
+            sourceId: "prd-123",
+            owner: "payments",
+            productIntent: "Ship checkout.",
+            featureCatalog: [
+                FeatureCatalogEntry(featureSlug: "checkout-flow", title: "Checkout Flow", description: "Ship checkout.")
+            ],
+            dependencyGraph: [
+                DependencyEdge(fromFeatureSlug: "checkout-flow", toFeatureSlug: "payment-adapter")
+            ],
+            stackAssignments: [
+                StackAssignment(featureSlug: "checkout-flow", stack: "swift")
+            ],
+            closedDecisions: [
+                "Use CLI mode for the MVP."
+            ],
+            executionStatus: [
+                SliceExecutionStatus(featureSlug: "checkout-flow", status: .pending)
+            ],
+            sliceReadyRequirements: [
+                SliceReadyRequirement(
+                    featureSlug: "checkout-flow",
+                    title: "Checkout Flow",
+                    body: "Ship checkout.",
+                    acceptanceSurface: .none,
+                    alternativesRequired: false
+                )
+            ]
+        )
+        let object = try jsonObject(normalized)
+
+        XCTAssertEqual(object["schema_version"] as? String, "1.0.0")
+        XCTAssertEqual(object["intake_type"] as? String, "prd")
+        XCTAssertEqual(object["title"] as? String, "Checkout Flow")
+        XCTAssertEqual(object["source_id"] as? String, "prd-123")
+        XCTAssertEqual(object["owner"] as? String, "payments")
+        XCTAssertEqual(object["product_intent"] as? String, "Ship checkout.")
+        XCTAssertNotNil(object["feature_catalog"])
+        XCTAssertNotNil(object["dependency_graph"])
+        XCTAssertNotNil(object["stack_assignments"])
+        XCTAssertNotNil(object["closed_decisions"])
+        XCTAssertNotNil(object["execution_status"])
+        XCTAssertNotNil(object["slice_ready_requirements"])
+
+        let requirements = try XCTUnwrap(object["slice_ready_requirements"] as? [[String: Any]])
+        XCTAssertEqual(requirements.first?["acceptance_surface"] as? String, "none")
+        XCTAssertEqual(requirements.first?["alternatives_required"] as? Bool, false)
+
+        let decoded = try decode(NormalizedIntake.self, from: normalized)
+        XCTAssertEqual(decoded, normalized)
+    }
+
     private func sampleRunSummary() -> RunSummary {
         RunSummary(
             runId: "run_contract",

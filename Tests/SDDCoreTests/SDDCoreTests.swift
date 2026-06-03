@@ -75,6 +75,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("submit-result"))
         XCTAssertTrue(capabilities.supportedOperations.contains("validate_artifacts"))
         XCTAssertTrue(capabilities.supportedCommands.contains("validate-artifacts"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("normalize_intake"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("normalize-intake"))
     }
 
     func testArtifactOperationsExposeCanonicalOpenSpecChangeArtifacts() throws {

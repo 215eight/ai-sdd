@@ -18,7 +18,8 @@ struct SDDCommand: ParsableCommand {
             StatusCommand.self,
             ListArtifactsCommand.self,
             GetArtifactCommand.self,
-            ValidateArtifactsCommand.self
+            ValidateArtifactsCommand.self,
+            NormalizeIntakeCommand.self
         ]
     )
 }
@@ -196,6 +197,21 @@ struct ValidateArtifactsCommand: ParsableCommand {
 
     func run() throws {
         try emit(try common.core().validateArtifacts(featureSlug: feature))
+    }
+}
+
+struct NormalizeIntakeCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "normalize-intake")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(help: "Markdown intake file with front matter.")
+    var file: String
+
+    func run() throws {
+        let url = URL(fileURLWithPath: file)
+        let markdown = try String(contentsOf: url, encoding: .utf8)
+        try emit(try common.core().normalizeIntake(markdown: markdown))
     }
 }
 

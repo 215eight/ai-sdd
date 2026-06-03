@@ -8,6 +8,8 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
     case adapterResultFailed(String?)
     case artifactNotFound(String)
     case artifactReadFailed(String)
+    case intakeParseFailed(String)
+    case unsupportedIntakeType(String)
     case openspecWriteFailed(String)
     case telemetryWriteFailed(String)
 
@@ -25,6 +27,10 @@ public enum SDDCoreError: Error, LocalizedError, Equatable {
             return "Artifact not found: \(artifact)"
         case .artifactReadFailed(let artifact):
             return "Artifact could not be read as UTF-8 text: \(artifact)"
+        case .intakeParseFailed(let message):
+            return message
+        case .unsupportedIntakeType(let intakeType):
+            return "Unsupported intake type: \(intakeType)"
         case .openspecWriteFailed(let message):
             return "OpenSpec write failed: \(message)"
         case .telemetryWriteFailed(let message):
@@ -83,7 +89,8 @@ public final class SDDCore {
                 "status",
                 "list-artifacts",
                 "get-artifact",
-                "validate-artifacts"
+                "validate-artifacts",
+                "normalize-intake"
             ],
             supportedOperations: [
                 "start_run",
@@ -94,7 +101,8 @@ public final class SDDCore {
                 "get_status",
                 "list_artifacts",
                 "get_artifact",
-                "validate_artifacts"
+                "validate_artifacts",
+                "normalize_intake"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -244,6 +252,10 @@ public final class SDDCore {
     public func validateArtifacts(featureSlug: String) throws -> ArtifactValidationReport {
         try validateFeatureSlug(featureSlug)
         return artifactStore.validateArtifacts(featureSlug: featureSlug)
+    }
+
+    public func normalizeIntake(markdown: String) throws -> NormalizedIntake {
+        try IntakeNormalizer(workspace: workspace).normalize(markdown: markdown)
     }
 
     private func validateFeatureSlug(_ featureSlug: String) throws {

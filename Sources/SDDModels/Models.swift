@@ -337,6 +337,155 @@ public struct WorkspaceContext: Codable, Equatable {
     }
 }
 
+public enum IntakeType: String, Codable, CaseIterable {
+    case partnerChallenge = "partner_challenge"
+    case prd
+}
+
+public enum AcceptanceSurface: String, Codable, CaseIterable {
+    case none
+    case uiUserWorkflow = "ui_user_workflow"
+    case publicAPI = "public_api"
+    case cliWorkflow = "cli_workflow"
+    case operatorWorkflow = "operator_workflow"
+}
+
+public enum SliceStatus: String, Codable, CaseIterable {
+    case pending
+}
+
+public struct IntakeDocument: Codable, Equatable {
+    public var schemaVersion: String
+    public var intakeType: IntakeType
+    public var title: String
+    public var sourceId: String?
+    public var owner: String?
+    public var body: String
+
+    public init(
+        schemaVersion: String = SDDConstants.schemaVersion,
+        intakeType: IntakeType,
+        title: String,
+        sourceId: String?,
+        owner: String?,
+        body: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.intakeType = intakeType
+        self.title = title
+        self.sourceId = sourceId
+        self.owner = owner
+        self.body = body
+    }
+}
+
+public struct FeatureCatalogEntry: Codable, Equatable {
+    public var featureSlug: String
+    public var title: String
+    public var description: String
+
+    public init(featureSlug: String, title: String, description: String) {
+        self.featureSlug = featureSlug
+        self.title = title
+        self.description = description
+    }
+}
+
+public struct DependencyEdge: Codable, Equatable {
+    public var fromFeatureSlug: String
+    public var toFeatureSlug: String
+
+    public init(fromFeatureSlug: String, toFeatureSlug: String) {
+        self.fromFeatureSlug = fromFeatureSlug
+        self.toFeatureSlug = toFeatureSlug
+    }
+}
+
+public struct StackAssignment: Codable, Equatable {
+    public var featureSlug: String
+    public var stack: String
+
+    public init(featureSlug: String, stack: String) {
+        self.featureSlug = featureSlug
+        self.stack = stack
+    }
+}
+
+public struct SliceExecutionStatus: Codable, Equatable {
+    public var featureSlug: String
+    public var status: SliceStatus
+
+    public init(featureSlug: String, status: SliceStatus) {
+        self.featureSlug = featureSlug
+        self.status = status
+    }
+}
+
+public struct SliceReadyRequirement: Codable, Equatable {
+    public var featureSlug: String
+    public var title: String
+    public var body: String
+    public var acceptanceSurface: AcceptanceSurface
+    public var alternativesRequired: Bool
+
+    public init(
+        featureSlug: String,
+        title: String,
+        body: String,
+        acceptanceSurface: AcceptanceSurface,
+        alternativesRequired: Bool
+    ) {
+        self.featureSlug = featureSlug
+        self.title = title
+        self.body = body
+        self.acceptanceSurface = acceptanceSurface
+        self.alternativesRequired = alternativesRequired
+    }
+}
+
+public struct NormalizedIntake: Codable, Equatable {
+    public var schemaVersion: String
+    public var intakeType: IntakeType
+    public var title: String
+    public var sourceId: String?
+    public var owner: String?
+    public var productIntent: String
+    public var featureCatalog: [FeatureCatalogEntry]
+    public var dependencyGraph: [DependencyEdge]
+    public var stackAssignments: [StackAssignment]
+    public var closedDecisions: [String]
+    public var executionStatus: [SliceExecutionStatus]
+    public var sliceReadyRequirements: [SliceReadyRequirement]
+
+    public init(
+        schemaVersion: String = SDDConstants.schemaVersion,
+        intakeType: IntakeType,
+        title: String,
+        sourceId: String?,
+        owner: String?,
+        productIntent: String,
+        featureCatalog: [FeatureCatalogEntry],
+        dependencyGraph: [DependencyEdge],
+        stackAssignments: [StackAssignment],
+        closedDecisions: [String],
+        executionStatus: [SliceExecutionStatus],
+        sliceReadyRequirements: [SliceReadyRequirement]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.intakeType = intakeType
+        self.title = title
+        self.sourceId = sourceId
+        self.owner = owner
+        self.productIntent = productIntent
+        self.featureCatalog = featureCatalog
+        self.dependencyGraph = dependencyGraph
+        self.stackAssignments = stackAssignments
+        self.closedDecisions = closedDecisions
+        self.executionStatus = executionStatus
+        self.sliceReadyRequirements = sliceReadyRequirements
+    }
+}
+
 public struct TransitionInput: Codable, Equatable {
     public var runSummary: RunSummary
     public var artifactRefs: [ArtifactRef]
@@ -501,11 +650,11 @@ public struct Capabilities: Codable, Equatable {
         schemaVersion: String = SDDConstants.schemaVersion,
         protocolVersion: String = SDDConstants.protocolVersion,
         coreVersion: String = SDDConstants.coreVersion,
-            supportedCommands: [String],
-            supportedOperations: [String],
-            supportedOutputModes: [String],
-            supportedInterfaceModes: [InterfaceMode],
-            compatibility: String
+        supportedCommands: [String],
+        supportedOperations: [String],
+        supportedOutputModes: [String],
+        supportedInterfaceModes: [InterfaceMode],
+        compatibility: String
     ) {
         self.schemaVersion = schemaVersion
         self.protocolVersion = protocolVersion
