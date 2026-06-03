@@ -11,6 +11,7 @@ struct SDDCommand: ParsableCommand {
         subcommands: [
             CapabilitiesCommand.self,
             StartCommand.self,
+            RunCommand.self,
             NextCommand.self,
             SubmitResultCommand.self,
             AnswerPromptCommand.self,
@@ -110,6 +111,54 @@ struct StartCommand: ParsableCommand {
             throw ValidationError("Provide --feature or --intake-file.")
         }
         try emit(result)
+    }
+}
+
+struct RunCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "run")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Existing run ID to resume.")
+    var runId: String?
+
+    @Option(name: .long, help: "Feature slug to start.")
+    var feature: String?
+
+    @Option(name: .customLong("intake-file"), help: "Markdown intake file with front matter.")
+    var intakeFile: String?
+
+    @Option(help: "Execution adapter override. Defaults to the run adapter when resuming, or codex when starting.")
+    var adapter: AgentAdapter?
+
+    @Option(help: "Lock owner.")
+    var owner: String = NSUserName()
+
+    @Option(help: "Actor type for attribution.")
+    var actorType: ActorType = .agent
+
+    @Option(help: "Maximum loop iterations.")
+    var maxSteps: Int = 20
+
+    func run() throws {
+        let intakeMarkdown: String?
+        if let intakeFile {
+            intakeMarkdown = try String(contentsOf: URL(fileURLWithPath: intakeFile), encoding: .utf8)
+        } else {
+            intakeMarkdown = nil
+        }
+
+        try emit(
+            try common.core().runLoop(
+                runId: runId,
+                featureSlug: feature,
+                intakeMarkdown: intakeMarkdown,
+                adapter: adapter,
+                owner: owner,
+                actorType: actorType,
+                maxSteps: maxSteps
+            )
+        )
     }
 }
 

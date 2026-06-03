@@ -18,6 +18,7 @@ swift run sdd validate-workspace --json
 swift run sdd validate-secrets --json
 swift run sdd normalize-intake --file <intake_file> --json
 swift run sdd start --intake-file <intake_file> --json
+swift run sdd run --feature smoke-run --owner agent-session --actor-type agent --json
 swift run sdd start --feature smoke-run --owner agent-session --actor-type agent --json
 swift run sdd list-artifacts --feature smoke-run --json
 swift run sdd validate-artifacts --feature smoke-run --json

@@ -436,6 +436,8 @@ final class SDDCoreTests: XCTestCase {
 
         XCTAssertEqual(capabilities.supportedInterfaceModes, [.cli])
         XCTAssertTrue(capabilities.supportedOperations.contains("get_next_action"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("run_loop"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("run"))
         XCTAssertTrue(capabilities.supportedCommands.contains("submit-result"))
         XCTAssertTrue(capabilities.supportedOperations.contains("reject_gate"))
         XCTAssertTrue(capabilities.supportedCommands.contains("reject-gate"))
@@ -788,6 +790,45 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(invocation.prompt.contains("Adapter: codex"))
         XCTAssertTrue(invocation.prompt.contains("Produce a decision-closed implementation plan"))
         XCTAssertEqual(invocation.submitCommand, "sdd submit-result --run-id \(started.runId) --phase plan --json < result.json")
+    }
+
+    func testRunLoopStartsRunAndReturnsExecutableInvocationBoundary() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+
+        let loop = try core.runLoop(
+            featureSlug: "checkout-flow",
+            adapter: .claudeCode,
+            owner: "agent-session",
+            actorType: .agent
+        )
+
+        XCTAssertEqual(loop.status, .actionRequired)
+        XCTAssertEqual(loop.phase, .plan)
+        XCTAssertEqual(loop.iterations, 1)
+        XCTAssertEqual(loop.nextAction.action?.kind, .produceArtifact)
+        XCTAssertEqual(loop.invocation?.adapter, .claudeCode)
+        XCTAssertEqual(loop.invocation?.runId, loop.runId)
+        XCTAssertTrue(loop.message.contains("Executable action is ready"))
+
+        let summary = try core.getRunSummary(runId: loop.runId)
+        XCTAssertEqual(summary.identityAttribution.actorType, .agent)
+        XCTAssertEqual(summary.identityAttribution.agentAdapter, .claudeCode)
+    }
+
+    func testRunLoopStopsAtApprovalBoundaryWithoutInvocation() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+        try writePlanArtifacts(workspace: workspace)
+        _ = try core.submitResult(runId: started.runId, phase: .plan, result: okResult(adapter: .codex))
+
+        let loop = try core.runLoop(runId: started.runId, owner: "agent-session")
+
+        XCTAssertEqual(loop.status, .approvalRequired)
+        XCTAssertEqual(loop.phase, .plan)
+        XCTAssertNil(loop.invocation)
+        XCTAssertTrue(loop.message.contains("Human approval is required"))
     }
 
     func testPrepareExecutionCanOverrideAdapter() throws {

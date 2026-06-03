@@ -220,6 +220,7 @@ public final class SDDCore {
             supportedCommands: [
                 "capabilities",
                 "start",
+                "run",
                 "next",
                 "submit-result",
                 "answer-prompt",
@@ -241,6 +242,7 @@ public final class SDDCore {
             ],
             supportedOperations: [
                 "start_run",
+                "run_loop",
                 "get_next_action",
                 "submit_result",
                 "answer_prompt",
@@ -379,6 +381,114 @@ public final class SDDCore {
             throw SDDCoreError.secretMissing("Secret \(name) is not configured.")
         }
         return try secretResolver.resolve(reference)
+    }
+
+    public func runLoop(
+        runId: String? = nil,
+        featureSlug: String? = nil,
+        intakeMarkdown: String? = nil,
+        adapter: AgentAdapter? = nil,
+        owner: String,
+        actorType: ActorType = .agent,
+        maxSteps: Int = 20
+    ) throws -> WorkflowRunLoopResult {
+        guard maxSteps > 0 else {
+            throw SDDCoreError.invalidTransition("Run loop max steps must be greater than zero.")
+        }
+
+        let providedInputs = [runId, featureSlug, intakeMarkdown].compactMap { $0 }.count
+        guard providedInputs == 1 else {
+            throw SDDCoreError.invalidTransition("Provide exactly one of run_id, feature_slug, or intake_markdown.")
+        }
+
+        var result: TransitionResult
+        if let runId {
+            result = try nextAction(runId: runId)
+        } else if let featureSlug {
+            result = try startRun(featureSlug: featureSlug, adapter: adapter ?? .codex, owner: owner, actorType: actorType)
+        } else if let intakeMarkdown {
+            result = try startRun(intakeMarkdown: intakeMarkdown, adapter: adapter ?? .codex, owner: owner, actorType: actorType)
+        } else {
+            throw SDDCoreError.invalidTransition("Run loop input was not provided.")
+        }
+
+        var iterations = 1
+        while iterations <= maxSteps {
+            switch result.status {
+            case .actionRequired:
+                let invocation = try prepareExecution(runId: result.runId, adapter: adapter)
+                return WorkflowRunLoopResult(
+                    runId: result.runId,
+                    featureSlug: result.featureSlug,
+                    status: result.status,
+                    phase: result.phase,
+                    iterations: iterations,
+                    nextAction: result,
+                    invocation: invocation,
+                    message: "Executable action is ready. Run the selected coding-agent adapter and submit an ExecutionAdapterResult."
+                )
+            case .inputRequired:
+                return WorkflowRunLoopResult(
+                    runId: result.runId,
+                    featureSlug: result.featureSlug,
+                    status: result.status,
+                    phase: result.phase,
+                    iterations: iterations,
+                    nextAction: result,
+                    invocation: nil,
+                    message: "Human input is required. Submit the answer with answer_prompt."
+                )
+            case .approvalRequired:
+                return WorkflowRunLoopResult(
+                    runId: result.runId,
+                    featureSlug: result.featureSlug,
+                    status: result.status,
+                    phase: result.phase,
+                    iterations: iterations,
+                    nextAction: result,
+                    invocation: nil,
+                    message: "Human approval is required. Submit the decision with approve_gate or reject_gate."
+                )
+            case .blocked:
+                return WorkflowRunLoopResult(
+                    runId: result.runId,
+                    featureSlug: result.featureSlug,
+                    status: result.status,
+                    phase: result.phase,
+                    iterations: iterations,
+                    nextAction: result,
+                    invocation: nil,
+                    message: "Run is blocked. Resolve the blocker or use retry_action when ready."
+                )
+            case .completed:
+                return WorkflowRunLoopResult(
+                    runId: result.runId,
+                    featureSlug: result.featureSlug,
+                    status: result.status,
+                    phase: result.phase,
+                    iterations: iterations,
+                    nextAction: result,
+                    invocation: nil,
+                    message: "Run is completed."
+                )
+            case .failed:
+                return WorkflowRunLoopResult(
+                    runId: result.runId,
+                    featureSlug: result.featureSlug,
+                    status: result.status,
+                    phase: result.phase,
+                    iterations: iterations,
+                    nextAction: result,
+                    invocation: nil,
+                    message: "Run failed. Inspect the failed reason and retry when appropriate."
+                )
+            case .running:
+                result = try nextAction(runId: result.runId)
+                iterations += 1
+            }
+        }
+
+        throw SDDCoreError.invalidTransition("Run loop exceeded max steps: \(maxSteps).")
     }
 
     public func startRun(featureSlug: String, adapter: AgentAdapter, owner: String, actorType: ActorType = .human) throws -> TransitionResult {

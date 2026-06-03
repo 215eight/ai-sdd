@@ -171,6 +171,61 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(decoded, invocation)
     }
 
+    func testWorkflowRunLoopResultJSONContract() throws {
+        let nextAction = TransitionResult(
+            runId: "run_contract",
+            featureSlug: "checkout-flow",
+            status: .actionRequired,
+            phase: .plan,
+            agentRole: "sdd-planner",
+            action: WorkflowAction(
+                kind: .produceArtifact,
+                instruction: "Produce a plan.",
+                requiredInputs: [],
+                requiredOutputs: []
+            ),
+            completionContract: CompletionContract(submitPhase: .plan, requiresHumanApproval: true),
+            blockedReason: nil,
+            failedReason: nil
+        )
+        let invocation = ExecutionAdapterInvocation(
+            adapter: .codex,
+            runId: "run_contract",
+            featureSlug: "checkout-flow",
+            phase: .plan,
+            agentRole: "sdd-planner",
+            prompt: "Execute the workflow action.",
+            requiredInputs: [],
+            requiredOutputs: [],
+            completionContract: CompletionContract(submitPhase: .plan, requiresHumanApproval: true),
+            submitCommand: "sdd submit-result --run-id run_contract --phase plan --json < result.json"
+        )
+        let result = WorkflowRunLoopResult(
+            runId: "run_contract",
+            featureSlug: "checkout-flow",
+            status: .actionRequired,
+            phase: .plan,
+            iterations: 1,
+            nextAction: nextAction,
+            invocation: invocation,
+            message: "Executable action is ready."
+        )
+        let object = try jsonObject(result)
+
+        XCTAssertEqual(object["schema_version"] as? String, "1.0.0")
+        XCTAssertEqual(object["run_id"] as? String, "run_contract")
+        XCTAssertEqual(object["feature_slug"] as? String, "checkout-flow")
+        XCTAssertEqual(object["status"] as? String, "action_required")
+        XCTAssertEqual(object["phase"] as? String, "plan")
+        XCTAssertEqual(object["iterations"] as? Int, 1)
+        XCTAssertNotNil(object["next_action"])
+        XCTAssertNotNil(object["invocation"])
+        XCTAssertEqual(object["message"] as? String, "Executable action is ready.")
+
+        let decoded = try decode(WorkflowRunLoopResult.self, from: result)
+        XCTAssertEqual(decoded, result)
+    }
+
     func testTelemetryEventJSONContract() throws {
         let event = TelemetryEvent(
             eventId: "evt_contract",

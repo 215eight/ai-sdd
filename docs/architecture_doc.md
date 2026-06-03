@@ -71,6 +71,10 @@ failed.
 Workflow transition rules live in `SDDCore`. Codex-specific and Claude-specific
 behavior belongs only in execution adapters.
 
+The CLI `run` command is an orchestration helper over `SDDCore`. It starts or
+resumes a run and returns the next typed execution invocation or human boundary;
+it does not spawn Codex, Claude Code, or any other provider-specific agent.
+
 ## File Placement
 
 Use these locations:

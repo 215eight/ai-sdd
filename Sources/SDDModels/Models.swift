@@ -702,6 +702,40 @@ public struct ExecutionAdapterInvocation: Codable, Equatable {
     }
 }
 
+public struct WorkflowRunLoopResult: Codable, Equatable {
+    public var schemaVersion: String
+    public var runId: String
+    public var featureSlug: String
+    public var status: WorkflowStatus
+    public var phase: WorkflowPhase
+    public var iterations: Int
+    public var nextAction: TransitionResult
+    public var invocation: ExecutionAdapterInvocation?
+    public var message: String
+
+    public init(
+        schemaVersion: String = SDDConstants.schemaVersion,
+        runId: String,
+        featureSlug: String,
+        status: WorkflowStatus,
+        phase: WorkflowPhase,
+        iterations: Int,
+        nextAction: TransitionResult,
+        invocation: ExecutionAdapterInvocation?,
+        message: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.runId = runId
+        self.featureSlug = featureSlug
+        self.status = status
+        self.phase = phase
+        self.iterations = iterations
+        self.nextAction = nextAction
+        self.invocation = invocation
+        self.message = message
+    }
+}
+
 public struct TelemetryEvent: Codable, Equatable {
     public var eventId: String
     public var eventName: String
