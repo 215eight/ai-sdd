@@ -706,3 +706,56 @@ public struct Capabilities: Codable, Equatable {
         self.compatibility = compatibility
     }
 }
+
+public enum WorkspaceValidationCheckStatus: String, Codable, CaseIterable {
+    case passed
+    case failed
+}
+
+public struct WorkspaceValidationCheck: Codable, Equatable {
+    public var name: String
+    public var status: WorkspaceValidationCheckStatus
+    public var path: String?
+    public var message: String
+
+    public init(name: String, status: WorkspaceValidationCheckStatus, path: String?, message: String) {
+        self.name = name
+        self.status = status
+        self.path = path
+        self.message = message
+    }
+}
+
+public struct WorkspaceValidationReport: Codable, Equatable {
+    public var schemaVersion: String
+    public var valid: Bool
+    public var root: String
+    public var openspecRoot: String
+    public var telemetryPath: String
+    public var repoId: String
+    public var workspaceId: String
+    public var stack: String
+    public var checks: [WorkspaceValidationCheck]
+
+    public init(
+        schemaVersion: String = SDDConstants.schemaVersion,
+        valid: Bool,
+        root: String,
+        openspecRoot: String,
+        telemetryPath: String,
+        repoId: String,
+        workspaceId: String,
+        stack: String,
+        checks: [WorkspaceValidationCheck]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.valid = valid
+        self.root = root
+        self.openspecRoot = openspecRoot
+        self.telemetryPath = telemetryPath
+        self.repoId = repoId
+        self.workspaceId = workspaceId
+        self.stack = stack
+        self.checks = checks
+    }
+}

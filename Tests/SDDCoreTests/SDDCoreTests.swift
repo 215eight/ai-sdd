@@ -391,6 +391,62 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("mark-blocked"))
         XCTAssertTrue(capabilities.supportedOperations.contains("retry_action"))
         XCTAssertTrue(capabilities.supportedCommands.contains("retry-action"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("validate_workspace"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("validate-workspace"))
+    }
+
+    func testValidateWorkspacePassesForDefaultTemporaryWorkspace() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+
+        let report = core.validateWorkspace()
+
+        XCTAssertTrue(report.valid)
+        let canonicalRoot = workspace.root.resolvingSymlinksInPath().standardizedFileURL
+        XCTAssertEqual(report.root, canonicalRoot.path)
+        XCTAssertEqual(report.openspecRoot, canonicalRoot.appendingPathComponent("openspec").path)
+        XCTAssertEqual(report.telemetryPath, canonicalRoot.appendingPathComponent(".sdd/telemetry/events.jsonl").path)
+        XCTAssertEqual(report.repoId, "test/repo")
+        XCTAssertEqual(report.workspaceId, "test-workspace")
+        XCTAssertEqual(report.stack, "swift")
+        XCTAssertEqual(report.checks.map(\.status), Array(repeating: .passed, count: report.checks.count))
+        XCTAssertEqual(report.checks.map(\.name), [
+            "workspace_root_exists",
+            "workspace_root_is_directory",
+            "workspace_root_writable",
+            "openspec_root_inside_workspace",
+            "telemetry_path_inside_workspace",
+            "repo_id_configured",
+            "workspace_id_configured",
+            "stack_configured"
+        ])
+    }
+
+    func testValidateWorkspaceFailsForMissingRootAndExternalPaths() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-sdd-tests")
+            .appendingPathComponent(UUID().uuidString)
+        let workspace = SDDWorkspaceConfiguration(
+            root: root,
+            openspecRoot: FileManager.default.temporaryDirectory.appendingPathComponent("external-openspec"),
+            telemetryPath: FileManager.default.temporaryDirectory.appendingPathComponent("external-events.jsonl"),
+            repoId: "",
+            workspaceId: "",
+            stack: ""
+        )
+        let core = SDDCore(workspace: workspace)
+
+        let report = core.validateWorkspace()
+
+        XCTAssertFalse(report.valid)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "workspace_root_exists" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "workspace_root_is_directory" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "workspace_root_writable" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "openspec_root_inside_workspace" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "telemetry_path_inside_workspace" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "repo_id_configured" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "workspace_id_configured" })?.status, .failed)
+        XCTAssertEqual(report.checks.first(where: { $0.name == "stack_configured" })?.status, .failed)
     }
 
     func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {

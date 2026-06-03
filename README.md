@@ -31,11 +31,13 @@ Local MVP telemetry is written to:
 ```bash
 swift test
 swift run sdd capabilities --json
+swift run sdd validate-workspace --json
 ```
 
 Useful MVP commands:
 
 ```bash
+swift run sdd validate-workspace --json
 swift run sdd start --feature checkout-flow --json
 swift run sdd start --intake-file docs/intake/checkout.md --json
 swift run sdd normalize-intake --file docs/intake/checkout.md --json

@@ -25,7 +25,8 @@ struct SDDCommand: ParsableCommand {
             PrepareExecutionCommand.self,
             ClearLockCommand.self,
             MarkBlockedCommand.self,
-            RetryActionCommand.self
+            RetryActionCommand.self,
+            ValidateWorkspaceCommand.self
         ]
     )
 }
@@ -50,6 +51,16 @@ struct CapabilitiesCommand: ParsableCommand {
 
     func run() throws {
         try emit(common.core().capabilities())
+    }
+}
+
+struct ValidateWorkspaceCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "validate-workspace")
+
+    @OptionGroup var common: CommonOptions
+
+    func run() throws {
+        try emit(common.core().validateWorkspace())
     }
 }
 

@@ -204,6 +204,45 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(decoded, capabilities)
     }
 
+    func testWorkspaceValidationReportJSONContract() throws {
+        let report = WorkspaceValidationReport(
+            valid: false,
+            root: "/workspace",
+            openspecRoot: "/workspace/openspec",
+            telemetryPath: "/workspace/.sdd/telemetry/events.jsonl",
+            repoId: "example/repo",
+            workspaceId: "local",
+            stack: "swift",
+            checks: [
+                WorkspaceValidationCheck(
+                    name: "workspace_root_exists",
+                    status: .failed,
+                    path: "/workspace",
+                    message: "Workspace root does not exist."
+                )
+            ]
+        )
+        let object = try jsonObject(report)
+
+        XCTAssertEqual(object["schema_version"] as? String, "1.0.0")
+        XCTAssertEqual(object["valid"] as? Bool, false)
+        XCTAssertEqual(object["root"] as? String, "/workspace")
+        XCTAssertEqual(object["openspec_root"] as? String, "/workspace/openspec")
+        XCTAssertEqual(object["telemetry_path"] as? String, "/workspace/.sdd/telemetry/events.jsonl")
+        XCTAssertEqual(object["repo_id"] as? String, "example/repo")
+        XCTAssertEqual(object["workspace_id"] as? String, "local")
+        XCTAssertEqual(object["stack"] as? String, "swift")
+
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+        XCTAssertEqual(checks.first?["name"] as? String, "workspace_root_exists")
+        XCTAssertEqual(checks.first?["status"] as? String, "failed")
+        XCTAssertEqual(checks.first?["path"] as? String, "/workspace")
+        XCTAssertEqual(checks.first?["message"] as? String, "Workspace root does not exist.")
+
+        let decoded = try decode(WorkspaceValidationReport.self, from: report)
+        XCTAssertEqual(decoded, report)
+    }
+
     func testArtifactValidationReportJSONContract() throws {
         let report = ArtifactValidationReport(
             featureSlug: "checkout-flow",

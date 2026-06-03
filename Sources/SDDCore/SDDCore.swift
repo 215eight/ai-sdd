@@ -102,7 +102,8 @@ public final class SDDCore {
                 "prepare-execution",
                 "clear-lock",
                 "mark-blocked",
-                "retry-action"
+                "retry-action",
+                "validate-workspace"
             ],
             supportedOperations: [
                 "start_run",
@@ -120,11 +121,105 @@ public final class SDDCore {
                 "prepare_execution",
                 "clear_lock",
                 "mark_blocked",
-                "retry_action"
+                "retry_action",
+                "validate_workspace"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
             compatibility: "mvp-cli"
+        )
+    }
+
+    public func validateWorkspace() -> WorkspaceValidationReport {
+        let root = canonicalURL(workspace.root)
+        let openspecRoot = canonicalURL(workspace.openspecRoot)
+        let telemetryPath = canonicalURL(workspace.telemetryPath)
+        var checks: [WorkspaceValidationCheck] = []
+
+        var isDirectory: ObjCBool = false
+        let rootExists = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory)
+        let rootIsDirectory = rootExists && isDirectory.boolValue
+        let rootIsWritable = rootIsDirectory && FileManager.default.isWritableFile(atPath: root.path)
+        let openspecInsideWorkspace = isPath(openspecRoot, inside: root)
+        let telemetryInsideWorkspace = isPath(telemetryPath, inside: root)
+        let repoIDConfigured = !workspace.repoId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let workspaceIDConfigured = !workspace.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let stackConfigured = !workspace.stack.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "workspace_root_exists",
+                status: rootExists ? .passed : .failed,
+                path: root.path,
+                message: rootExists ? "Workspace root exists." : "Workspace root does not exist."
+            )
+        )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "workspace_root_is_directory",
+                status: rootIsDirectory ? .passed : .failed,
+                path: root.path,
+                message: rootIsDirectory ? "Workspace root is a directory." : "Workspace root is not a directory."
+            )
+        )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "workspace_root_writable",
+                status: rootIsWritable ? .passed : .failed,
+                path: root.path,
+                message: rootIsWritable ? "Workspace root is writable." : "Workspace root is not writable."
+            )
+        )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "openspec_root_inside_workspace",
+                status: openspecInsideWorkspace ? .passed : .failed,
+                path: openspecRoot.path,
+                message: openspecInsideWorkspace ? "OpenSpec root is inside the workspace." : "OpenSpec root must be inside the workspace."
+            )
+        )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "telemetry_path_inside_workspace",
+                status: telemetryInsideWorkspace ? .passed : .failed,
+                path: telemetryPath.path,
+                message: telemetryInsideWorkspace ? "Telemetry path is inside the workspace." : "Telemetry path must be inside the workspace."
+            )
+        )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "repo_id_configured",
+                status: repoIDConfigured ? .passed : .failed,
+                path: nil,
+                message: repoIDConfigured ? "Repository identifier is configured." : "Repository identifier is empty."
+            )
+        )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "workspace_id_configured",
+                status: workspaceIDConfigured ? .passed : .failed,
+                path: nil,
+                message: workspaceIDConfigured ? "Workspace identifier is configured." : "Workspace identifier is empty."
+            )
+        )
+        checks.append(
+            WorkspaceValidationCheck(
+                name: "stack_configured",
+                status: stackConfigured ? .passed : .failed,
+                path: nil,
+                message: stackConfigured ? "Stack is configured." : "Stack is empty."
+            )
+        )
+
+        return WorkspaceValidationReport(
+            valid: checks.allSatisfy { $0.status == .passed },
+            root: root.path,
+            openspecRoot: openspecRoot.path,
+            telemetryPath: telemetryPath.path,
+            repoId: workspace.repoId,
+            workspaceId: workspace.workspaceId,
+            stack: workspace.stack,
+            checks: checks
         )
     }
 
@@ -427,6 +522,27 @@ public final class SDDCore {
 
     private func isTerminal(_ status: WorkflowStatus) -> Bool {
         status == .completed || status == .failed
+    }
+
+    private func isPath(_ candidate: URL, inside root: URL) -> Bool {
+        let rootPath = canonicalURL(root).path
+        let candidatePath = canonicalURL(candidate).path
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
+    }
+
+    private func canonicalURL(_ url: URL) -> URL {
+        var current = url.standardizedFileURL
+        var missingComponents: [String] = []
+
+        while !FileManager.default.fileExists(atPath: current.path), current.path != "/" {
+            missingComponents.insert(current.lastPathComponent, at: 0)
+            current.deleteLastPathComponent()
+        }
+
+        let resolvedBase = current.resolvingSymlinksInPath().standardizedFileURL
+        return missingComponents.reduce(resolvedBase) { partial, component in
+            partial.appendingPathComponent(component)
+        }.standardizedFileURL
     }
 
     private func lockHeldResult(_ summary: RunSummary) -> TransitionResult {
