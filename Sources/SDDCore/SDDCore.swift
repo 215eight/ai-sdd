@@ -100,7 +100,8 @@ public final class SDDCore {
                 "get-run-summary",
                 "list-run-events",
                 "prepare-execution",
-                "clear-lock"
+                "clear-lock",
+                "mark-blocked"
             ],
             supportedOperations: [
                 "start_run",
@@ -116,7 +117,8 @@ public final class SDDCore {
                 "get_run_summary",
                 "list_run_events",
                 "prepare_execution",
-                "clear_lock"
+                "clear_lock",
+                "mark_blocked"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -331,6 +333,36 @@ public final class SDDCore {
         try artifactStore.writeRunSummary(summary)
         try emit(eventName: "sdd.lock.cleared", summary: summary, properties: ["cleared_by": clearedBy])
         return summary
+    }
+
+    public func markBlocked(runId: String, reason: BlockedReason, message: String, markedBy: String) throws -> TransitionResult {
+        var summary = try artifactStore.findRunSummary(runId: runId)
+        guard !isTerminal(summary.status) else {
+            throw SDDCoreError.invalidTransition("Run \(runId) is \(summary.status.rawValue) and cannot be marked blocked.")
+        }
+
+        summary.status = .blocked
+        summary.lock = nil
+        summary.blockers.append(BlockerRecord(reason: reason, message: message, at: Date()))
+        summary.phaseHistory.append(
+            PhaseHistoryEntry(
+                phase: summary.currentPhase,
+                status: .blocked,
+                at: Date(),
+                note: "blocked:\(reason.rawValue):\(markedBy)"
+            )
+        )
+
+        try artifactStore.writeRunSummary(summary)
+        try emit(
+            eventName: "sdd.run.blocked",
+            summary: summary,
+            properties: [
+                "reason": reason.rawValue,
+                "marked_by": markedBy
+            ]
+        )
+        return try nextAction(runId: runId)
     }
 
     public func listArtifacts(featureSlug: String) throws -> [ArtifactDescriptor] {

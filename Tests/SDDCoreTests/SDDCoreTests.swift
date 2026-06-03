@@ -164,6 +164,61 @@ final class SDDCoreTests: XCTestCase {
         }
     }
 
+    func testMarkBlockedStopsRunAndRecordsBlocker() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+
+        let blocked = try core.markBlocked(
+            runId: started.runId,
+            reason: .missingInput,
+            message: "Waiting for pricing decision.",
+            markedBy: "operator"
+        )
+
+        XCTAssertEqual(blocked.status, .blocked)
+        XCTAssertEqual(blocked.blockedReason, .missingInput)
+        XCTAssertNil(blocked.action)
+
+        let summary = try core.getRunSummary(runId: started.runId)
+        XCTAssertEqual(summary.status, .blocked)
+        XCTAssertNil(summary.lock)
+        XCTAssertEqual(summary.blockers.last?.reason, .missingInput)
+        XCTAssertEqual(summary.blockers.last?.message, "Waiting for pricing decision.")
+        XCTAssertEqual(summary.phaseHistory.last?.note, "blocked:missing_input:operator")
+
+        let events = try core.listRunEvents(runId: started.runId)
+        let blockedEvent = try XCTUnwrap(events.first(where: { $0.eventName == "sdd.run.blocked" }))
+        XCTAssertEqual(blockedEvent.properties["reason"], "missing_input")
+        XCTAssertEqual(blockedEvent.properties["marked_by"], "operator")
+    }
+
+    func testMarkBlockedRejectsCompletedRuns() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+        try writePlanArtifacts(workspace: workspace)
+        _ = try core.submitResult(runId: started.runId, phase: .plan, result: okResult(adapter: .codex))
+        _ = try core.approveGate(runId: started.runId, phase: .plan, approvedBy: "operator")
+        _ = try core.submitResult(runId: started.runId, phase: .implement, result: okResult(adapter: .codex))
+        try writeArtifact(workspace: workspace, path: "openspec/changes/checkout-flow/review.md", content: "# Review\n\n## Verdict\n\nAPPROVE\n")
+        _ = try core.submitResult(runId: started.runId, phase: .review, result: okResult(adapter: .codex))
+
+        XCTAssertThrowsError(
+            try core.markBlocked(
+                runId: started.runId,
+                reason: .policyViolation,
+                message: "Late blocker.",
+                markedBy: "operator"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SDDCoreError,
+                .invalidTransition("Run \(started.runId) is completed and cannot be marked blocked.")
+            )
+        }
+    }
+
     func testSubmitPlanRequiresApprovalAndApproveMovesToImplement() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)
@@ -256,6 +311,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("prepare-execution"))
         XCTAssertTrue(capabilities.supportedOperations.contains("clear_lock"))
         XCTAssertTrue(capabilities.supportedCommands.contains("clear-lock"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("mark_blocked"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("mark-blocked"))
     }
 
     func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {

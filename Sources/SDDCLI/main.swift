@@ -23,7 +23,8 @@ struct SDDCommand: ParsableCommand {
             GetRunSummaryCommand.self,
             ListRunEventsCommand.self,
             PrepareExecutionCommand.self,
-            ClearLockCommand.self
+            ClearLockCommand.self,
+            MarkBlockedCommand.self
         ]
     )
 }
@@ -234,6 +235,28 @@ struct ClearLockCommand: ParsableCommand {
     }
 }
 
+struct MarkBlockedCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "mark-blocked")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(help: "Blocked reason.")
+    var reason: BlockedReason
+
+    @Option(help: "Human-readable blocker message.")
+    var message: String
+
+    @Option(help: "Actor marking the run blocked.")
+    var markedBy: String = NSUserName()
+
+    func run() throws {
+        try emit(try common.core().markBlocked(runId: runId, reason: reason, message: message, markedBy: markedBy))
+    }
+}
+
 struct ListArtifactsCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list-artifacts")
 
@@ -335,3 +358,4 @@ func emit<Payload: Encodable>(_ payload: Payload) throws {
 
 extension WorkflowPhase: ExpressibleByArgument {}
 extension AgentAdapter: ExpressibleByArgument {}
+extension BlockedReason: ExpressibleByArgument {}
