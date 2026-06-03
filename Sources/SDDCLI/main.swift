@@ -24,7 +24,8 @@ struct SDDCommand: ParsableCommand {
             ListRunEventsCommand.self,
             PrepareExecutionCommand.self,
             ClearLockCommand.self,
-            MarkBlockedCommand.self
+            MarkBlockedCommand.self,
+            RetryActionCommand.self
         ]
     )
 }
@@ -254,6 +255,22 @@ struct MarkBlockedCommand: ParsableCommand {
 
     func run() throws {
         try emit(try common.core().markBlocked(runId: runId, reason: reason, message: message, markedBy: markedBy))
+    }
+}
+
+struct RetryActionCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "retry-action")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(help: "Lock owner for the retried action.")
+    var owner: String = NSUserName()
+
+    func run() throws {
+        try emit(try common.core().retryAction(runId: runId, owner: owner))
     }
 }
 

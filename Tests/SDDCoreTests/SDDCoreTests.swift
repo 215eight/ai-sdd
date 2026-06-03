@@ -219,6 +219,82 @@ final class SDDCoreTests: XCTestCase {
         }
     }
 
+    func testRetryActionReopensBlockedRunWithFreshLock() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+        _ = try core.markBlocked(
+            runId: started.runId,
+            reason: .missingInput,
+            message: "Waiting for pricing decision.",
+            markedBy: "operator"
+        )
+
+        let retried = try core.retryAction(runId: started.runId, owner: "retry-agent")
+
+        XCTAssertEqual(retried.status, .actionRequired)
+        XCTAssertEqual(retried.phase, .plan)
+        XCTAssertEqual(retried.action?.kind, .produceArtifact)
+
+        let summary = try core.getRunSummary(runId: started.runId)
+        XCTAssertEqual(summary.status, .actionRequired)
+        XCTAssertEqual(summary.lock?.owner, "retry-agent")
+        XCTAssertEqual(summary.blockers.last?.reason, .missingInput)
+        XCTAssertEqual(summary.phaseHistory.last?.note, "retry_action:retry-agent")
+
+        let events = try core.listRunEvents(runId: started.runId)
+        let retryEvent = try XCTUnwrap(events.first(where: { $0.eventName == "sdd.action.retried" }))
+        XCTAssertEqual(retryEvent.properties["owner"], "retry-agent")
+    }
+
+    func testRetryActionReopensFailedRun() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+
+        XCTAssertThrowsError(
+            try core.submitResult(
+                runId: started.runId,
+                phase: .plan,
+                result: ExecutionAdapterResult(
+                    adapter: .codex,
+                    status: .failed,
+                    artifactRefs: [],
+                    logRef: nil,
+                    telemetryRefs: [],
+                    tokenUsage: nil,
+                    error: "adapter crashed"
+                )
+            )
+        )
+
+        let retried = try core.retryAction(runId: started.runId, owner: "retry-agent")
+
+        XCTAssertEqual(retried.status, .actionRequired)
+        XCTAssertEqual(retried.phase, .plan)
+        XCTAssertEqual(retried.action?.kind, .produceArtifact)
+
+        let summary = try core.getRunSummary(runId: started.runId)
+        XCTAssertEqual(summary.status, .actionRequired)
+        XCTAssertEqual(summary.lock?.owner, "retry-agent")
+        XCTAssertTrue(summary.phaseHistory.contains { $0.status == .failed && $0.note == "adapter crashed" })
+    }
+
+    func testRetryActionRejectsActionRequiredRuns() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "agent-session")
+
+        XCTAssertThrowsError(
+            try core.retryAction(runId: started.runId, owner: "retry-agent")
+        ) { error in
+            XCTAssertEqual(
+                error as? SDDCoreError,
+                .invalidTransition("Run \(started.runId) is action_required and cannot be retried.")
+            )
+        }
+    }
+
     func testSubmitPlanRequiresApprovalAndApproveMovesToImplement() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)
@@ -313,6 +389,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("clear-lock"))
         XCTAssertTrue(capabilities.supportedOperations.contains("mark_blocked"))
         XCTAssertTrue(capabilities.supportedCommands.contains("mark-blocked"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("retry_action"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("retry-action"))
     }
 
     func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {

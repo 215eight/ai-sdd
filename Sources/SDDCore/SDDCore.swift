@@ -101,7 +101,8 @@ public final class SDDCore {
                 "list-run-events",
                 "prepare-execution",
                 "clear-lock",
-                "mark-blocked"
+                "mark-blocked",
+                "retry-action"
             ],
             supportedOperations: [
                 "start_run",
@@ -118,7 +119,8 @@ public final class SDDCore {
                 "list_run_events",
                 "prepare_execution",
                 "clear_lock",
-                "mark_blocked"
+                "mark_blocked",
+                "retry_action"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -362,6 +364,29 @@ public final class SDDCore {
                 "marked_by": markedBy
             ]
         )
+        return try nextAction(runId: runId)
+    }
+
+    public func retryAction(runId: String, owner: String) throws -> TransitionResult {
+        var summary = try artifactStore.findRunSummary(runId: runId)
+        guard summary.status == .blocked || summary.status == .failed else {
+            throw SDDCoreError.invalidTransition("Run \(runId) is \(summary.status.rawValue) and cannot be retried.")
+        }
+
+        let now = Date()
+        summary.status = .actionRequired
+        summary.lock = LockInfo(owner: owner, acquiredAt: now, expiresAt: nil)
+        summary.phaseHistory.append(
+            PhaseHistoryEntry(
+                phase: summary.currentPhase,
+                status: .actionRequired,
+                at: now,
+                note: "retry_action:\(owner)"
+            )
+        )
+
+        try artifactStore.writeRunSummary(summary)
+        try emit(eventName: "sdd.action.retried", summary: summary, properties: ["owner": owner])
         return try nextAction(runId: runId)
     }
 
