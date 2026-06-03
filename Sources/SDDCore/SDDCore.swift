@@ -124,6 +124,9 @@ public final class SDDCore {
 
     public func startRun(featureSlug: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
         try validateFeatureSlug(featureSlug)
+        if let existing = try activeLockedRun(featureSlug: featureSlug) {
+            return lockHeldResult(existing)
+        }
         try artifactStore.createFeatureArtifacts(featureSlug: featureSlug)
         return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner)
     }
@@ -134,6 +137,9 @@ public final class SDDCore {
             throw SDDCoreError.intakeParseFailed("Normalized intake must include at least one slice-ready requirement.")
         }
         try validateFeatureSlug(featureSlug)
+        if let existing = try activeLockedRun(featureSlug: featureSlug) {
+            return lockHeldResult(existing)
+        }
         try artifactStore.createFeatureArtifacts(featureSlug: featureSlug, intake: intake)
         return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner)
     }
@@ -328,6 +334,34 @@ public final class SDDCore {
         if featureSlug.range(of: pattern, options: .regularExpression) == nil {
             throw SDDCoreError.invalidFeatureSlug(featureSlug)
         }
+    }
+
+    private func activeLockedRun(featureSlug: String) throws -> RunSummary? {
+        guard let summary = try artifactStore.runSummary(featureSlug: featureSlug),
+              summary.lock != nil,
+              !isTerminal(summary.status) else {
+            return nil
+        }
+
+        return summary
+    }
+
+    private func isTerminal(_ status: WorkflowStatus) -> Bool {
+        status == .completed || status == .failed
+    }
+
+    private func lockHeldResult(_ summary: RunSummary) -> TransitionResult {
+        TransitionResult(
+            runId: summary.runId,
+            featureSlug: summary.featureSlug,
+            status: .blocked,
+            phase: summary.currentPhase,
+            agentRole: nil,
+            action: nil,
+            completionContract: nil,
+            blockedReason: .lockHeld,
+            failedReason: nil
+        )
     }
 
     private func requiredArtifactTypes(for phase: WorkflowPhase) -> [String] {

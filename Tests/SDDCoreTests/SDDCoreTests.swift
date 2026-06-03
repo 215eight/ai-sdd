@@ -58,6 +58,63 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertEqual(validation.artifacts.first(where: { $0.ref.type == "openspec_design" })?.state, .placeholder)
     }
 
+    func testStartRunReturnsBlockedWhenFeatureAlreadyHasActiveLock() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let first = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        let second = try core.startRun(featureSlug: "checkout-flow", adapter: .claudeCode, owner: "other")
+
+        XCTAssertEqual(second.runId, first.runId)
+        XCTAssertEqual(second.featureSlug, "checkout-flow")
+        XCTAssertEqual(second.status, .blocked)
+        XCTAssertEqual(second.phase, .plan)
+        XCTAssertEqual(second.blockedReason, .lockHeld)
+        XCTAssertNil(second.action)
+    }
+
+    func testStartRunFromIntakeDoesNotOverwriteLockedOpenSpecArtifacts() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let first = try core.startRun(
+            intakeMarkdown: """
+            ---
+            intake_type: prd
+            title: Checkout Flow
+            source_id: prd-123
+            owner: payments
+            ---
+            Original product intent.
+            """,
+            adapter: .codex,
+            owner: "tester"
+        )
+
+        let second = try core.startRun(
+            intakeMarkdown: """
+            ---
+            intake_type: prd
+            title: Checkout Flow
+            source_id: prd-456
+            owner: payments
+            ---
+            Replacement product intent.
+            """,
+            adapter: .codex,
+            owner: "other"
+        )
+
+        XCTAssertEqual(second.runId, first.runId)
+        XCTAssertEqual(second.status, .blocked)
+        XCTAssertEqual(second.blockedReason, .lockHeld)
+
+        let proposal = try core.getArtifact(featureSlug: "checkout-flow", type: "openspec_proposal")
+        XCTAssertTrue(proposal.content.contains("Source ID: prd-123"))
+        XCTAssertTrue(proposal.content.contains("Original product intent."))
+        XCTAssertFalse(proposal.content.contains("prd-456"))
+        XCTAssertFalse(proposal.content.contains("Replacement product intent."))
+    }
+
     func testSubmitPlanRequiresApprovalAndApproveMovesToImplement() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)

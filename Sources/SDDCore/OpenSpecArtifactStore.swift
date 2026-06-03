@@ -128,6 +128,16 @@ public final class OpenSpecArtifactStore {
         try data.write(to: root.appendingPathComponent("run-summary.json"), options: .atomic)
     }
 
+    public func runSummary(featureSlug: String) throws -> RunSummary? {
+        let summaryURL = changeRoot(featureSlug: featureSlug).appendingPathComponent("run-summary.json")
+        guard fileManager.fileExists(atPath: summaryURL.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: summaryURL)
+        return try SDDJSON.decoder().decode(RunSummary.self, from: data)
+    }
+
     public func findRunSummary(runId: String) throws -> RunSummary {
         let changesRoot = workspace.openspecRoot.appendingPathComponent("changes")
         guard fileManager.fileExists(atPath: changesRoot.path) else {
