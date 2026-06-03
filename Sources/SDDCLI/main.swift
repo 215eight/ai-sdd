@@ -1,0 +1,200 @@
+import ArgumentParser
+import Foundation
+import SDDCore
+import SDDModels
+
+@main
+struct SDDCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "sdd",
+        abstract: "Spec-Driven Development workflow CLI.",
+        subcommands: [
+            CapabilitiesCommand.self,
+            StartCommand.self,
+            NextCommand.self,
+            SubmitResultCommand.self,
+            AnswerPromptCommand.self,
+            ApproveGateCommand.self,
+            StatusCommand.self
+        ]
+    )
+}
+
+struct CommonOptions: ParsableArguments {
+    @Option(help: "Workspace root.")
+    var workspace: String = FileManager.default.currentDirectoryPath
+
+    @Flag(help: "Emit structured JSON output.")
+    var json = false
+
+    func core() -> SDDCore {
+        let root = URL(fileURLWithPath: workspace)
+        return SDDCore(workspace: SDDWorkspaceConfiguration(root: root))
+    }
+}
+
+struct CapabilitiesCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "capabilities")
+
+    @OptionGroup var common: CommonOptions
+
+    func run() throws {
+        try emit(common.core().capabilities())
+    }
+}
+
+struct StartCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "start")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Feature slug.")
+    var feature: String
+
+    @Option(help: "Execution adapter.")
+    var adapter: AgentAdapter = .codex
+
+    @Option(help: "Lock owner.")
+    var owner: String = NSUserName()
+
+    func run() throws {
+        let result = try common.core().startRun(featureSlug: feature, adapter: adapter, owner: owner)
+        try emit(result)
+    }
+}
+
+struct NextCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "next")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    func run() throws {
+        let result = try common.core().nextAction(runId: runId)
+        try emit(result)
+    }
+}
+
+struct SubmitResultCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "submit-result")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(help: "Submitted workflow phase.")
+    var phase: WorkflowPhase
+
+    @Option(help: "JSON file containing ExecutionAdapterResult. Reads stdin when omitted.")
+    var input: String?
+
+    func run() throws {
+        let data: Data
+        if let input {
+            data = try Data(contentsOf: URL(fileURLWithPath: input))
+        } else {
+            data = FileHandle.standardInput.readDataToEndOfFile()
+        }
+        let result = try SDDJSONBridge.decoder().decode(ExecutionAdapterResult.self, from: data)
+        try emit(try common.core().submitResult(runId: runId, phase: phase, result: result))
+    }
+}
+
+struct AnswerPromptCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "answer-prompt")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(name: .long, help: "Prompt ID.")
+    var promptId: String
+
+    @Option(help: "Prompt answer.")
+    var answer: String
+
+    func run() throws {
+        try emit(try common.core().answerPrompt(runId: runId, promptId: promptId, answer: answer))
+    }
+}
+
+struct ApproveGateCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "approve-gate")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(help: "Approved workflow phase.")
+    var phase: WorkflowPhase
+
+    @Option(help: "Approving actor.")
+    var approvedBy: String = NSUserName()
+
+    func run() throws {
+        try emit(try common.core().approveGate(runId: runId, phase: phase, approvedBy: approvedBy))
+    }
+}
+
+struct StatusCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "status")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    func run() throws {
+        try emit(try common.core().status(runId: runId))
+    }
+}
+
+struct CLIEnvelope<Payload: Encodable>: Encodable {
+    var ok: Bool
+    var data: Payload
+    var error: String?
+    var warnings: [String]
+    var schemaVersion: String
+    var protocolVersion: String
+    var coreVersion: String
+}
+
+enum SDDJSONBridge {
+    static func encoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }
+
+    static func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
+func emit<Payload: Encodable>(_ payload: Payload) throws {
+    let envelope = CLIEnvelope(
+        ok: true,
+        data: payload,
+        error: nil,
+        warnings: [],
+        schemaVersion: SDDConstants.schemaVersion,
+        protocolVersion: SDDConstants.protocolVersion,
+        coreVersion: SDDConstants.coreVersion
+    )
+    let data = try SDDJSONBridge.encoder().encode(envelope)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data("\n".utf8))
+}
+
+extension WorkflowPhase: ExpressibleByArgument {}
+extension AgentAdapter: ExpressibleByArgument {}

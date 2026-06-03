@@ -1,0 +1,49 @@
+# AI-SDD Verification Guide
+
+## Baseline Verification
+
+Run after product code changes:
+
+```bash
+swift test
+```
+
+## CLI Smoke Verification
+
+Run after CLI or workflow-operation changes:
+
+```bash
+swift run sdd capabilities --json
+swift run sdd start --feature smoke-run --json
+swift run sdd next --run-id <run_id> --json
+swift run sdd status --run-id <run_id> --json
+```
+
+Use a temporary workspace for smoke checks that create OpenSpec artifacts.
+
+## Risk Tiers
+
+Low-risk changes:
+
+- Model additions that do not change existing JSON fields.
+- Documentation updates.
+
+Verification: `swift test`.
+
+Medium-risk changes:
+
+- Workflow graph transition changes.
+- OpenSpec artifact path changes.
+- CLI command shape changes.
+
+Verification: `swift test` plus CLI smoke verification.
+
+High-risk changes:
+
+- Public model field renames.
+- Run summary persistence changes.
+- Telemetry redaction or sink behavior changes.
+- Execution adapter behavior changes.
+
+Verification: `swift test`, CLI smoke verification, and focused tests for the
+changed contract.
