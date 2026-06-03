@@ -18,6 +18,46 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.root.appendingPathComponent(".sdd/telemetry/events.jsonl").path))
     }
 
+    func testStartRunFromIntakeSeedsOpenSpecProposalAndDecisions() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+
+        let result = try core.startRun(
+            intakeMarkdown: """
+            ---
+            intake_type: prd
+            title: Checkout Flow
+            source_id: prd-123
+            owner: payments
+            ---
+            # Overview
+
+            Ship a checkout flow for logged-in customers.
+            """,
+            adapter: .codex,
+            owner: "tester"
+        )
+
+        XCTAssertEqual(result.featureSlug, "checkout-flow")
+        XCTAssertEqual(result.status, .actionRequired)
+        XCTAssertEqual(result.phase, .plan)
+
+        let proposal = try core.getArtifact(featureSlug: "checkout-flow", type: "openspec_proposal")
+        XCTAssertTrue(proposal.content.contains("Type: `prd`"))
+        XCTAssertTrue(proposal.content.contains("Source ID: prd-123"))
+        XCTAssertTrue(proposal.content.contains("Owner: payments"))
+        XCTAssertTrue(proposal.content.contains("- `checkout-flow` - Checkout Flow"))
+        XCTAssertTrue(proposal.content.contains("Ship a checkout flow for logged-in customers."))
+
+        let decisions = try core.getArtifact(featureSlug: "checkout-flow", type: "openspec_decisions")
+        XCTAssertTrue(decisions.content.contains("No closed decisions recorded for this intake."))
+
+        let validation = try core.validateArtifacts(featureSlug: "checkout-flow")
+        XCTAssertEqual(validation.artifacts.first(where: { $0.ref.type == "openspec_proposal" })?.state, .ready)
+        XCTAssertEqual(validation.artifacts.first(where: { $0.ref.type == "openspec_decisions" })?.state, .ready)
+        XCTAssertEqual(validation.artifacts.first(where: { $0.ref.type == "openspec_design" })?.state, .placeholder)
+    }
+
     func testSubmitPlanRequiresApprovalAndApproveMovesToImplement() throws {
         let workspace = try temporaryWorkspace()
         let core = SDDCore(workspace: workspace)

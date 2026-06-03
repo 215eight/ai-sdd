@@ -37,6 +37,7 @@ Useful MVP commands:
 
 ```bash
 swift run sdd start --feature checkout-flow --json
+swift run sdd start --intake-file docs/intake/checkout.md --json
 swift run sdd normalize-intake --file docs/intake/checkout.md --json
 swift run sdd list-artifacts --feature checkout-flow --json
 swift run sdd get-artifact --feature checkout-flow --type openspec_design --json

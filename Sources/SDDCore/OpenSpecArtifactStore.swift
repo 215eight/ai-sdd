@@ -19,16 +19,16 @@ public final class OpenSpecArtifactStore {
         self.fileManager = fileManager
     }
 
-    public func createFeatureArtifacts(featureSlug: String) throws {
+    public func createFeatureArtifacts(featureSlug: String, intake: NormalizedIntake? = nil) throws {
         let root = changeRoot(featureSlug: featureSlug)
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
 
         let templates: [(String, String)] = [
-            ("proposal.md", "# Proposal\n\n## Intent\n\n_To be completed._\n"),
+            ("proposal.md", intake.map(renderProposal) ?? "# Proposal\n\n## Intent\n\n_To be completed._\n"),
             ("design.md", "# Design\n\n## Plan\n\n_To be completed by the planning action._\n"),
             ("tasks.md", "# Tasks\n\n- [ ] To be completed by the planning action.\n"),
             ("review.md", "# Review\n\n## Verdict\n\n_To be completed by the review action._\n"),
-            ("decisions.md", "# Decisions\n\n_No closed decisions recorded yet._\n")
+            ("decisions.md", intake.map(renderDecisions) ?? "# Decisions\n\n_No closed decisions recorded yet._\n")
         ]
 
         for (name, content) in templates {
@@ -184,5 +184,72 @@ public final class OpenSpecArtifactStore {
         content.contains("_To be completed") ||
             content.contains("- [ ] To be completed") ||
             content.contains("_No closed decisions recorded yet._")
+    }
+
+    private func renderProposal(_ intake: NormalizedIntake) -> String {
+        let featureLines = intake.featureCatalog.map { feature in
+            "- `\(feature.featureSlug)` - \(feature.title): \(feature.description)"
+        }.joined(separator: "\n")
+        let stackLines = intake.stackAssignments.map { assignment in
+            "- `\(assignment.featureSlug)` -> `\(assignment.stack)`"
+        }.joined(separator: "\n")
+        let requirementLines = intake.sliceReadyRequirements.map { requirement in
+            """
+            ## Slice Requirement: \(requirement.title)
+
+            Feature slug: `\(requirement.featureSlug)`
+
+            Acceptance surface: `\(requirement.acceptanceSurface.rawValue)`
+
+            Alternatives required: `\(requirement.alternativesRequired)`
+
+            \(requirement.body)
+            """
+        }.joined(separator: "\n\n")
+
+        return """
+        # Proposal
+
+        ## Intake
+
+        Type: `\(intake.intakeType.rawValue)`
+
+        Title: \(intake.title)
+
+        Source ID: \(intake.sourceId ?? "none")
+
+        Owner: \(intake.owner ?? "none")
+
+        ## Product Intent
+
+        \(intake.productIntent)
+
+        ## Feature Catalog
+
+        \(featureLines.isEmpty ? "No features normalized." : featureLines)
+
+        ## Stack Assignment
+
+        \(stackLines.isEmpty ? "No stack assignments normalized." : stackLines)
+
+        \(requirementLines)
+        """
+    }
+
+    private func renderDecisions(_ intake: NormalizedIntake) -> String {
+        if intake.closedDecisions.isEmpty {
+            return """
+            # Decisions
+
+            No closed decisions recorded for this intake.
+            """
+        }
+
+        let decisions = intake.closedDecisions.map { "- \($0)" }.joined(separator: "\n")
+        return """
+        # Decisions
+
+        \(decisions)
+        """
     }
 }

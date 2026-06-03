@@ -53,7 +53,10 @@ struct StartCommand: ParsableCommand {
     @OptionGroup var common: CommonOptions
 
     @Option(name: .long, help: "Feature slug.")
-    var feature: String
+    var feature: String?
+
+    @Option(name: .customLong("intake-file"), help: "Markdown intake file with front matter.")
+    var intakeFile: String?
 
     @Option(help: "Execution adapter.")
     var adapter: AgentAdapter = .codex
@@ -62,7 +65,18 @@ struct StartCommand: ParsableCommand {
     var owner: String = NSUserName()
 
     func run() throws {
-        let result = try common.core().startRun(featureSlug: feature, adapter: adapter, owner: owner)
+        let result: TransitionResult
+        switch (feature, intakeFile) {
+        case (.some(let feature), .none):
+            result = try common.core().startRun(featureSlug: feature, adapter: adapter, owner: owner)
+        case (.none, .some(let intakeFile)):
+            let markdown = try String(contentsOf: URL(fileURLWithPath: intakeFile), encoding: .utf8)
+            result = try common.core().startRun(intakeMarkdown: markdown, adapter: adapter, owner: owner)
+        case (.some, .some):
+            throw ValidationError("Use either --feature or --intake-file, not both.")
+        case (.none, .none):
+            throw ValidationError("Provide --feature or --intake-file.")
+        }
         try emit(result)
     }
 }

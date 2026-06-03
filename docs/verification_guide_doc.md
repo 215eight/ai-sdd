@@ -15,6 +15,7 @@ Run after CLI or workflow-operation changes:
 ```bash
 swift run sdd capabilities --json
 swift run sdd normalize-intake --file <intake_file> --json
+swift run sdd start --intake-file <intake_file> --json
 swift run sdd start --feature smoke-run --json
 swift run sdd list-artifacts --feature smoke-run --json
 swift run sdd validate-artifacts --feature smoke-run --json

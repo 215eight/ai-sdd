@@ -113,7 +113,20 @@ public final class SDDCore {
     public func startRun(featureSlug: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
         try validateFeatureSlug(featureSlug)
         try artifactStore.createFeatureArtifacts(featureSlug: featureSlug)
+        return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner)
+    }
 
+    public func startRun(intakeMarkdown: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
+        let intake = try normalizeIntake(markdown: intakeMarkdown)
+        guard let featureSlug = intake.sliceReadyRequirements.first?.featureSlug else {
+            throw SDDCoreError.intakeParseFailed("Normalized intake must include at least one slice-ready requirement.")
+        }
+        try validateFeatureSlug(featureSlug)
+        try artifactStore.createFeatureArtifacts(featureSlug: featureSlug, intake: intake)
+        return try createRun(featureSlug: featureSlug, adapter: adapter, owner: owner)
+    }
+
+    private func createRun(featureSlug: String, adapter: AgentAdapter, owner: String) throws -> TransitionResult {
         let now = Date()
         let runSummary = RunSummary(
             runId: "run_\(UUID().uuidString.lowercased())",
