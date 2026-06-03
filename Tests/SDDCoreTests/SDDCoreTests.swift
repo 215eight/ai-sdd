@@ -146,6 +146,8 @@ final class SDDCoreTests: XCTestCase {
         XCTAssertTrue(capabilities.supportedCommands.contains("get-run-summary"))
         XCTAssertTrue(capabilities.supportedOperations.contains("list_run_events"))
         XCTAssertTrue(capabilities.supportedCommands.contains("list-run-events"))
+        XCTAssertTrue(capabilities.supportedOperations.contains("prepare_execution"))
+        XCTAssertTrue(capabilities.supportedCommands.contains("prepare-execution"))
     }
 
     func testGetRunSummaryReturnsCompactOpenSpecSummary() throws {
@@ -184,6 +186,54 @@ final class SDDCoreTests: XCTestCase {
             "sdd.transition.evaluated"
         ])
         XCTAssertEqual(events.last?.status, .approvalRequired)
+    }
+
+    func testPrepareExecutionUsesActiveAdapterAndNextAction() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        let invocation = try core.prepareExecution(runId: started.runId)
+
+        XCTAssertEqual(invocation.adapter, .codex)
+        XCTAssertEqual(invocation.runId, started.runId)
+        XCTAssertEqual(invocation.featureSlug, "checkout-flow")
+        XCTAssertEqual(invocation.phase, .plan)
+        XCTAssertEqual(invocation.agentRole, "sdd-planner")
+        XCTAssertEqual(invocation.requiredInputs.map(\.type), ["openspec_proposal", "openspec_decisions"])
+        XCTAssertEqual(invocation.requiredOutputs.map(\.type), ["openspec_design", "openspec_tasks"])
+        XCTAssertEqual(invocation.completionContract.submitPhase, .plan)
+        XCTAssertTrue(invocation.prompt.contains("Adapter: codex"))
+        XCTAssertTrue(invocation.prompt.contains("Produce a decision-closed implementation plan"))
+        XCTAssertEqual(invocation.submitCommand, "sdd submit-result --run-id \(started.runId) --phase plan --json < result.json")
+    }
+
+    func testPrepareExecutionCanOverrideAdapter() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+
+        let invocation = try core.prepareExecution(runId: started.runId, adapter: .claudeCode)
+
+        XCTAssertEqual(invocation.adapter, .claudeCode)
+        XCTAssertTrue(invocation.prompt.contains("Adapter: claude-code"))
+    }
+
+    func testPrepareExecutionRejectsApprovalRequiredRun() throws {
+        let workspace = try temporaryWorkspace()
+        let core = SDDCore(workspace: workspace)
+        let started = try core.startRun(featureSlug: "checkout-flow", adapter: .codex, owner: "tester")
+        try writePlanArtifacts(workspace: workspace)
+        _ = try core.submitResult(runId: started.runId, phase: .plan, result: okResult(adapter: .codex))
+
+        XCTAssertThrowsError(
+            try core.prepareExecution(runId: started.runId)
+        ) { error in
+            XCTAssertEqual(
+                error as? SDDCoreError,
+                .invalidTransition("Run \(started.runId) is approval_required, not action_required.")
+            )
+        }
     }
 
     func testArtifactOperationsExposeCanonicalOpenSpecChangeArtifacts() throws {

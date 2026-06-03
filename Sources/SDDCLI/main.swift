@@ -21,7 +21,8 @@ struct SDDCommand: ParsableCommand {
             ValidateArtifactsCommand.self,
             NormalizeIntakeCommand.self,
             GetRunSummaryCommand.self,
-            ListRunEventsCommand.self
+            ListRunEventsCommand.self,
+            PrepareExecutionCommand.self
         ]
     )
 }
@@ -197,6 +198,22 @@ struct ListRunEventsCommand: ParsableCommand {
 
     func run() throws {
         try emit(try common.core().listRunEvents(runId: runId))
+    }
+}
+
+struct PrepareExecutionCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "prepare-execution")
+
+    @OptionGroup var common: CommonOptions
+
+    @Option(name: .long, help: "Run ID.")
+    var runId: String
+
+    @Option(help: "Execution adapter override. Defaults to the run active adapter.")
+    var adapter: AgentAdapter?
+
+    func run() throws {
+        try emit(try common.core().prepareExecution(runId: runId, adapter: adapter))
     }
 }
 

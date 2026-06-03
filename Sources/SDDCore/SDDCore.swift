@@ -98,7 +98,8 @@ public final class SDDCore {
                 "validate-artifacts",
                 "normalize-intake",
                 "get-run-summary",
-                "list-run-events"
+                "list-run-events",
+                "prepare-execution"
             ],
             supportedOperations: [
                 "start_run",
@@ -112,7 +113,8 @@ public final class SDDCore {
                 "validate_artifacts",
                 "normalize_intake",
                 "get_run_summary",
-                "list_run_events"
+                "list_run_events",
+                "prepare_execution"
             ],
             supportedOutputModes: ["json"],
             supportedInterfaceModes: [.cli],
@@ -277,6 +279,29 @@ public final class SDDCore {
     public func listRunEvents(runId: String) throws -> [TelemetryEvent] {
         _ = try artifactStore.findRunSummary(runId: runId)
         return try telemetrySink.listEvents(runId: runId)
+    }
+
+    public func prepareExecution(runId: String, adapter: AgentAdapter? = nil) throws -> ExecutionAdapterInvocation {
+        let summary = try artifactStore.findRunSummary(runId: runId)
+        let action = try nextAction(runId: runId)
+        guard action.status == .actionRequired else {
+            throw SDDCoreError.invalidTransition("Run \(runId) is \(action.status.rawValue), not action_required.")
+        }
+        guard let workflowAction = action.action,
+              let completionContract = action.completionContract,
+              let agentRole = action.agentRole else {
+            throw SDDCoreError.invalidTransition("Run \(runId) does not have an executable action.")
+        }
+
+        let selectedAdapter = adapter ?? summary.activeAdapter
+        return ExecutionAdapterRenderer(adapter: selectedAdapter).render(
+            runId: action.runId,
+            featureSlug: action.featureSlug,
+            phase: action.phase,
+            agentRole: agentRole,
+            action: workflowAction,
+            completionContract: completionContract
+        )
     }
 
     public func listArtifacts(featureSlug: String) throws -> [ArtifactDescriptor] {

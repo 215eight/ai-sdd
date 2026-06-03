@@ -100,6 +100,41 @@ final class SDDModelJSONContractTests: XCTestCase {
         XCTAssertEqual(decoded, result)
     }
 
+    func testExecutionAdapterInvocationJSONContract() throws {
+        let invocation = ExecutionAdapterInvocation(
+            adapter: .codex,
+            runId: "run_contract",
+            featureSlug: "checkout-flow",
+            phase: .plan,
+            agentRole: "sdd-planner",
+            prompt: "Execute the workflow action.",
+            requiredInputs: [
+                ArtifactRef(type: "openspec_proposal", path: "openspec/changes/checkout-flow/proposal.md")
+            ],
+            requiredOutputs: [
+                ArtifactRef(type: "openspec_design", path: "openspec/changes/checkout-flow/design.md")
+            ],
+            completionContract: CompletionContract(submitPhase: .plan, requiresHumanApproval: true),
+            submitCommand: "sdd submit-result --run-id run_contract --phase plan --json < result.json"
+        )
+        let object = try jsonObject(invocation)
+
+        XCTAssertEqual(object["schema_version"] as? String, "1.0.0")
+        XCTAssertEqual(object["adapter"] as? String, "codex")
+        XCTAssertEqual(object["run_id"] as? String, "run_contract")
+        XCTAssertEqual(object["feature_slug"] as? String, "checkout-flow")
+        XCTAssertEqual(object["phase"] as? String, "plan")
+        XCTAssertEqual(object["agent_role"] as? String, "sdd-planner")
+        XCTAssertEqual(object["prompt"] as? String, "Execute the workflow action.")
+        XCTAssertNotNil(object["required_inputs"])
+        XCTAssertNotNil(object["required_outputs"])
+        XCTAssertNotNil(object["completion_contract"])
+        XCTAssertEqual(object["submit_command"] as? String, "sdd submit-result --run-id run_contract --phase plan --json < result.json")
+
+        let decoded = try decode(ExecutionAdapterInvocation.self, from: invocation)
+        XCTAssertEqual(decoded, invocation)
+    }
+
     func testTelemetryEventJSONContract() throws {
         let event = TelemetryEvent(
             eventId: "evt_contract",

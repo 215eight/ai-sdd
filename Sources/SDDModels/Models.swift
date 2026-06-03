@@ -599,6 +599,46 @@ public struct ExecutionAdapterResult: Codable, Equatable {
     }
 }
 
+public struct ExecutionAdapterInvocation: Codable, Equatable {
+    public var schemaVersion: String
+    public var adapter: AgentAdapter
+    public var runId: String
+    public var featureSlug: String
+    public var phase: WorkflowPhase
+    public var agentRole: String
+    public var prompt: String
+    public var requiredInputs: [ArtifactRef]
+    public var requiredOutputs: [ArtifactRef]
+    public var completionContract: CompletionContract
+    public var submitCommand: String
+
+    public init(
+        schemaVersion: String = SDDConstants.schemaVersion,
+        adapter: AgentAdapter,
+        runId: String,
+        featureSlug: String,
+        phase: WorkflowPhase,
+        agentRole: String,
+        prompt: String,
+        requiredInputs: [ArtifactRef],
+        requiredOutputs: [ArtifactRef],
+        completionContract: CompletionContract,
+        submitCommand: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.adapter = adapter
+        self.runId = runId
+        self.featureSlug = featureSlug
+        self.phase = phase
+        self.agentRole = agentRole
+        self.prompt = prompt
+        self.requiredInputs = requiredInputs
+        self.requiredOutputs = requiredOutputs
+        self.completionContract = completionContract
+        self.submitCommand = submitCommand
+    }
+}
+
 public struct TelemetryEvent: Codable, Equatable {
     public var eventId: String
     public var eventName: String

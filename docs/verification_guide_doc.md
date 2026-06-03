@@ -20,6 +20,7 @@ swift run sdd start --feature smoke-run --json
 swift run sdd list-artifacts --feature smoke-run --json
 swift run sdd validate-artifacts --feature smoke-run --json
 swift run sdd next --run-id <run_id> --json
+swift run sdd prepare-execution --run-id <run_id> --json
 swift run sdd status --run-id <run_id> --json
 swift run sdd get-run-summary --run-id <run_id> --json
 swift run sdd list-run-events --run-id <run_id> --json
