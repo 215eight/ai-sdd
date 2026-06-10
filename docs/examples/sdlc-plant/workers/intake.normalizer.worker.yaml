@@ -1,0 +1,29 @@
+apiVersion: factory/v1
+kind: Worker
+metadata:
+  name: intake.normalizer
+  version: 1
+spec:
+  workerKind: transform
+
+  # JOIN: the intake is a UNION of varied sources, not one document. This Worker consumes the
+  # WHOLE SET of loaded sources and SYNTHESIZES them (reconcile, de-dup, cross-reference) into
+  # one canonical artifact. Downstream depends only on `normalized-intake.v1`.
+  consumes:
+    - { schema: intake-source.v1, cardinality: many, required: true }   # the loaded set; each discriminated by `intakeType`
+  produces:
+    - { schema: normalized-intake.v1 }                                  # canonical form (maps to ai-sdd NormalizedIntake)
+
+  # The source's `intakeType` selects the normalization skill. Adding a method = one new
+  # intakeType value + its skill (+ source-format handling) — no downstream change.
+  task:
+    skillByIntakeType:
+      idea:             normalize-idea
+      prd:              normalize-prd
+      hiring-challenge: normalize-challenge
+
+  model: deep-reasoning
+  reasoning: high
+  resources: []
+  # Output must validate against the canonical Schema before it is accepted.
+  checks: [schema.normalized-intake]

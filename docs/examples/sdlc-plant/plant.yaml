@@ -1,0 +1,63 @@
+apiVersion: factory/v1
+kind: Plant
+metadata:
+  name: acme-sdlc
+  version: 1
+spec:
+  config: acme-sdlc-context
+
+  # The Factories that make up this Plant. The COUNT and identity are a spec decision,
+  # not hardcoded — fork this file for a 3-factory or 7-factory plant.
+  factories:
+    - { ref: requirements, contractOut: locked-spec.v1 }
+    - { ref: design,       contractOut: approved-design.v1 }
+    - { ref: code,         contractOut: release-candidate.v1 }
+    - { ref: deployment,   contractOut: rollout-outcome.v1 }
+
+  # The Conductor: an orchestrated saga over Factories (the consolidated macro-flow).
+  # Each step waits on its input contracts; edges are enablers, the contracts' Checks
+  # are the gates (the SDLC "APPROVAL" zones).
+  conductor:
+    flow:
+      - factory: requirements
+        produces: locked-spec.v1
+      - factory: design
+        consumes: [locked-spec.v1]
+        produces: approved-design.v1
+      - factory: code
+        consumes: [locked-spec.v1, approved-design.v1]
+        produces: release-candidate.v1
+      - factory: deployment
+        consumes: [release-candidate.v1]
+        produces: rollout-outcome.v1
+
+    # Asynchronous long-range feedback (the "issues detected -> loop back to source"
+    # branch). Emitted by the deployment factory; the Conductor classifies and re-enters
+    # the owning factory with scoped invalidation. NOT routed through the forward path.
+    signals:
+      - on: issue-detected
+        classifyTo: [requirements, design, code]
+        mode: scoped-reentry
+
+  # Inter-factory contracts == boundary Checks == the SDLC APPROVAL gates.
+  # Compliance/objective criteria are deterministic; fidelity/completeness are judge/human.
+  contracts:
+    locked-spec.v1:
+      requiredChecks: [spec-complete, stakeholder-signoff]
+    approved-design.v1:
+      requiredChecks: [ui-fidelity, design-system-conformance]
+    release-candidate.v1:                 # the 7-criteria pre-rollout gate
+      requiredChecks:
+        - perf
+        - scale
+        - requirement-completeness
+        - ui-fidelity
+        - unit-coverage
+        - observability-dashboards
+        - alerts-configured
+    rollout-outcome.v1:
+      requiredChecks: [slo-stable, experiment-significant]
+
+  # One correlation id threads through every Factory for end-to-end tracing.
+  tracing:
+    correlation: runId

@@ -1,0 +1,15 @@
+apiVersion: factory/v1
+kind: Resource
+metadata:
+  name: github
+spec:
+  # A Resource is a Worker's "hands" — it resolves to an MCP server OR CLI tools,
+  # each with a specific configuration. One Resource serves many Workers.
+  provider: mcp                  # mcp | cli
+  mcp: { server: github }        # attach the GitHub MCP to the agent runtime
+  # provider: cli
+  # cli: { tools: [gh, git] }    # ...or expose these CLI tools instead
+
+  credentials: [env:GITHUB_TOKEN]  # resolved at the secret boundary; never inlined
+  defaultAccess: read-only         # Workers must explicitly request read-write
+  scope: ["acme/*"]                # repos this resource may ever touch

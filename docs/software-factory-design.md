@@ -11,6 +11,75 @@
 
 ---
 
+## Canonical vocabulary (LOCKED · 2026-06-09)
+
+| Concept | **Name** | Notes / borrowed from | In your code today |
+|---|---|---|---|
+| The platform / product / vision | **Factory** | the plant | — |
+| One pattern's typed DAG (CRUD, Integration…) | **Pipeline** | dataflow | (new) |
+| One execution of a Pipeline for one feature; also *the work item itself* | **Run** | universal | ✅ `RunSummary` |
+| The parameterized unit that performs a role (architect, coder, reviewer…) | **Worker** | factory floor; absorbs Operator+Role+Node | ↔ `agentRole` |
+| How the Scheduler treats a worker | **WorkerKind** = `transform · check · human · fanout · join` | — | ↔ `StationKind` |
+| The compute/body a Worker runs on | **Adapter** | hexagonal; *what muscle* vs *what job* | ✅ `AgentAdapter` |
+| Wire between Workers; carries an Artifact | **Edge** | graph | ✅ `DependencyEdge` |
+| Typed payload flowing on Edges | **Artifact** | CI | ✅ `ArtifactRef` |
+| An Artifact's type | **Schema** | type systems | ✅ `ArtifactSchema` |
+| Assertion — *blocking or scoring* | **Check** | Dagster Asset Check / GH required check | ↔ gate+eval |
+| The single executor for all Checks | **CheckRunner** | — | (new) |
+| A Check's output | **CheckResult** | — | ↔ `Verdict` |
+| Offline Check corpus (the "evals") | **Check suite** | — | (new) |
+| Planner — which Workers are runnable | **Scheduler** | orchestrators | ↔ `WorkflowEngine` |
+| Pure event→state fold | **Reducer** | Redux/FP | ↔ `evaluate` |
+| Append-only event | **RunEvent** | event sourcing | (new) |
+
+**Dropped / merged:** ~~Socket/Port~~ (a Worker just has a typed input/output **signature** of Schemas; the Edge carries the Artifact) · ~~Gate~~ (it's a required **Check**) · ~~Operator / Role / Node / Station~~ (all → **Worker**) · `WorkflowPhase` → demoted to a **tag/lane** label, not control flow.
+
+### High-level diagram
+
+```mermaid
+flowchart TB
+    RUN["📥 Run<br/>(a feature spec enters)"]
+
+    subgraph FACTORY["🏭 FACTORY"]
+        direction TB
+        subgraph CONTROL["Control plane · deterministic"]
+            SCHED["Scheduler<br/>which Workers are runnable?"]
+            RED["Reducer<br/>fold RunEvents → state"]
+        end
+        subgraph PIPE["Pipeline · typed DAG of Workers"]
+            direction LR
+            W1["Worker: architect"] -->|"Artifact : Schema"| W2["Worker: coder"]
+            W2 -->|"Artifact : Schema"| W3["Worker: reviewer"]
+            W3 --> CHK["Worker: check<br/>(required)"]
+        end
+        ADP["Adapters · compute<br/>claude-code · codex"]
+        CRUN["CheckRunner"]
+        SCHED --> PIPE
+        PIPE --> RED
+        PIPE -. "Workers run on" .- ADP
+        CHK --> CRUN
+    end
+
+    RUN --> SCHED
+    CRUN -->|pass| PR["📦 Artifact: pull-request"]
+    PR --> HUMAN["🧑‍⚖️ Human approval"]
+    RED -->|RunEvent log| STORE["🗄️ Run store<br/>audit · resume"]
+    STORE -->|harvest fixtures| SUITE["🧪 Check suite · evals"]
+    SUITE -->|"promotion gate<br/>(no regression?)"| CATALOG["📚 Worker catalog<br/>versioned configs"]
+    CATALOG --> PIPE
+
+    style HUMAN fill:#fff3cd,stroke:#d39e00
+    style CHK fill:#e7f5ff,stroke:#1971c2
+    style CRUN fill:#e7f5ff,stroke:#1971c2
+```
+
+The one diagram to remember the model by: a **Run** enters → the **Scheduler** runs **Workers** down a **Pipeline**, passing typed **Artifacts** along **Edges**, each Worker running on an **Adapter** → a required **Check** (via the **CheckRunner**) gates the **PR** → a human approves. The **Reducer** writes **RunEvents** to the store, which feed offline **Check suites** (evals); their **promotion gate** decides which **Worker** versions go back into the catalog. Same `CheckRunner` serves the inline check and the offline suite — *a gate is an eval*.
+
+> Sections 1–9 below were drafted with earlier working names (Station, Operator, Port, Gate…).
+> The table above is authoritative; a full propagation pass through the prose is pending.
+
+---
+
 ## 0. The one principle
 
 > **Role = data. Engine = fixed.**
@@ -508,7 +577,224 @@ number that tells you the factory is actually working, not just that the code co
 
 ---
 
-## 8. TL;DR
+## 8. Gates & evals, in depth
+
+### 8.1 What a gate id actually resolves to
+
+`RoleDefinition.verification` holds a list of **gate ids** (`[String]`). Those ids are keys
+into a **`GateRegistry`** — loaded from config exactly like roles are. So a gate id is a
+late-bound reference; the role says *what* must hold, the registry says *how* to check it.
+This is what lets the same role run against Go or Python: the role lists `typecheck`, and the
+per-product overlay binds `typecheck` → `typecheck.go` vs `typecheck.py`.
+
+```swift
+public struct GateRegistry: Codable, Equatable {
+    public var gates: [GateDefinition]
+    public func resolve(_ id: String) -> GateDefinition?  // id → definition
+}
+```
+
+Gate ids are **namespaced** `family.specifier`, so they read as a taxonomy and overlays can
+remap a whole family:
+
+```yaml
+# gates/typecheck.go.yaml
+id: typecheck.go
+kind: deterministic
+command: "go build ./..."          # run in the sandboxed checkout
+parser: go-build                   # maps stderr → metrics
+thresholds: { "compile.errors": 0 }
+blocking: true
+
+# gates/judge.api-conventions.yaml
+id: judge.api-conventions
+kind: judge
+rubric: { template: rubric.api-conventions }   # LLM rubric prompt
+inputs: [ "*-source", openapi.v1 ]             # what the judge reads
+thresholds: { "judge.score": 0.8 }
+blocking: true
+
+# gates/gate.hipaa-phi.yaml  → a compliance policy gate
+id: gate.hipaa-phi
+kind: deterministic
+command: "sdd-policy scan --policy hipaa-phi"
+parser: policy-json
+thresholds: { "phi.unredacted": 0, "auth.bypassed": 0 }
+blocking: true
+```
+
+### 8.2 The gate catalog (the ids themselves)
+
+| Family | Example ids | Kind | What it asserts |
+|---|---|---|---|
+| `schema.*` | `schema.plan`, `schema.openapi`, `schema.migration` | deterministic | artifact validates against its `ArtifactSchema` |
+| `typecheck.*` | `typecheck.go`, `typecheck.ts`, `typecheck.py` | deterministic | it compiles / type-checks |
+| `lint.*` | `lint.go`, `lint.ts`, `lint.py` | deterministic | style + static analysis clean |
+| `unit.*` | `unit.go`, `unit.py` | deterministic | unit tests pass |
+| `integration.*` | `integration.api` | deterministic | service-level tests pass |
+| `coverage` / `mutation` | `coverage`, `mutation` | deterministic | ≥ threshold; tests *catch* injected bugs |
+| `sec.*` | `sec.sast`, `sec.secrets`, `sec.deps` | deterministic | no SAST findings / secret leaks / vuln deps |
+| `judge.*` | `judge.api-conventions`, `judge.ui-conventions`, `judge.plan-sound`, `judge.security`, `judge.convention-drift` | judge | subjective quality via LLM rubric |
+| `policy.*` / `gate.*` | `gate.hipaa-phi`, `gate.no-data-loss`, `migrate.dryrun`, `gate.auth-check` | deterministic | compliance/safety invariants (SOC2/HIPAA) |
+| `ci.*` | `ci.selective` | composite | the bundled CI run on the assembled changeset |
+
+Two design rules worth calling out:
+- **Compliance gates are deterministic, never judge.** "No PHI leak / no auth bypass / no
+  data-loss migration" must be a hard, auditable command — not an LLM opinion. (Research:
+  black-box judgment isn't certifiable; deterministic checks are.)
+- **`ci.selective` is the Stripe move.** It's a composite gate that picks only the tests
+  touching the changed files and caps repair rounds (e.g. 2), so the integration bottleneck
+  stays bounded against a huge suite.
+
+### 8.3 How a gate executes — one `GateRunner`
+
+Every gate, deterministic or judge, is run by the same interface and returns the same
+`Verdict`. This uniformity is what makes evals possible (next section).
+
+```swift
+public struct GateContext {
+    public var artifacts: [ArtifactEnvelope]   // candidate outputs to check
+    public var workspace: URL                  // sandboxed checkout
+    public var station: String
+    public var params: [String: String]
+    public var secrets: SecretResolving        // REUSE the secret boundary
+}
+
+public protocol GateRunner {
+    func run(_ gate: GateDefinition, _ ctx: GateContext) throws -> Verdict
+}
+
+// Deterministic: run command in sandbox → parse stdout/stderr → metrics → threshold check
+public struct DeterministicGateRunner: GateRunner { /* exec + parse + compare */ }
+
+// Judge: render rubric over artifacts → LLM → structured score → threshold check
+public struct JudgeGateRunner: GateRunner { /* prompt + adapter + parse */ }
+```
+
+A `Verdict` is `status` + a **`metrics` dictionary** compared against the gate's
+`thresholds`. Metrics (not just pass/fail) are what evals trend over time, and the
+`evidenceRef` (the log artifact) is what the audit trail and the self-repair loop both read.
+
+### 8.4 How gates attach to the DAG
+
+Two attachment points, both resolved from the `GateRegistry` at load:
+
+1. **As a station post-condition** (`RoleDefinition.verification: [gateId]`). These run
+   *inside* the station before its outputs are marked `.ready`. Failure → self-repair loop.
+2. **As a standalone gate station** (`StationKind.gate`) — a node in the graph with no LLM,
+   e.g. the `ci.selective` gate between `assemble` and the PR.
+
+At definition-load you **statically validate** that every referenced gate id exists in the
+registry (same spirit as the edge type-check) — a role pointing at a missing gate fails to
+load, not at runtime. `blocking: false` gates are *advisory*: their verdict is surfaced and
+logged but doesn't stop the line (useful while a new judge gate is being calibrated).
+
+### 8.5 The key idea: a gate **is** an eval
+
+A gate and an eval call the **same `GateRunner` over the same `GateDefinition`**. The only
+difference is the *driver*:
+
+```mermaid
+flowchart TB
+    subgraph SHARED["shared core"]
+        REG["GateRegistry"] --> GR["GateRunner → Verdict"]
+    end
+
+    subgraph INLINE["INLINE mode · live run (blocks)"]
+        ST["station produced artifacts"] --> GR
+        GR --> DEC{"verdict"}
+        DEC -->|pass| ACC["mark .ready, advance"]
+        DEC -->|fail + budget| REP["self-repair"]
+        DEC -->|exhausted| BLK["BlockerRecord"]
+    end
+
+    subgraph OFFLINE["OFFLINE mode · eval (scores)"]
+        EC["EvalCase fixtures"] --> RUN["EvalRunner"]
+        RUN -->|same gates| GR
+        RUN --> GOLD["+ golden diff + judge rubric"]
+        GR --> RES["EvalResult"]
+        GOLD --> RES
+    end
+```
+
+Practical payoff: you write a verification gate **once** and get a regression eval for free —
+and your eval suite tests *exactly* the checks production runs, so there's no drift between
+"what we measure" and "what gates the line."
+
+### 8.6 How evals plug in — the wiring
+
+```swift
+public enum EvalTarget: Codable, Equatable {
+    case role(String)      // "coder.api"            — Tier 3
+    case gate(String)      // "judge.api-conventions"— Tier 2 meta-eval (judge-the-judge)
+    case factory(String)   // "crud-ui.v1"           — Tier 4 end-to-end
+}
+
+public struct EvalSuite: Codable, Equatable {
+    public var id: String
+    public var target: EvalTarget
+    public var cases: [EvalCase]   // EvalCase defined in §6
+}
+
+public enum EvalMode: String, Codable {
+    case replay      // score already-produced artifacts against gates/golden (fast, deterministic-ish)
+    case regenerate  // re-execute the role/factory, THEN score (measures the model+prompt today)
+}
+
+public protocol EvalRunner {
+    func run(_ suite: EvalSuite, mode: EvalMode) throws -> EvalReport
+}
+
+public struct EvalReport: Codable, Equatable {
+    public var suiteId: String
+    public var results: [EvalResult]                 // EvalResult defined in §6
+    public var summary: [String: Double]             // firstRunGreen_rate, cleanup_p50, cleanup_p90, judge_mean, cost_total
+    public var baseline: [String: Double]?           // prior version, for regression deltas
+}
+```
+
+Four concrete integration points:
+
+1. **Production feeds the corpus (closed loop).** Every live run appends `FactoryEvent`s with
+   content-addressed artifacts and `Verdict`s. A successful, human-approved run is *harvested*
+   into golden `EvalCase`s — its inputs become fixtures, its accepted outputs become `golden`.
+   Your eval set grows from real shipped features instead of being hand-authored.
+
+2. **Where each tier runs:**
+   - Tier 1 (contract) + Tier 2 (gate) + Tier 3 (role, `mode: .replay`) → on every commit in
+     `swift test` / CI. Fast, mostly deterministic.
+   - Tier 3 `mode: .regenerate` + Tier 4 (factory) → nightly and as a **pre-promotion gate**.
+
+3. **The promotion gate (evals gate the factory's own development).** Bumping
+   `RoleDefinition.version` (or a prompt/model `binding`) triggers that role's `EvalSuite` in
+   `.regenerate` mode. The new version is **blocked from promotion** unless `EvalReport.summary`
+   doesn't regress vs `baseline` — e.g. `firstRunGreen_rate` not down, `cleanup_p90` not up.
+   This is the same gate machinery turned on yourselves.
+
+```mermaid
+flowchart LR
+    PROD["live runs"] -->|FactoryEvent log| HARVEST["harvest golden cases"]
+    HARVEST --> CORPUS["EvalSuites"]
+    CORPUS --> EVAL["EvalRunner"]
+    NEWVER["new role/prompt/model version"] --> EVAL
+    EVAL --> PROMO{"regression vs baseline?"}
+    PROMO -->|no regression| SHIP["promote version"]
+    PROMO -->|regressed| REJECT["block promotion"]
+    SHIP --> PROD
+```
+
+4. **Judge-the-judge (Tier 2 meta-eval).** Judge gates drift, so each `judge.*` gate has its
+   own `EvalSuite` (`target: .gate`) over a human-labeled set: does the judge's verdict match
+   the human label? A judge whose agreement drops below threshold is itself blocked from
+   promotion. Without this, your subjective gates silently rot.
+
+**Anti-tautology, concretely:** the `test.author` role's eval doesn't ask "do the tests
+pass?" — it runs the `mutation` gate: inject known faults into the implementation and assert
+the generated tests *fail*. A test suite that stays green under mutation scores zero.
+
+---
+
+## 9. TL;DR
 
 - **One deterministic engine, roles are data.** A station does whatever its `RoleDefinition`
   says; the engine never knows "planner" from "coder."

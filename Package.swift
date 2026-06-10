@@ -2,41 +2,23 @@
 
 import PackageDescription
 
+// The new spec-driven Factory engine. The old phase-based engine is preserved under
+// legacy/ for reference (ports of its reusable infra — identity, secrets, telemetry,
+// artifact store, lock — will be brought over deliberately, not wholesale).
 let package = Package(
-    name: "ai-sdd",
+    name: "factory",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .library(name: "SDDModels", targets: ["SDDModels"]),
-        .library(name: "SDDCore", targets: ["SDDCore"]),
-        .library(name: "SDDMCP", targets: ["SDDMCP"]),
-        .executable(name: "sdd", targets: ["SDDCLI"])
-    ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
+        .library(name: "FactoryModels", targets: ["FactoryModels"]),
+        .library(name: "FactoryEngine", targets: ["FactoryEngine"])
     ],
     targets: [
-        .target(name: "SDDModels"),
-        .target(
-            name: "SDDCore",
-            dependencies: ["SDDModels"]
-        ),
-        .target(
-            name: "SDDMCP",
-            dependencies: ["SDDCore", "SDDModels"]
-        ),
-        .executableTarget(
-            name: "SDDCLI",
-            dependencies: [
-                "SDDCore",
-                "SDDModels",
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ]
-        ),
-        .testTarget(
-            name: "SDDCoreTests",
-            dependencies: ["SDDCore", "SDDModels"]
-        )
+        // Declarative spec types (Codable) + runtime types. No dependencies.
+        .target(name: "FactoryModels"),
+        // The deterministic engine: spec loader, validator, Scheduler, Reducer.
+        .target(name: "FactoryEngine", dependencies: ["FactoryModels"]),
+        .testTarget(name: "FactoryEngineTests", dependencies: ["FactoryEngine", "FactoryModels"])
     ]
 )

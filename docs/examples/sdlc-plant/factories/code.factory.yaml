@@ -1,0 +1,45 @@
+apiVersion: factory/v1
+kind: Factory
+metadata:
+  name: code
+  version: 3
+  owner: engineering          # Conway's law: the actor-type that owns this phase
+spec:
+  consumes: [locked-spec.v1, approved-design.v1]
+  produces: release-candidate.v1
+
+  # The systems this Factory is allowed to touch (credentials via the secret boundary).
+  resources: [github, grpc-registry, aurora-schema]
+
+  # The Factory's internal flow IS a Pipeline (its root). It may call sub-pipelines and
+  # fan out via `map`. The other patterns (integration, workflow, analytics) are other
+  # pipelines selected by the spec's `pattern` field at runtime.
+  rootPipeline: code-main
+  pipelines:
+    - { ref: code-main }
+    - { ref: rfc }
+    - { ref: crud-ui }        # see ../pipelines/crud-ui.pipeline.yaml
+    - { ref: per-task-tdd }   # the TDD + peer-review subprocess (bounded rework loop)
+
+  # The Worker catalog this Factory may instantiate.
+  workers:
+    - architect
+    - migrator
+    - coder.api               # see ../workers/coder.api.worker.yaml
+    - coder.frontend
+    - test.author
+    - reviewer
+
+  # The exit contract handed to the Deployment Factory == release-candidate.v1.
+  # These required Checks are the pre-rollout gate; this Factory must satisfy them
+  # before the Conductor advances.
+  exitContract:
+    artifact: release-candidate.v1
+    requiredChecks:
+      - perf
+      - scale
+      - requirement-completeness
+      - ui-fidelity
+      - unit-coverage
+      - observability-dashboards
+      - alerts-configured

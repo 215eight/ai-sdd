@@ -1,0 +1,43 @@
+apiVersion: factory/v1
+kind: Check
+metadata:
+  name: typecheck.go
+  version: 1
+spec:
+  checkKind: deterministic    # deterministic (a command) | judge (an LLM rubric)
+
+  # Same definition is used in BOTH modes:
+  #   inline  -> runs on a live Run and BLOCKS (a gate)
+  #   offline -> runs on fixtures and SCORES (an eval)
+  modes: [inline, offline]
+
+  command: "go build ./..."
+  parser: go-build            # maps tool output -> metrics
+  thresholds:
+    "compile.errors": 0
+
+  required: true              # required == it gates; advisory checks are surfaced only
+  blocking: true
+
+  # When this Check fails inline, route rework back to the Worker that produced the
+  # checked Artifact (handled by the Pipeline's rework policy).
+  onFail: route-to-producer
+---
+# A judge Check, for contrast — note compliance is NEVER a judge Check.
+apiVersion: factory/v1
+kind: Check
+metadata:
+  name: judge.api-conventions
+  version: 2
+spec:
+  checkKind: judge
+  modes: [inline, offline]
+  rubric: rubrics/api-conventions.md
+  reads: [go-source.v1, openapi.v1]
+  thresholds:
+    "judge.score": 0.8
+  required: true
+  onFail: route-to-producer
+  # Judge checks carry their own offline "judge-the-judge" suite against human labels
+  # so the judge itself is gated on agreement before promotion.
+  metaEval: suites/judge-api-conventions.labels.yaml

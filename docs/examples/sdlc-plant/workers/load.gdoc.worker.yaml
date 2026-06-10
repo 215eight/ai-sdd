@@ -1,0 +1,27 @@
+apiVersion: factory/v1
+kind: Worker
+metadata:
+  name: load.gdoc
+  version: 1
+spec:
+  workerKind: transform
+
+  # TRANSPORT loader: fetch + extract raw text from a Google Doc, producing the canonical
+  # intake envelope. One loader per transport; all converge on intake-source.v1. This axis
+  # (where it lives / how to read it) is orthogonal to intakeType (what it means).
+  consumes:
+    - { schema: gdoc-ref.v1, required: true }     # a handle: { docId } (a `url`/gdoc Artifact handle)
+  produces:
+    - { schema: intake-source.v1 }                # { intakeType, title, ..., body: <extracted text> }
+
+  resources:
+    - { name: google-docs, access: read-only }    # the transport (see ../resources/google-docs.resource.yaml)
+
+  task: { skill: extract-gdoc }                    # export the doc -> markdown/text
+  # intakeType is declared at run start or inferred from the extracted text (like ai-sdd
+  # infers acceptanceSurface). Output must validate against the canonical envelope.
+  checks: [schema.intake-source]
+
+# PDF and repo-file are analogous loaders, same shape, different transport:
+#   load.pdf        consumes pdf-file.v1 (a `file` handle)        -> intake-source.v1  (pdftotext; vision for scans)
+#   load.repo-file  consumes git-ref.v1  (a `file`/`git-ref` handle) -> intake-source.v1  (just read it)

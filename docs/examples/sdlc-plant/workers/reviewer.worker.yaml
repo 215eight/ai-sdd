@@ -1,0 +1,36 @@
+apiVersion: factory/v1
+kind: Worker
+metadata:
+  name: reviewer
+  version: 2
+spec:
+  workerKind: transform
+
+  consumes: [{ schema: changeset.v1, required: true }]
+  produces: [{ schema: review-notes.v1 }]
+
+  task: { skill: review-change }     # repo skill, surfaced via AGENTS.md / CLAUDE.md
+  model: deep-reasoning
+  reasoning: high
+
+  # One reviewer role, specialized per stack. The stack (a composition of Traits) is
+  # resolved late at run start from the feature's StackAssignment and supplies the
+  # conventions + checks to apply. The resolved set is snapshotted into the RunEvent log.
+  stack: ${node.stack}
+
+  # HANDS — least-privilege. A reviewer READS; it never pushes.
+  resources:
+    - { name: github, access: read-only }     # see ../resources/github.resource.yaml
+
+  # CAPABILITY GUARDRAILS — runtime-enforced, default-deny.
+  permissions:
+    filesystem: { read: ["**"], write: [] }    # cannot edit
+    tools:
+      allow: [read, grep, bash:test]           # may run tests
+      deny:  [edit, write, bash:git-push]      # may not mutate
+
+  # CONVENTION GUARDRAILS — injected (soft). The resolved Stack's Traits merge their own
+  # conventions and checks in on top of these.
+  context:
+    retrieve: ["conventions:.sdd/conventions/${stack}.md"]
+  checks: [judge.review-quality]

@@ -1,0 +1,24 @@
+apiVersion: factory/v1
+kind: ModelCatalog
+metadata:
+  name: claude-shop          # one catalog per AI company; the workspace selects the active one
+  version: 7                 # bump when models change -> trips the promotion gate (ADR-0007)
+spec:
+  default: balanced          # tier used when a Worker omits `model`
+
+  # Capability TIERS (aliases). Workers reference these by name, never a concrete model id.
+  # When a new top model ships, change it HERE, in one place — every Worker on that tier
+  # picks it up. The change is versioned, so its eval suite must pass before promotion.
+  tiers:
+    deep-reasoning: { provider: claude, model: claude-opus-4-8,   reasoning: high }
+    balanced:       { provider: claude, model: claude-sonnet-4-6, reasoning: medium }
+    fast:           { provider: claude, model: claude-haiku-4-5,  reasoning: low }
+
+  # Providers and the agent runtime (Adapter) used to invoke repo skills for each.
+  providers:
+    claude: { adapter: claude-code }   # invokes repo skills via CLAUDE.md
+    openai: { adapter: codex }         # invokes the same repo skills via AGENTS.md
+
+# To retarget the whole Plant to OpenAI: add an `openai-shop` catalog that maps the SAME
+# tier names to GPT models + the codex adapter, then set `models: openai-shop` in
+# config.yaml. No Worker changes — that is the point.

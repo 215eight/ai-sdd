@@ -1,0 +1,50 @@
+apiVersion: factory/v1
+kind: Schema
+metadata:
+  name: intake-bundle
+  version: 1
+spec:
+  mediaType: application/json
+  # The intake is a UNION of varied sources, NOT a single document. Each entry names a
+  # transport + locator (+ an optional intakeType hint). The Requirements Factory maps each
+  # entry to its transport loader, then SYNTHESIZES the loaded set into one normalized-intake.v1.
+  fields:
+    sources:
+      type: list
+      required: true
+      of:
+        fields:
+          transport:  { type: enum, values: [gdoc, pdf, repo-file, url], required: true }   # where it lives / how to read it
+          locator:    { type: string, required: true }                                      # docId / path / url
+          intakeType: { type: enum, values: [idea, prd, hiring-challenge], required: false } # what it means (else inferred)
+---
+apiVersion: factory/v1
+kind: Schema
+metadata:
+  name: intake-source
+  version: 1
+spec:
+  mediaType: application/json
+
+  # The output of a transport loader: one source, extracted to text. A DISCRIMINATED ENVELOPE
+  # — a fixed, typed wrapper around an opaque `body`. "One schema" does not mean "one shape":
+  # the discriminator selects the meaning, and the part that varies (the actual idea / PRD /
+  # challenge content) lives in `body` as text. `intakeType` is also the key the
+  # intake.normalizer dispatches on (skillByIntakeType).
+  discriminator: intakeType
+  fields:
+    intakeType: { type: enum, values: [idea, prd, hiring-challenge], required: true }
+    title:      { type: string, required: true }
+    sourceId:   { type: string, required: false }
+    owner:      { type: string, required: false }
+    body:       { type: text,   required: true }   # raw source content (markdown/text); opaque to this schema
+
+  # Validation here checks ONLY the envelope (known intakeType, non-empty body). Full
+  # structural rigor is enforced on the OUTPUT, `normalized-intake.v1` — the canonical,
+  # machine-consumable form. Intake is unstructured by nature; structuring it is the
+  # normalizer's job, so the input schema is permissive and the output schema is strict.
+
+# ALTERNATIVE — if a source arrives already structured (e.g. a PRD exported as JSON), make
+# `intake-source` a true discriminated UNION (a `oneOf` over per-intakeType variants, each with
+# its own typed payload, keyed on the same `intakeType` discriminator). Same routing; richer
+# per-type fields. The thin-envelope form above is the default.

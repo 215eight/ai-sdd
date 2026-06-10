@@ -1,0 +1,37 @@
+apiVersion: factory/v1
+kind: Config
+metadata:
+  name: acme-sdlc-context
+spec:
+  # The active Model Catalog for this workspace (per AI company). Swap this to retarget
+  # the whole Plant to a different provider — no Worker edits. See models.yaml.
+  models: claude-shop
+
+  # The shared state plane (ADR-0025): the single source of truth, reachable by every machine.
+  # Git-as-control-plane is the starting backend; this is the ONLY place it is chosen — flow
+  # specs stay backend-agnostic, so swapping to `service` later needs no spec changes.
+  stateStore:
+    backend: git                        # git | service
+    git: { repo: git@github.com:acme/factory-state.git, branch: runs }
+  artifactStore:
+    backend: git-lfs                    # git-lfs | s3 | service  (cloud handles like figma/url need no store)
+
+  # Context is injected in layers (Plant -> Factory -> Pipeline) and prepended to
+  # every Worker's instruction template, wrapped in <context>...</context>.
+  context: |
+    Org: Acme. Multi-repo microservice architecture. Each service owns two repos:
+    one for its implementation and one for its gRPC definition. Clients own more
+    than one repo each. No monorepo.
+    Stacks: Go and TypeScript services; React / Next.js frontends; some Python.
+    CI: GitHub Actions. Deploy: AWS EKS + Aurora. Experiments: Statsig. Design: Figma
+    (client design systems live in Figma).
+  rules:
+    specs:
+      - "Acceptance criteria use Given / When / Then."
+    code:
+      - "Match the conventions of sibling files in the target repo."
+      - "Never write secrets into source; resolve via the secret boundary."
+      - "A gRPC contract change lands in the definition repo before any consumer impl repo."
+    design:
+      - "Conform to the client's Figma design system; do not invent tokens."
+  compliance: [soc2, hipaa]   # drives which deterministic compliance Checks are mandatory

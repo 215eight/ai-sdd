@@ -1,0 +1,14 @@
+apiVersion: factory/v1
+kind: Stack
+metadata:
+  name: ios-mac-app
+spec:
+  # A multi-platform app: iOS + macOS, Combine, and a specific UI package.
+  # `apple` and `swiftui` are pulled in transitively via the traits' `requires`.
+  traits: [ios, macos, combine, acme-ui]
+
+# At run start the engine resolves this Stack and merges:
+#   conventions -> union, injected in order (apple, ios, macos, combine, swiftui, acme-ui)
+#   checks      -> union, DEDUPED (lint.swift, contributed via apple, appears once)
+#   resources   -> union (acme-ui-docs)
+# The resolved set is snapshotted into the RunEvent log for reproducibility.

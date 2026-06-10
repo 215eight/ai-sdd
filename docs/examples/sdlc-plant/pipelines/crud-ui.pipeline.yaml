@@ -1,0 +1,40 @@
+apiVersion: factory/v1
+kind: Pipeline
+metadata:
+  name: crud-ui
+  version: 1
+spec:
+  # TOPOLOGY LIVES HERE. This file is the single, readable definition of the flow;
+  # it renders 1:1 to the DAG. Workers below declare only their type signatures —
+  # they do not know who they connect to.
+  semantics: enabler          # edges are readiness enablers, not forced sequence
+
+  nodes:
+    - { id: architect, worker: architect }
+    - { id: migrate,   worker: migrator }
+    # Dynamic fan-out: one api Worker per affected service, discovered at runtime from
+    # the `services` collection in the plan. The authored node is singular and readable;
+    # the Scheduler materializes N instances.
+    - { id: api,       worker: coder.api,      mapOver: plan.services }
+    - { id: ui,        worker: coder.frontend }
+    - { id: tests,     worker: test.author }
+    - { id: review,    worker: reviewer, required: true }   # a required Check node
+    - { id: assemble,  worker: assemble, kind: join }
+
+  edges:                      # authored, and type-checked against Worker signatures at load
+    - { from: architect, to: migrate, artifact: plan.v1 }
+    - { from: architect, to: ui,      artifact: plan.v1 }
+    - { from: migrate,   to: api,     artifact: sql-migration.v1 }
+    - { from: api,       to: ui,      artifact: openapi.v1 }
+    - { from: api,       to: tests,   artifact: openapi.v1 }
+    - { from: migrate,   to: tests,   artifact: sql-migration.v1 }
+    - { from: [api, ui, migrate, tests], to: assemble, artifact: "*" }
+    - { from: assemble,  to: review,  artifact: changeset.v1 }
+
+  # Rework: a failing required Check (e.g. `review`) routes back to the Worker that
+  # produced its input, bounded, with the CheckResult as added context. This is runtime
+  # re-execution, not a cycle in the topology above.
+  rework:
+    maxRounds: 3
+    onExhaustion: escalate-to-human
+    invalidation: scoped      # re-run only the affected Worker + downstream dependents

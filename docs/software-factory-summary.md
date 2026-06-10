@@ -136,41 +136,42 @@ house style.
 
 ---
 
-## 6. Which approach should you copy?
+## 6. What approach is recommended?
 
-Three well-known styles. Two are popular but break in a real multi-team company.
-One is the proven winner.
+Three broad styles. Two sit at the extremes and break in a real multi-team company.
+The recommended one is in the middle.
 
 ```mermaid
 flowchart LR
-    subgraph BMAD["📋 BMAD — strict checklist"]
+    subgraph RIGID["📋 Rigid checklist"]
         direction TB
         M1["Lots of upfront planning docs"]
         M2["⚠️ Human ends up<br/>running the whole thing"]
         M3["Assumes 1 dev, fresh project"]
     end
 
-    subgraph RALPH["🔁 Ralph — loop a robot"]
+    subgraph LOOSE["🔁 Free-running loop"]
         direction TB
         R1["Cheap, simple, runs alone"]
         R2["⚠️ Unpredictable, hard to audit"]
         R3["Rewrites things it shouldn't"]
     end
 
-    subgraph STRIPE["🏆 Stripe-style — guardrails"]
+    subgraph GUARDED["🏆 Guardrailed agent"]
         direction TB
-        S1["Robot does the creative part"]
+        S1["AI does the creative part"]
         S2["✅ Fixed steps it MUST follow"]
-        S3["1,000+ auto-merged PRs / week"]
+        S3["Controllable and auditable"]
     end
 
-    BMAD -.->|"too rigid"| STRIPE
-    RALPH -.->|"too loose"| STRIPE
+    RIGID -.->|"too rigid"| GUARDED
+    LOOSE -.->|"too loose"| GUARDED
 ```
 
-**The winning recipe (Stripe's):** let the AI be creative *inside* strict,
-deterministic guardrails. More controllable than a free-running loop, less rigid
-and bureaucratic than a checklist. This is the pattern to build toward.
+**The recommended approach:** let the AI be creative *inside* strict, deterministic
+guardrails. More controllable than a free-running loop, less rigid and bureaucratic than
+a checklist. That balance — autonomy bounded by enforced rules — is the pattern to
+build toward.
 
 ---
 

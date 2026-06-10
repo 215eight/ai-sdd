@@ -1,0 +1,22 @@
+apiVersion: factory/v1
+kind: Factory
+metadata:
+  name: requirements
+  version: 1
+  owner: product             # PM owns this phase (Conway's law)
+spec:
+  consumes: [intake-bundle.v1]   # a UNION of varied sources (gdoc + repo file + pdf + ...), synthesized into one spec
+  produces: locked-spec.v1       # the master-requirements contract handed to Design & Code
+
+  rootPipeline: requirements-main
+  pipelines:
+    - { ref: requirements-main }
+  workers:
+    - intake.normalizer        # vague idea -> structured requirements (maps to IntakeNormalizer)
+    - decision-closer          # drives out ambiguity -> closed decisions
+    - requirements-author      # master requirements (the locked spec)
+
+  # "Spec locked" gate: cannot exit while any decision is open or the spec is incomplete.
+  exitContract:
+    artifact: locked-spec.v1
+    requiredChecks: [no-open-decisions, spec-complete]

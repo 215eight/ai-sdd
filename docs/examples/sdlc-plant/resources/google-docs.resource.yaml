@@ -1,0 +1,14 @@
+apiVersion: factory/v1
+kind: Resource
+metadata:
+  name: google-docs
+spec:
+  # The transport for the Google Docs intake loader — the "hands" that reach Drive.
+  provider: mcp                      # mcp | cli
+  mcp: { server: google-docs }       # a Google Docs / Drive MCP server
+  # provider: cli
+  # cli: { tools: [gdrive] }         # ...or a CLI exporter instead
+
+  credentials: [oauth:google-workspace]   # resolved at the secret boundary; never inlined
+  defaultAccess: read-only                 # intake only ever reads
+  scope: ["drive:acme"]                    # the Drive/space this resource may read

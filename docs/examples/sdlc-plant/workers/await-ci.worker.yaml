@@ -1,0 +1,24 @@
+apiVersion: factory/v1
+kind: Worker
+metadata:
+  name: await-ci
+  version: 1
+spec:
+  workerKind: sensor
+
+  # Parks the Run until CI completes for this change, then resumes — WITHOUT keeping a process
+  # alive. The Run is durable (event-sourced); this node records a subscription and the engine
+  # may exit. The same shape works for an MR approval (event: mr.approved), a deploy, etc.
+  consumes: [{ schema: changeset.v1, required: true }]
+  produces: [{ schema: ci-result.v1 }]
+
+  waitFor:
+    event: ci.completed                                    # the external event type
+    correlation: { branch: ${run.branch}, commit: ${run.commit} }   # match key -> this Run/node
+    timeout: 30m                                           # then escalate (BlockerRecord)
+
+  # Delivery is either PUSH or POLL — both append an idempotent RunEvent that resumes the Run:
+  #   push:  CI's last step calls `factory ingest --run <id> --event ci.completed ...`
+  #          (or a webhook hits the ingest boundary)
+  #   poll:  `factory resume` (e.g. cron) checks status via the github resource and ingests
+  resources: [{ name: github, access: read-only }]

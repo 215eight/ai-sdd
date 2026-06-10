@@ -1,0 +1,64 @@
+apiVersion: factory/v1
+kind: Worker
+metadata:
+  name: coder.api
+  version: 3
+spec:
+  workerKind: transform       # transform · check · human · map · sensor · pipeline · join
+
+  # Typed signature ONLY — no topology. This is what makes the Worker reusable across
+  # Pipelines and lets the engine type-check edges at load.
+  consumes:
+    - { schema: openapi.v1,       required: true }
+    - { schema: sql-migration.v1, required: true }
+  produces:
+    - { schema: go-source.v1, cardinality: many }
+
+  # Unit of work: a repo skill, surfaced to the agent via AGENTS.md / CLAUDE.md.
+  # (Or `command: /implement-api` — a command that runs a skill.) Portable across providers.
+  task:
+    skill: implement-api
+
+  # Framework-agnostic model selection: a capability TIER + reasoning level — never a
+  # provider or model id. Resolved by the active Model Catalog (../models.yaml).
+  # Workers ALWAYS go through the catalog; pinning a provider/model here is disallowed.
+  model: deep-reasoning
+  reasoning: high
+
+  # Specialized per stack, resolved late from the service's StackAssignment; the stack's
+  # Traits merge in language conventions + checks at resolution (snapshotted to RunEvent).
+  stack: ${node.stack}
+
+  # HANDS — least-privilege grant (see ../resources/github.resource.yaml).
+  resources:
+    - { name: github, access: read-write }
+
+  # Codebase intelligence: what to retrieve so output matches the target repo's style.
+  context:
+    retrieve:
+      - "siblings:api/**/*.go"
+      - "conventions:.sdd/conventions/go.md"
+      - "contract:grpc-registry/{service}.proto"
+
+  # Output must pass these before it is accepted (in-loop backpressure). Resolved from
+  # the Check registry. A failing required Check triggers the Pipeline's rework loop.
+  checks: [typecheck.go, lint.go, unit.go, judge.api-conventions, gate.hipaa-phi]
+
+  # CAPABILITY GUARDRAILS — runtime-enforced, default-deny, write-scoped to this service's
+  # repo (no cross-cutting: it cannot edit another service by construction).
+  permissions:
+    filesystem: { read: ["**"], write: ["api/**", "openapi/**"] }
+    tools:
+      allow: [read, edit, bash:go]
+      deny:  [bash:git-push, network]
+
+  retry:
+    maxAttempts: 3
+    onCheckFail: self-repair  # feed the CheckResult back and re-run, before escalating
+    then: escalate
+
+  budget:
+    tokens: 400000
+    wallClock: 20m
+  # No prompt template here: the work is the `implement-api` skill in the repo. Workspace
+  # context (config.yaml) is prepended to the skill's instructions at invocation time.

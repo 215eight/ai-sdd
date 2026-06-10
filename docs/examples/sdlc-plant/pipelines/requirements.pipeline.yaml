@@ -1,0 +1,34 @@
+apiVersion: factory/v1
+kind: Pipeline
+metadata:
+  name: requirements-main
+  version: 1
+spec:
+  semantics: enabler
+  nodes:
+    # FAN-OUT: the factory input `intake-bundle.v1` is a set of sources; map one loader per
+    # source, routed to its transport loader. Unbounded number of sources.
+    - id: load
+      mapOver: bundle.sources
+      dispatch: { by: transport, to: { gdoc: load.gdoc, pdf: load.pdf, repo-file: load.repo-file } }
+    # JOIN: synthesize the whole set of loaded sources into one canonical normalized intake.
+    - { id: normalize, worker: intake.normalizer }            # many intake-source.v1 -> one normalized-intake.v1
+    - { id: clarify,   worker: decision-closer }              # drive out ambiguity -> decisions
+    - { id: ask,       worker: ask-stakeholder, kind: human } # resolve what the AI can't
+    - { id: author,    worker: requirements-author }          # master requirements (locked spec)
+  edges:
+    - { from: load,      to: normalize, artifact: intake-source.v1 }     # many -> join
+    - { from: normalize, to: clarify,   artifact: normalized-intake.v1 }
+    - { from: clarify,   to: author,    artifact: decisions.v1 }
+    - { from: normalize, to: author,    artifact: normalized-intake.v1 }
+
+  # Clarification loop: when `clarify` surfaces open questions it cannot resolve, route to a
+  # human (bounded), then re-run. Mirrors the SDLC "1-2 iterations of eng questions".
+  rework:
+    maxRounds: 2
+    onExhaustion: escalate-to-human
+
+# REPEATABILITY: `clarify` closes every decision (no ambiguity left for a later stage to
+# resolve differently), and the engine pins model/trait/check versions per run (RunEvent
+# snapshot). Deterministic input + deterministic execution => same closed requirements
+# produce the same result.

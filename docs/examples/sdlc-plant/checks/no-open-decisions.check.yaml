@@ -1,0 +1,19 @@
+apiVersion: factory/v1
+kind: Check
+metadata:
+  name: no-open-decisions
+  version: 1
+spec:
+  checkKind: deterministic
+  modes: [inline, offline]
+
+  # The spec cannot lock while any decision is unresolved. This is what enforces
+  # repeatability at the input boundary. Maps to ai-sdd's `closedDecisions` and its
+  # scaffold-placeholder detection (e.g. "_No closed decisions recorded yet._").
+  command: "sdd-spec audit --open-decisions"
+  parser: spec-audit-json
+  thresholds:
+    "decisions.open": 0
+
+  required: true
+  onFail: route-to-producer    # back to `clarify` (decision-closer) to close them
