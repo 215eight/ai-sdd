@@ -41,12 +41,21 @@ spec:
 
   # Inter-factory contracts == boundary Checks == the SDLC APPROVAL gates.
   # Compliance/objective criteria are deterministic; fidelity/completeness are judge/human.
+  # Each contract is a versioned schema (ADR-0017): the .vN is the MAJOR; minors are
+  # additive/back-compat; breaking changes go to a new major via dual-publish. The
+  # `contract-compat` Check enforces additive=>minor / breaking=>new-major on every bump.
   contracts:
     locked-spec.v1:
-      requiredChecks: [spec-complete, stakeholder-signoff]
+      version: "1.0"
+      compatibility: additive             # within v1: optional/additive only; breaking -> locked-spec.v2
+      requiredChecks: [spec-complete, stakeholder-signoff, contract-compat]
     approved-design.v1:
-      requiredChecks: [ui-fidelity, design-system-conformance]
+      version: "1.0"
+      compatibility: additive
+      requiredChecks: [ui-fidelity, design-system-conformance, contract-compat]
     release-candidate.v1:                 # the 7-criteria pre-rollout gate
+      version: "1.0"
+      compatibility: additive
       requiredChecks:
         - perf
         - scale
@@ -55,8 +64,11 @@ spec:
         - unit-coverage
         - observability-dashboards
         - alerts-configured
+        - contract-compat
     rollout-outcome.v1:
-      requiredChecks: [slo-stable, experiment-significant]
+      version: "1.0"
+      compatibility: additive
+      requiredChecks: [slo-stable, experiment-significant, contract-compat]
 
   # One correlation id threads through every Factory for end-to-end tracing.
   tracing:

@@ -440,6 +440,52 @@ handles (figma/url/git-ref) are already shared. Corrects the local-state implica
 
 ---
 
+## ADR-0017 — Inter-factory contract versioning & compatibility
+**Status:** Accepted · 2026-06-09 *(resolved from Open)*
+
+**Context.** The inter-factory contracts (`locked-spec.v1`, `approved-design.v1`,
+`release-candidate.v1`, `rollout-outcome.v1`) are APIs between independently-deployed Factories
+(ADR-0012). They must evolve without flag-day coordination — the biggest tax of decomposition.
+
+**Decision — semver with a hard additive rule.** A contract Schema carries a version
+`MAJOR.MINOR`. The `.vN` in the contract name **is the major** (what edges reference, e.g.
+`locked-spec.v1`); minors evolve within it.
+- **PATCH** — wording/clarification, no shape change. Always compatible.
+- **MINOR** — **additive only** (new *optional* fields). Backward- *and* forward-compatible:
+  old consumers ignore new fields; new consumers tolerate their absence.
+- **MAJOR** — any breaking change (remove/rename/retype a field, or make an optional field
+  required). Produces a **new contract** (`.v2`) — never an in-place break.
+
+**Decision — producer-satisfies-consumer, checked at load.** A consumer Factory declares a
+caret range per input (`requires: locked-spec ^1.3` = `>=1.3.0 <2.0.0`); a producer declares
+what it emits (`provides: locked-spec 1.4`). The wiring is valid iff **major matches and
+producer.minor ≥ the consumer's required minor**. This extends the load-time `SpecValidator`
+(architecture §5) — incompatible Factories fail to load, before any run. A consumer that needs
+a field added in 1.3 bumps its range to `^1.3`; the loader then forces the producer to be ≥1.3.
+
+**Decision — breaking changes use expand-contract (parallel change).** To cross a major without
+a flag day, the producer **dual-publishes** both `vN` and `vN+1` during a deprecation window;
+consumers migrate at their own pace; once all are on `vN+1`, the producer drops `vN`. A version
+may be marked `deprecated` with a sunset; the registry warns during the window. (Optional: an
+**upcaster** Worker that translates `vN→vN+1` so the producer need not hand-maintain two
+emitters.) Same pattern ADR-0018 uses at the gRPC/code level.
+
+**Decision — the change itself is gated.** A `contract-compat` Check diffs a changed contract
+Schema against its registered predecessor and enforces the rule (additive ⇒ MINOR, breaking ⇒
+new MAJOR). A bump that violates the declared compatibility level cannot be promoted (ties to
+the promotion gate, ADR-0007). Confluent-schema-registry-style enforcement.
+
+**Consequences.** Most evolution is free (additive minors, no consumer changes). Breaking
+changes are explicit, dual-published, and bounded by a deprecation window. The Conductor's
+contract list carries each contract's `version` + `compatibility`; `requires`/`provides` live
+on the Factories.
+
+**Alternatives rejected.** Unversioned contracts (silent cross-Factory breakage). In-place
+breaking changes (flag-day coordination across independently-deployed Factories — exactly what
+decomposition is meant to avoid).
+
+---
+
 ## Open decisions
 
 ### ADR-0016 — Durable, resumable rollout sub-pipeline
@@ -453,13 +499,6 @@ to resume — is now described in architecture.md §10 ("Asynchronous, durable r
 covers MR-approval / CI-completion / webhook triggers including on a local machine. **Still
 open:** the rollout-*specific* durability — resuming a partially-applied, monitored rollout and
 its compensation/rollback — which layers on top of that mechanism.
-
-### ADR-0017 — Inter-factory contract versioning & back-compat
-**Status:** Open
-
-Contracts (`locked-spec.v1`, `approved-design.v1`, `release-candidate.v1`,
-`rollout-outcome.v1`) are APIs between independently-evolving Factories. Versioning,
-deprecation, and compatibility policy are undecided — the biggest tax of decomposition.
 
 ### ADR-0018 — Cross-repo atomicity for gRPC-contract changes
 **Status:** Open

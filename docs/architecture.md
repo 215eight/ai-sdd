@@ -405,6 +405,7 @@ flowchart LR
 
 - **Coordination = orchestration for the forward backbone + events for exceptions.** The Conductor (a saga orchestrator) explicitly drives the forward path, so the macro-flow is one readable definition. The rare, asynchronous long-range feedback (Deployment detects an issue → re-enter Requirements/Design/Code) flows as a **classified signal** the Conductor catches — *not* through the synchronous backbone. We avoid pure choreography precisely because it would scatter the flow.
 - The `✓` on each Edge is a **boundary Check** = the APPROVAL gate / the inter-factory contract.
+- **Contracts are versioned** (ADR-0017): each carries a `MAJOR.MINOR` (the `.vN` is the major). Minors are **additive-only** (back- *and* forward-compatible); breaking changes go to a new major via **dual-publish / expand-contract**. Producers declare `provides`, consumers a caret `requires` range, and the load-time validator enforces *producer-satisfies-consumer* — incompatible Factories fail to load.
 - A single **correlation Run id** threads through all Factories for end-to-end tracing.
 
 ## 12. The spec hierarchy & the engine boundary
@@ -498,8 +499,8 @@ Resources/Adapters, `map`/sensors, the shared state-plane store, and the Conduct
 ## 15. Open questions
 
 Tracked in [decisions.md](decisions.md) under "Open." Notable: durable/resumable rollout
-sub-pipeline mechanics; inter-factory contract versioning & back-compat; cross-repo
-atomicity for gRPC-contract changes; naming of the Conductor.
+sub-pipeline mechanics; cross-repo atomicity for gRPC-contract changes; naming of the
+Conductor. (Inter-factory contract versioning is now resolved — ADR-0017.)
 
 ## References
 

@@ -8,6 +8,11 @@ spec:
   consumes: [intake-bundle.v1]   # a UNION of varied sources (gdoc + repo file + pdf + ...), synthesized into one spec
   produces: locked-spec.v1       # the master-requirements contract handed to Design & Code
 
+  # The contract version this Factory emits (ADR-0017). Bumping it additively -> minor; the
+  # contract-compat Check gates the change; downstream consumers on `^1.x` keep working.
+  contracts:
+    provides: [{ name: locked-spec, version: "1.0" }]
+
   rootPipeline: requirements-main
   pipelines:
     - { ref: requirements-main }

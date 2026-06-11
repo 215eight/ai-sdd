@@ -8,6 +8,14 @@ spec:
   consumes: [locked-spec.v1, approved-design.v1]
   produces: release-candidate.v1
 
+  # Contract compatibility (ADR-0017): caret ranges on inputs are checked at load against what
+  # the upstream Factories `provides` — same major, producer.minor >= required, else fail-to-load.
+  contracts:
+    requires:
+      - { name: locked-spec,     range: "^1.0" }   # any v1 minor >= 1.0 (bump to ^1.3 if a 1.3 field is needed)
+      - { name: approved-design, range: "^1.0" }
+    provides: [{ name: release-candidate, version: "1.0" }]
+
   # The systems this Factory is allowed to touch (credentials via the secret boundary).
   resources: [github, grpc-registry, aurora-schema]
 

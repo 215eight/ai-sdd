@@ -26,7 +26,8 @@ sdlc-plant/
 │   └── await-ci.worker.yaml          # a sensor: park on an async event (CI/MR), resume later
 ├── checks/
 │   ├── typecheck.go.check.yaml       # a deterministic gate/eval
-│   └── no-open-decisions.check.yaml  # the "spec locked" repeatability gate
+│   ├── no-open-decisions.check.yaml  # the "spec locked" repeatability gate
+│   └── contract-compat.check.yaml    # enforces additive=>minor / breaking=>new-major (ADR-0017)
 ├── resources/
 │   ├── github.resource.yaml          # a Resource (hands): MCP or CLI + access scope
 │   └── google-docs.resource.yaml     # the transport for the gdoc intake loader

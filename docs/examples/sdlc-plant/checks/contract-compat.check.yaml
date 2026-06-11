@@ -1,0 +1,21 @@
+apiVersion: factory/v1
+kind: Check
+metadata:
+  name: contract-compat
+  version: 1
+spec:
+  checkKind: deterministic
+  modes: [inline, offline]
+
+  # Enforces the contract evolution rule (ADR-0017) on every bump: diff the changed contract
+  # schema against its registered predecessor —
+  #   additive change (new OPTIONAL field) -> MINOR bump (back- and forward-compatible)
+  #   breaking change (remove/rename/retype, or make a field required) -> must be a NEW MAJOR (.v2)
+  # A breaking change left on the same major fails; the bump cannot be promoted (ADR-0007).
+  command: "sdd-contract diff --enforce additive-within-major"
+  parser: contract-diff-json
+  thresholds:
+    "breaking.changes.unversioned": 0
+
+  required: true
+  onFail: route-to-producer
