@@ -1,0 +1,7 @@
+apiVersion: factory/v1
+kind: Worker
+metadata: { name: reviewer }
+spec:
+  workerKind: transform
+  consumes: [{ schema: code.v1, required: true }]
+  produces: [{ schema: review.v1 }]

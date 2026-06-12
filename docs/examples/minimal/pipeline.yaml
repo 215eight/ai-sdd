@@ -1,0 +1,12 @@
+apiVersion: factory/v1
+kind: Pipeline
+metadata: { name: minimal, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: architect, worker: architect }
+    - { id: coder,     worker: coder }
+    - { id: reviewer,  worker: reviewer, required: true }
+  edges:
+    - { from: architect, to: coder,    artifact: plan.v1 }
+    - { from: coder,     to: reviewer, artifact: code.v1 }

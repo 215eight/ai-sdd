@@ -1,0 +1,6 @@
+apiVersion: factory/v1
+kind: Worker
+metadata: { name: architect }
+spec:
+  workerKind: transform
+  produces: [{ schema: plan.v1 }]
