@@ -5,3 +5,7 @@ spec:
   workerKind: transform
   consumes: [{ schema: code.v1, required: true }]
   produces: [{ schema: review.v1 }]
+  task: { skill: review-change }
+  model: deep-reasoning
+  reasoning: high
+  checks: [judge.review-quality]

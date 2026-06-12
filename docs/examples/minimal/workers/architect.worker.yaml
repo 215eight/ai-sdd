@@ -4,3 +4,7 @@ metadata: { name: architect }
 spec:
   workerKind: transform
   produces: [{ schema: plan.v1 }]
+  task: { skill: plan-change }       # repo skill, surfaced via AGENTS.md / CLAUDE.md
+  model: deep-reasoning
+  reasoning: high
+  checks: [judge.plan-quality]

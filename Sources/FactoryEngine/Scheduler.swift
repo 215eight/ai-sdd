@@ -18,4 +18,12 @@ public enum Scheduler {
             return ready ? node.id : nil
         }
     }
+
+    /// The single node `next` should dispense: an already-in-progress runnable node
+    /// (so re-running `next` before `submit` re-renders the same work, not a new node),
+    /// else the first runnable node in declaration order. `nil` when nothing is runnable.
+    public static func pick(_ state: RunState, _ pipeline: PipelineSpec) -> String? {
+        let ready = runnable(state, pipeline)
+        return ready.first { state.inProgressNodes.contains($0) } ?? ready.first
+    }
 }

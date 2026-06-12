@@ -164,6 +164,99 @@ struct EngineTests {
         #expect(issues.contains { $0.kind == .unknownNode }, "got: \(issues)")
     }
 
+    // MARK: - next: pick, in-progress state, rendering
+
+    // `pick` is deterministic: the first runnable node in declaration order.
+    @Test func pickIsFirstRunnableInOrder() throws {
+        let pipeline = try loadPipeline()
+        var state = RunState()
+        #expect(Scheduler.pick(state, pipeline) == "architect")
+
+        // With migrate AND config runnable, pick takes the first in declaration order (migrate).
+        state = Reducer.reduce(state, .nodeCompleted(node: "architect", producedArtifacts: ["plan.v1"]))
+        #expect(Set(Scheduler.runnable(state, pipeline)) == ["migrate", "config"])
+        #expect(Scheduler.pick(state, pipeline) == "migrate")
+    }
+
+    // `pick` prefers an already in-progress node, so re-running `next` re-renders the same work.
+    @Test func pickPrefersInProgress() throws {
+        let pipeline = try loadPipeline()
+        var state = RunState()
+        state = Reducer.reduce(state, .nodeCompleted(node: "architect", producedArtifacts: ["plan.v1"]))
+        // config (second in order) is in progress → pick re-selects it over migrate (first).
+        state = Reducer.reduce(state, .nodeStarted(node: "config"))
+        #expect(Scheduler.pick(state, pipeline) == "config")
+    }
+
+    // `nodeStarted` marks a node in progress; `nodeCompleted` clears it and records completion.
+    @Test func startedThenCompletedTracksInProgress() {
+        var state = RunState()
+        state = Reducer.reduce(state, .nodeStarted(node: "architect"))
+        #expect(state.inProgressNodes == ["architect"])
+        #expect(state.completedNodes.isEmpty)
+
+        state = Reducer.reduce(state, .nodeCompleted(node: "architect", producedArtifacts: ["plan.v1"]))
+        #expect(state.inProgressNodes.isEmpty)
+        #expect(state.completedNodes == ["architect"])
+    }
+
+    // The renderer reflects readiness: a runnable node's required inputs show as ready.
+    @Test func rendererReflectsReadiness() {
+        let node = PipelineNode(id: "coder", worker: "coder")
+        let worker = WorkerSpec(
+            workerKind: "transform",
+            consumes: [PortSpec(schema: "plan.v1", required: true)],
+            produces: [PortSpec(schema: "code.v1")],
+            task: WorkerTask(skill: "implement-change"),
+            checks: ["typecheck", "unit"],
+            model: "deep-reasoning", reasoning: "high"
+        )
+        let state = RunState(readyArtifacts: ["plan.v1"], completedNodes: ["architect"])
+
+        let instruction = Renderer.instruction(node: node, worker: worker, state: state)
+        #expect(instruction.node == "coder")
+        #expect(instruction.worker == "coder")
+        #expect(instruction.task == WorkerTask(skill: "implement-change"))
+        #expect(instruction.produces == ["code.v1"])
+        #expect(instruction.checks == ["typecheck", "unit"])
+        #expect(instruction.consumes == [RenderedInput(schema: "plan.v1", required: true, ready: true)])
+
+        // An input whose Schema is not ready renders as missing.
+        let unmet = Renderer.instruction(node: node, worker: worker, state: RunState())
+        #expect(unmet.consumes == [RenderedInput(schema: "plan.v1", required: true, ready: false)])
+    }
+
+    // The Markdown rendering surfaces the task, inputs, produces, and checks.
+    @Test func markdownSurfacesTheKeyFields() {
+        let node = PipelineNode(id: "reviewer", worker: "reviewer", required: true)
+        let worker = WorkerSpec(
+            workerKind: "transform",
+            consumes: [PortSpec(schema: "code.v1", required: true)],
+            produces: [PortSpec(schema: "review.v1")],
+            task: WorkerTask(skill: "review-change"),
+            checks: ["judge.review-quality"]
+        )
+        let md = Renderer.markdown(
+            Renderer.instruction(node: node, worker: worker, state: RunState(readyArtifacts: ["code.v1"])))
+
+        #expect(md.contains("Worker `reviewer`"))
+        #expect(md.contains("Run skill: `review-change`"))
+        #expect(md.contains("`code.v1` — required, ✓ ready"))
+        #expect(md.contains("`review.v1`"))
+        #expect(md.contains("judge.review-quality"))
+        #expect(md.contains("required gate"))
+    }
+
+    // A node with no incoming edges renders as a source (no inputs).
+    @Test func sourceNodeRendersNoInputs() {
+        let node = PipelineNode(id: "architect", worker: "architect")
+        let worker = WorkerSpec(workerKind: "transform", produces: [PortSpec(schema: "plan.v1")],
+                                task: WorkerTask(skill: "plan-change"))
+        let instruction = Renderer.instruction(node: node, worker: worker, state: RunState())
+        #expect(instruction.consumes.isEmpty)
+        #expect(Renderer.markdown(instruction).contains("(none — this is a source node)"))
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

@@ -106,11 +106,33 @@ public struct WorkerSpec: Codable, Equatable, Sendable {
     public var workerKind: String?
     public var consumes: [PortSpec]?
     public var produces: [PortSpec]?
+    public var task: WorkerTask?           // the unit of work — a repo skill or command
+    public var checks: [String]?           // gates the output must pass (check ids)
+    public var model: String?              // capability tier alias (e.g. "deep-reasoning") — never a provider/model id
+    public var reasoning: String?          // "minimal" | "low" | "medium" | "high"
 
-    public init(workerKind: String? = nil, consumes: [PortSpec]? = nil, produces: [PortSpec]? = nil) {
+    public init(workerKind: String? = nil, consumes: [PortSpec]? = nil, produces: [PortSpec]? = nil,
+                task: WorkerTask? = nil, checks: [String]? = nil,
+                model: String? = nil, reasoning: String? = nil) {
         self.workerKind = workerKind
         self.consumes = consumes
         self.produces = produces
+        self.task = task
+        self.checks = checks
+        self.model = model
+        self.reasoning = reasoning
+    }
+}
+
+/// A Worker's unit of work: a repo-defined skill (surfaced via AGENTS.md / CLAUDE.md) or a
+/// command that runs one. Portable across providers — never an inline prompt.
+public struct WorkerTask: Codable, Equatable, Sendable {
+    public var skill: String?
+    public var command: String?
+
+    public init(skill: String? = nil, command: String? = nil) {
+        self.skill = skill
+        self.command = command
     }
 }
 

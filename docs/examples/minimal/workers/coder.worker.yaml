@@ -5,3 +5,7 @@ spec:
   workerKind: transform
   consumes: [{ schema: plan.v1, required: true }]
   produces: [{ schema: code.v1 }]
+  task: { skill: implement-change }
+  model: deep-reasoning
+  reasoning: high
+  checks: [typecheck, lint, unit]
