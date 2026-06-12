@@ -7,24 +7,28 @@ public struct RunState: Equatable, Sendable {
     public var completedNodes: Set<String>
     public var inProgressNodes: Set<String>     // dispensed by `next`, not yet submitted
     public var failedChecks: [String: [String]] // node → checks its last attempt failed (rework context)
+    public var slices: [String: RunState]       // per-slice sub-pipeline state (a node that expands)
 
     public init(readyArtifacts: Set<String> = [], completedNodes: Set<String> = [],
-                inProgressNodes: Set<String> = [], failedChecks: [String: [String]] = [:]) {
+                inProgressNodes: Set<String> = [], failedChecks: [String: [String]] = [:],
+                slices: [String: RunState] = [:]) {
         self.readyArtifacts = readyArtifacts
         self.completedNodes = completedNodes
         self.inProgressNodes = inProgressNodes
         self.failedChecks = failedChecks
+        self.slices = slices
     }
 }
 
 /// An append-only event. (This slice models the two events the Scheduler/Reducer need;
 /// the full set — started/gate/blocked/approval/etc. — comes later.) `Codable` so the
 /// `RunStore` can persist one file per event.
-public enum RunEvent: Codable, Equatable, Sendable {
+public indirect enum RunEvent: Codable, Equatable, Sendable {
     case runStarted(seedArtifacts: [String])                       // pipeline inputs available at start
     case nodeStarted(node: String)                                 // `next` dispensed this node's work
     case checkFailed(node: String, checks: [String])               // a submit's required gates failed → rework
     case nodeCompleted(node: String, producedArtifacts: [String])  // a node finished and produced these
+    case scoped(slice: String, event: RunEvent)                    // an event inside a slice's sub-pipeline
 }
 
 /// The pure event→state fold (architecture.md §6). Replayable: same events ⇒ same state.
@@ -46,6 +50,9 @@ public enum Reducer {
             next.failedChecks[node] = nil
             next.completedNodes.insert(node)
             next.readyArtifacts.formUnion(producedArtifacts)
+        case let .scoped(slice, inner):
+            // Route the event into that slice's sub-pipeline state (same fold, one level down).
+            next.slices[slice] = reduce(next.slices[slice] ?? RunState(), inner)
         }
         return next
     }

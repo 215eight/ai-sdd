@@ -18,6 +18,8 @@ public struct RenderedInput: Codable, Equatable, Sendable {
 /// human/agent reader. The engine renders; the agent does the work.
 public struct WorkerInstruction: Codable, Equatable, Sendable {
     public var runId: String?
+    public var slice: String?          // the orchestration slice this work belongs to, if any
+    public var stack: String?          // the slice's stack
     public var node: String
     public var worker: String
     public var workerKind: String?
@@ -30,11 +32,14 @@ public struct WorkerInstruction: Codable, Equatable, Sendable {
     public var checks: [String]
     public var rework: [String]        // gates a prior attempt failed; empty on a first attempt
 
-    public init(runId: String? = nil, node: String, worker: String, workerKind: String? = nil,
+    public init(runId: String? = nil, slice: String? = nil, stack: String? = nil,
+                node: String, worker: String, workerKind: String? = nil,
                 task: WorkerTask? = nil, model: String? = nil, reasoning: String? = nil,
                 requiredGate: Bool = false, consumes: [RenderedInput] = [],
                 produces: [String] = [], checks: [String] = [], rework: [String] = []) {
         self.runId = runId
+        self.slice = slice
+        self.stack = stack
         self.node = node
         self.worker = worker
         self.workerKind = workerKind
@@ -52,13 +57,17 @@ public struct WorkerInstruction: Codable, Equatable, Sendable {
 /// Renders a runnable node + its Worker into an instruction. Pure: no I/O, no state mutation.
 public enum Renderer {
     /// Build the structured instruction for `node` (executed by `worker`) given current state.
-    public static func instruction(node: PipelineNode, worker: WorkerSpec, state: RunState) -> WorkerInstruction {
+    /// `slice`/`stack` set the orchestration context when the node runs inside a slice.
+    public static func instruction(node: PipelineNode, worker: WorkerSpec, state: RunState,
+                                   slice: String? = nil, stack: String? = nil) -> WorkerInstruction {
         let consumes = (worker.consumes ?? []).map { port in
             RenderedInput(schema: port.schema,
                           required: port.required ?? false,
                           ready: state.readyArtifacts.contains(port.schema))
         }
         return WorkerInstruction(
+            slice: slice,
+            stack: stack,
             node: node.id,
             worker: node.worker ?? node.id,
             workerKind: worker.workerKind,
@@ -77,6 +86,9 @@ public enum Renderer {
     public static func markdown(_ instruction: WorkerInstruction) -> String {
         var lines: [String] = []
         lines.append("# Worker `\(instruction.worker)`  ·  node `\(instruction.node)`")
+        if let slice = instruction.slice {
+            lines.append("slice `\(slice)`\(instruction.stack.map { "  ·  stack `\($0)`" } ?? "")")
+        }
 
         var meta: [String] = []
         if let kind = instruction.workerKind { meta.append("kind: \(kind)") }

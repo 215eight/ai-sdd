@@ -1,0 +1,17 @@
+apiVersion: factory/v1
+kind: Pipeline
+metadata: { name: build-app, version: 1 }
+spec:
+  # An ORCHESTRATION graph: the nodes are slices (work items), the edges are pure
+  # `depends_on` dependencies (no artifact). Same engine, second kind of DAG (architecture §5):
+  # the Scheduler runs a slice once its dependencies complete, and each slice descends into
+  # its own plan→implement→review pipeline (here, the reusable `minimal` cycle next door).
+  semantics: enabler
+  nodes:
+    - { id: foundation, kind: pipeline, pipeline: ../minimal, stack: core }
+    - { id: api,        kind: pipeline, pipeline: ../minimal, stack: api-go }
+    - { id: ui,         kind: pipeline, pipeline: ../minimal, stack: web }
+  edges:
+    # api and ui both depend on foundation — they become runnable (in parallel) once it is done.
+    - { from: foundation, to: api }
+    - { from: foundation, to: ui }

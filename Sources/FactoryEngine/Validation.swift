@@ -7,6 +7,8 @@ public struct ValidationIssue: Equatable, Sendable {
         case unknownNode        // an edge references a node that does not exist
         case edgeTypeMismatch   // an edge's Schema is not produced/consumed by its endpoints
         case unknownCheck       // a worker references a check that does not exist
+        case cycle              // the dependency graph is not acyclic
+        case missingPipelineRef // a pipeline (slice) node has no sub-pipeline reference
     }
 
     public var kind: Kind
@@ -26,8 +28,16 @@ public enum SpecValidator {
         var issues: [ValidationIssue] = []
         let nodeByID = Dictionary(uniqueKeysWithValues: pipeline.nodes.map { ($0.id, $0) })
 
-        // 1. Every node.worker reference resolves; every check a worker references resolves.
+        // 1. Reference checks per node: a worker node resolves its worker + that worker's checks;
+        //    a slice node (it expands into a sub-pipeline) must name the sub-pipeline.
         for node in pipeline.nodes {
+            if node.kind == "pipeline" || node.pipeline != nil {
+                if (node.pipeline ?? "").isEmpty {
+                    issues.append(.init(kind: .missingPipelineRef,
+                                        message: "slice node '\(node.id)' has no 'pipeline' reference"))
+                }
+                continue
+            }
             guard let workerName = node.worker else { continue }
             guard let worker = workers[workerName] else {
                 issues.append(.init(kind: .unknownWorker,
@@ -73,6 +83,43 @@ public enum SpecValidator {
             }
         }
 
+        // 4. The graph must be acyclic — a dependency cycle would never become runnable (§5).
+        if let cycle = firstCycle(pipeline) {
+            issues.append(.init(kind: .cycle,
+                                message: "dependency cycle: \(cycle.joined(separator: " → "))"))
+        }
+
         return issues
+    }
+
+    /// Returns the nodes of one cycle (for the message), or nil if the graph is acyclic.
+    /// DFS with a recursion stack; edges run from each `from` node to the `to` node.
+    private static func firstCycle(_ pipeline: PipelineSpec) -> [String]? {
+        var successors: [String: [String]] = [:]
+        for edge in pipeline.edges {
+            for from in edge.from.values { successors[from, default: []].append(edge.to) }
+        }
+        var color: [String: Int] = [:]   // 0/absent = unvisited, 1 = on stack, 2 = done
+        var stack: [String] = []
+
+        func visit(_ node: String) -> [String]? {
+            color[node] = 1
+            stack.append(node)
+            for next in successors[node] ?? [] {
+                switch color[next] {
+                case 1: return Array(stack[(stack.firstIndex(of: next) ?? 0)...]) + [next]
+                case 2: continue
+                default: if let found = visit(next) { return found }
+                }
+            }
+            stack.removeLast()
+            color[node] = 2
+            return nil
+        }
+
+        for node in pipeline.nodes where color[node.id] == nil {
+            if let found = visit(node.id) { return found }
+        }
+        return nil
     }
 }

@@ -74,17 +74,22 @@ public struct PipelineSpec: Codable, Equatable, Sendable {
 public struct PipelineNode: Codable, Equatable, Sendable {
     public var id: String
     public var worker: String?             // role/worker name; nil for some node kinds
-    public var kind: String?               // e.g. "join", "human" (WorkerKind)
+    public var kind: String?               // e.g. "join", "human", "pipeline" (WorkerKind)
     public var required: Bool?             // a required check node
     public var mapOver: String?            // dynamic fan-out (§10)
+    public var pipeline: String?           // a sub-pipeline workspace this node expands into (a slice)
+    public var stack: String?              // the slice's stack — its late-bound specialization (§7)
 
     public init(id: String, worker: String? = nil, kind: String? = nil,
-                required: Bool? = nil, mapOver: String? = nil) {
+                required: Bool? = nil, mapOver: String? = nil,
+                pipeline: String? = nil, stack: String? = nil) {
         self.id = id
         self.worker = worker
         self.kind = kind
         self.required = required
         self.mapOver = mapOver
+        self.pipeline = pipeline
+        self.stack = stack
     }
 }
 

@@ -362,6 +362,100 @@ struct EngineTests {
         #expect(env.spec == CheckSpec(checkKind: "deterministic", command: "swift test"))
     }
 
+    // MARK: - Piece 5: orchestration graph + slice descent
+
+    // A pure dependency graph (depends_on edges, no artifacts) schedules by node completion.
+    @Test func dependencyGraphSchedulesByCompletion() {
+        // foundation ──▶ api ; foundation ──▶ ui   (artifact-less edges)
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "foundation", kind: "pipeline", pipeline: "p"),
+                    PipelineNode(id: "api", kind: "pipeline", pipeline: "p"),
+                    PipelineNode(id: "ui", kind: "pipeline", pipeline: "p")],
+            edges: [PipelineEdge(from: OneOrMany(["foundation"]), to: "api"),
+                    PipelineEdge(from: OneOrMany(["foundation"]), to: "ui")])
+        var state = RunState()
+        #expect(Scheduler.runnable(state, pipeline) == ["foundation"], "only the root is runnable")
+
+        // foundation completing (no artifacts) unlocks both dependents.
+        state = Reducer.reduce(state, .nodeCompleted(node: "foundation", producedArtifacts: []))
+        #expect(Set(Scheduler.runnable(state, pipeline)) == ["api", "ui"])
+        #expect(!Scheduler.isComplete(state, pipeline))
+    }
+
+    // A join over [a, b] waits for ALL its sources to complete, even with a wildcard artifact.
+    @Test func joinWaitsForAllSources() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "a"), PipelineNode(id: "b"), PipelineNode(id: "join", kind: "join")],
+            edges: [PipelineEdge(from: OneOrMany(["a", "b"]), to: "join", artifact: "*")])
+        var state = RunState()
+        #expect(Set(Scheduler.runnable(state, pipeline)) == ["a", "b"], "join not yet runnable")
+
+        state = Reducer.reduce(state, .nodeCompleted(node: "a", producedArtifacts: []))
+        #expect(Set(Scheduler.runnable(state, pipeline)) == ["b"], "join still waits on b")
+        state = Reducer.reduce(state, .nodeCompleted(node: "b", producedArtifacts: []))
+        #expect(Scheduler.runnable(state, pipeline) == ["join"])
+    }
+
+    // A dependency cycle is rejected at load.
+    @Test func cycleIsCaught() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "a", worker: "w"), PipelineNode(id: "b", worker: "w")],
+            edges: [PipelineEdge(from: OneOrMany(["a"]), to: "b"),
+                    PipelineEdge(from: OneOrMany(["b"]), to: "a")])
+        let issues = SpecValidator.validate(pipeline: pipeline, workers: ["w": WorkerSpec()])
+        #expect(issues.contains { $0.kind == .cycle }, "got: \(issues)")
+    }
+
+    // A slice node (kind: pipeline) with no sub-pipeline reference is rejected.
+    @Test func sliceWithoutPipelineRefIsCaught() {
+        let pipeline = PipelineSpec(nodes: [PipelineNode(id: "s", kind: "pipeline")], edges: [])
+        let issues = SpecValidator.validate(pipeline: pipeline, workers: [:])
+        #expect(issues.contains { $0.kind == .missingPipelineRef }, "got: \(issues)")
+    }
+
+    // A scoped event folds into that slice's sub-state, leaving the top level untouched.
+    @Test func scopedEventsRouteIntoSliceSubState() {
+        var state = RunState()
+        state = Reducer.reduce(state, .nodeStarted(node: "foundation"))          // top: slice in progress
+        state = Reducer.reduce(state, .scoped(slice: "foundation",
+                                              event: .nodeCompleted(node: "architect", producedArtifacts: ["plan.v1"])))
+        // Top level sees the slice in progress; the sub-state carries the worker's completion.
+        #expect(state.inProgressNodes == ["foundation"])
+        #expect(state.completedNodes.isEmpty)
+        let sub = state.slices["foundation"]
+        #expect(sub?.completedNodes == ["architect"])
+        #expect(sub?.readyArtifacts == ["plan.v1"])
+    }
+
+    // The whole sub-pipeline completing is what `isComplete` detects (the slice-done trigger).
+    @Test func subPipelineCompletionIsDetectable() throws {
+        let sub = try loader.loadPipeline(Data("""
+        {
+          "apiVersion": "factory/v1", "kind": "Pipeline", "metadata": { "name": "cy" },
+          "spec": { "nodes": [ { "id": "architect", "worker": "a" }, { "id": "coder", "worker": "c" } ],
+                    "edges": [ { "from": "architect", "to": "coder", "artifact": "plan.v1" } ] }
+        }
+        """.utf8)).spec
+        var state = RunState()
+        state = Reducer.reduce(state, .nodeCompleted(node: "architect", producedArtifacts: ["plan.v1"]))
+        #expect(!Scheduler.isComplete(state, sub))
+        state = Reducer.reduce(state, .nodeCompleted(node: "coder", producedArtifacts: ["code.v1"]))
+        #expect(Scheduler.isComplete(state, sub))
+    }
+
+    // A worker rendered inside a slice carries the slice + stack context.
+    @Test func rendererCarriesSliceContext() {
+        let node = PipelineNode(id: "architect", worker: "architect")
+        let worker = WorkerSpec(produces: [PortSpec(schema: "plan.v1")], task: WorkerTask(skill: "plan-change"))
+        let instruction = Renderer.instruction(node: node, worker: worker, state: RunState(),
+                                               slice: "foundation", stack: "core")
+        #expect(instruction.slice == "foundation")
+        #expect(instruction.stack == "core")
+        let md = Renderer.markdown(instruction)
+        #expect(md.contains("slice `foundation`"))
+        #expect(md.contains("stack `core`"))
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

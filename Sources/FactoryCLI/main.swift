@@ -33,6 +33,48 @@ private func encodeJSON<T: Encodable>(_ value: T) throws -> String {
     return String(decoding: try encoder.encode(value), as: UTF8.self)
 }
 
+/// A node that expands into a sub-pipeline (a slice).
+private func isSlice(_ node: PipelineNode) -> Bool { node.pipeline != nil }
+
+/// Resolve a slice node's sub-pipeline workspace dir, relative to the orchestration workspace.
+private func sliceDir(orchestrationDir: String, node: PipelineNode) -> String {
+    URL(fileURLWithPath: orchestrationDir, isDirectory: true)
+        .appendingPathComponent(node.pipeline ?? "", isDirectory: true)
+        .standardizedFileURL.path
+}
+
+/// The outcome of advancing one worker node (validating its output + running its gates).
+private struct AdvanceOutcome {
+    var node: String
+    var advanced: Bool
+    var produced: [String]
+    var results: [CheckResult]
+    var blocking: [CheckResult]
+}
+
+/// Validate a worker's output, run its gates, and append the resulting event (wrapped by `scope`
+/// so the same logic serves a flat run and a slice's sub-pipeline). Gating is engine-enforced.
+private func advance(node: String, worker: WorkerSpec, checks: [String: CheckSpec],
+                     producedOverride: [String], store: RunStore, runId: String,
+                     scope: (RunEvent) -> RunEvent) throws -> AdvanceOutcome {
+    let declared = (worker.produces ?? []).map(\.schema)
+    let producedSet = producedOverride.isEmpty ? declared : producedOverride
+    let missing = declared.filter { !producedSet.contains($0) }
+    guard missing.isEmpty else {
+        throw ValidationError("output incomplete: '\(node)' did not produce "
+            + "\(missing.joined(separator: ", ")) (declared: \(declared.joined(separator: ", ")))")
+    }
+    let results = CheckRunner(workingDirectory: workspace()).run(worker.checks ?? [], specs: checks)
+    let blocking = results.filter(\.isBlockingFailure)
+    if blocking.isEmpty {
+        try store.append(scope(.nodeCompleted(node: node, producedArtifacts: producedSet)), to: runId)
+    } else {
+        try store.append(scope(.checkFailed(node: node, checks: blocking.map(\.check))), to: runId)
+    }
+    return AdvanceOutcome(node: node, advanced: blocking.isEmpty,
+                          produced: producedSet, results: results, blocking: blocking)
+}
+
 /// Load a pipeline workspace and fail fast if the wiring is invalid (prints issues to stderr).
 private func loadValidated(_ dir: String) throws
     -> (pipeline: SpecEnvelope<PipelineSpec>, workers: [String: WorkerSpec], checks: [String: CheckSpec]) {
@@ -102,21 +144,34 @@ struct Status: ParsableCommand {
         let meta = try store.meta(of: runId)
         let state = try store.state(of: runId)
         let (env, _, _) = try loadValidated(meta.pipelineDir)
-        let runnable = Scheduler.runnable(state, env.spec)
-        let total = env.spec.nodes.count
 
         print("run \(runId)  ·  pipeline '\(env.metadata.name)'  ·  "
-            + "\(state.completedNodes.count)/\(total) complete")
+            + "\(state.completedNodes.count)/\(env.spec.nodes.count) complete")
+        Self.printLevel(pipeline: env.spec, state: state, dir: meta.pipelineDir, indent: "  ")
+        if Scheduler.isComplete(state, env.spec) { print("  ✓ done") }
+    }
+
+    /// Print one pipeline level's state, descending into the in-progress slice's sub-pipeline.
+    private static func printLevel(pipeline: PipelineSpec, state: RunState, dir: String, indent: String) {
         func line(_ label: String, _ items: [String]) {
-            print("  \(label): \(items.isEmpty ? "—" : items.sorted().joined(separator: ", "))")
+            print("\(indent)\(label): \(items.isEmpty ? "—" : items.sorted().joined(separator: ", "))")
         }
-        line("completed ", Array(state.completedNodes))
+        line("completed  ", Array(state.completedNodes))
         line("in progress", Array(state.inProgressNodes))
         line("artifacts  ", Array(state.readyArtifacts))
-        line("runnable   ", runnable)
-        let rework = state.failedChecks.keys.sorted().map { "\($0) (\(state.failedChecks[$0]!.joined(separator: ", ")))" }
-        line("rework     ", rework)
-        if state.completedNodes.count == total { print("  ✓ done") }
+        line("runnable   ", Scheduler.runnable(state, pipeline))
+        line("rework     ", state.failedChecks.keys.sorted().map {
+            "\($0) (\(state.failedChecks[$0]!.joined(separator: ", ")))"
+        })
+        // Descend into any in-progress slice to show its sub-pipeline progress.
+        for sliceId in state.inProgressNodes.sorted() {
+            guard let node = pipeline.nodes.first(where: { $0.id == sliceId }), isSlice(node),
+                  let sub = try? SpecLoader().loadBundle(at: URL(fileURLWithPath: sliceDir(orchestrationDir: dir, node: node), isDirectory: true))
+            else { continue }
+            print("\(indent)slice '\(sliceId)'\(node.stack.map { " (stack: \($0))" } ?? "") →")
+            printLevel(pipeline: sub.pipeline.spec, state: state.slices[sliceId] ?? RunState(),
+                       dir: sliceDir(orchestrationDir: dir, node: node), indent: indent + "    ")
+        }
     }
 }
 
@@ -143,7 +198,7 @@ struct Next: ParsableCommand {
         let pipeline = env.spec
         let state = try store.state(of: runId)
 
-        // Pick the node to dispense: an explicit --node (must be runnable), else the engine's default.
+        // Pick the top-level node: an explicit --node (must be runnable), else the engine's default.
         let pickId: String?
         if let requested = node {
             let runnable = Scheduler.runnable(state, pipeline)
@@ -157,30 +212,58 @@ struct Next: ParsableCommand {
         }
 
         guard let pickId, let pickNode = pipeline.nodes.first(where: { $0.id == pickId }) else {
-            try emitIdle(state: state, total: pipeline.nodes.count)
+            try emitIdle(state: state, pipeline: pipeline)
             return
         }
 
-        let worker = pickNode.worker.flatMap { workers[$0] } ?? WorkerSpec()
-        var instruction = Renderer.instruction(node: pickNode, worker: worker, state: state)
-        instruction.runId = runId
-
-        // Record that this node's work was dispensed — idempotent: re-running `next` before
-        // `submit` re-renders the same node and does not append a duplicate event.
-        if !state.inProgressNodes.contains(pickId) {
-            try store.append(.nodeStarted(node: pickId), to: runId)
-        }
-
-        if json {
-            print(try encodeJSON(instruction))
+        if isSlice(pickNode) {
+            try dispenseSlice(store: store, orchestrationDir: meta.pipelineDir, slice: pickNode, topState: state)
         } else {
-            print(Renderer.markdown(instruction))
+            try dispenseWorker(store: store, node: pickNode,
+                               worker: pickNode.worker.flatMap { workers[$0] } ?? WorkerSpec(),
+                               state: state, slice: nil, stack: nil, scope: { $0 })
         }
     }
 
-    /// Nothing to dispense: either the Run is done, or it is waiting on gates/inputs.
-    private func emitIdle(state: RunState, total: Int) throws {
-        let done = state.completedNodes.count == total
+    /// Descend into a slice: mark it in progress at the top level, then dispense the runnable
+    /// Worker of its sub-pipeline (scoping that node's events under the slice).
+    private func dispenseSlice(store: RunStore, orchestrationDir: String,
+                               slice: PipelineNode, topState: RunState) throws {
+        if !topState.inProgressNodes.contains(slice.id) {
+            try store.append(.nodeStarted(node: slice.id), to: runId)
+        }
+        let dir = sliceDir(orchestrationDir: orchestrationDir, node: slice)
+        let (subEnv, subWorkers, _) = try loadValidated(dir)
+        let subState = topState.slices[slice.id] ?? RunState()
+
+        guard let subPick = Scheduler.pick(subState, subEnv.spec),
+              let subNode = subEnv.spec.nodes.first(where: { $0.id == subPick }) else {
+            try emitIdle(state: subState, pipeline: subEnv.spec)
+            return
+        }
+        try dispenseWorker(store: store, node: subNode,
+                           worker: subNode.worker.flatMap { subWorkers[$0] } ?? WorkerSpec(),
+                           state: subState, slice: slice.id, stack: slice.stack,
+                           scope: { .scoped(slice: slice.id, event: $0) })
+    }
+
+    /// Render a Worker node and mark it in progress. Idempotent — re-running `next` before
+    /// `submit` re-renders the same node and appends no duplicate event.
+    private func dispenseWorker(store: RunStore, node: PipelineNode, worker: WorkerSpec,
+                                state: RunState, slice: String?, stack: String?,
+                                scope: (RunEvent) -> RunEvent) throws {
+        if !state.inProgressNodes.contains(node.id) {
+            try store.append(scope(.nodeStarted(node: node.id)), to: runId)
+        }
+        var instruction = Renderer.instruction(node: node, worker: worker, state: state,
+                                               slice: slice, stack: stack)
+        instruction.runId = runId
+        print(json ? try encodeJSON(instruction) : Renderer.markdown(instruction))
+    }
+
+    /// Nothing to dispense: either this pipeline is done, or it is waiting on gates/inputs.
+    private func emitIdle(state: RunState, pipeline: PipelineSpec) throws {
+        let done = Scheduler.isComplete(state, pipeline)
         if json {
             print(try encodeJSON(["status": done ? "done" : "idle"]))
         } else {
@@ -215,82 +298,102 @@ struct Submit: ParsableCommand {
         let pipeline = env.spec
         let state = try store.state(of: runId)
 
-        // Resolve the target: it must be a node `next` dispensed (in progress).
+        // Resolve the in-progress top-level node `next` dispensed.
         guard !state.inProgressNodes.isEmpty else {
             throw ValidationError("no node in progress — run `factory next \(runId)` first")
         }
-        let target: String
-        if let node {
-            guard state.inProgressNodes.contains(node) else {
-                throw ValidationError("node '\(node)' is not in progress "
-                    + "(in progress: \(state.inProgressNodes.sorted().joined(separator: ", ")))")
-            }
-            target = node
-        } else if state.inProgressNodes.count == 1 {
-            target = state.inProgressNodes.first!
+        let topTarget = try resolve(node, among: state.inProgressNodes, level: "")
+        let topNode = pipeline.nodes.first { $0.id == topTarget }!
+
+        if isSlice(topNode) {
+            try submitSlice(store: store, orchestrationDir: meta.pipelineDir,
+                            slice: topNode, topPipeline: pipeline)
         } else {
-            throw ValidationError("multiple nodes in progress — pass --node "
-                + "(\(state.inProgressNodes.sorted().joined(separator: ", ")))")
+            let outcome = try advance(node: topTarget, worker: workers[topTarget] ?? WorkerSpec(),
+                                      checks: checks, producedOverride: produced, store: store,
+                                      runId: runId, scope: { $0 })
+            try report(outcome: outcome, slice: nil, sliceCompleted: false,
+                       topPipeline: pipeline, topState: try store.state(of: runId))
         }
-
-        let worker = workers[target] ?? WorkerSpec()
-
-        // Output validation (engine-enforced, deterministic): the produced Schemas must cover
-        // everything the Worker declares it produces. Nothing is reduced on a shortfall.
-        let declared = (worker.produces ?? []).map(\.schema)
-        let producedSet = produced.isEmpty ? declared : produced
-        let missing = declared.filter { !producedSet.contains($0) }
-        guard missing.isEmpty else {
-            throw ValidationError("output incomplete: '\(target)' did not produce "
-                + "\(missing.joined(separator: ", ")) (declared: \(declared.joined(separator: ", ")))")
-        }
-
-        // Run the gates. The engine runs the check and reads the result — never the agent.
-        let results = CheckRunner(workingDirectory: workspace()).run(worker.checks ?? [], specs: checks)
-        let blocking = results.filter(\.isBlockingFailure)
-
-        if blocking.isEmpty {
-            try store.append(.nodeCompleted(node: target, producedArtifacts: producedSet), to: runId)
-        } else {
-            try store.append(.checkFailed(node: target, checks: blocking.map(\.check)), to: runId)
-        }
-
-        let nextState = try store.state(of: runId)
-        let runnable = Scheduler.runnable(nextState, pipeline)
-        try report(target: target, results: results, blocking: blocking, produced: producedSet,
-                   done: nextState.completedNodes.count == pipeline.nodes.count, runnable: runnable)
     }
 
-    private func report(target: String, results: [CheckResult], blocking: [CheckResult],
-                        produced: [String], done: Bool, runnable: [String]) throws {
-        let advanced = blocking.isEmpty
+    /// Advance the active Worker inside a slice's sub-pipeline; when that finishes the whole
+    /// sub-pipeline, complete the slice at the top level so its dependents unlock.
+    private func submitSlice(store: RunStore, orchestrationDir: String,
+                             slice: PipelineNode, topPipeline: PipelineSpec) throws {
+        let dir = sliceDir(orchestrationDir: orchestrationDir, node: slice)
+        let (subEnv, subWorkers, subChecks) = try loadValidated(dir)
+        let subState = (try store.state(of: runId)).slices[slice.id] ?? RunState()
+        guard !subState.inProgressNodes.isEmpty else {
+            throw ValidationError("slice '\(slice.id)': no node in progress — run `factory next \(runId)`")
+        }
+        let subTarget = try resolve(node, among: subState.inProgressNodes, level: "slice '\(slice.id)': ")
+
+        let outcome = try advance(node: subTarget, worker: subWorkers[subTarget] ?? WorkerSpec(),
+                                  checks: subChecks, producedOverride: produced, store: store,
+                                  runId: runId, scope: { .scoped(slice: slice.id, event: $0) })
+
+        // If the sub-pipeline is now fully complete, the slice node completes at the top level.
+        var sliceCompleted = false
+        let afterSub = (try store.state(of: runId)).slices[slice.id] ?? RunState()
+        if outcome.advanced && Scheduler.isComplete(afterSub, subEnv.spec) {
+            try store.append(.nodeCompleted(node: slice.id, producedArtifacts: []), to: runId)
+            sliceCompleted = true
+        }
+        try report(outcome: outcome, slice: slice.id, sliceCompleted: sliceCompleted,
+                   topPipeline: topPipeline, topState: try store.state(of: runId))
+    }
+
+    /// Pick the target among in-progress nodes: an explicit --node (must be in progress), the
+    /// sole in-progress node, or an error asking which.
+    private func resolve(_ requested: String?, among inProgress: Set<String>, level: String) throws -> String {
+        if let requested {
+            guard inProgress.contains(requested) else {
+                throw ValidationError("\(level)node '\(requested)' is not in progress "
+                    + "(in progress: \(inProgress.sorted().joined(separator: ", ")))")
+            }
+            return requested
+        }
+        if inProgress.count == 1 { return inProgress.first! }
+        throw ValidationError("\(level)multiple nodes in progress — pass --node "
+            + "(\(inProgress.sorted().joined(separator: ", ")))")
+    }
+
+    private func report(outcome: AdvanceOutcome, slice: String?, sliceCompleted: Bool,
+                        topPipeline: PipelineSpec, topState: RunState) throws {
+        let label = slice.map { "\($0)/\(outcome.node)" } ?? outcome.node
+        let runnable = Scheduler.runnable(topState, topPipeline)
         if json {
             struct Outcome: Encodable {
-                var node: String, advanced: Bool, produced: [String]
-                var checks: [CheckResult], failed: [String], runnable: [String]
+                var node: String, slice: String?, advanced: Bool, sliceCompleted: Bool
+                var produced: [String], checks: [CheckResult], failed: [String], runnable: [String]
             }
-            print(try encodeJSON(Outcome(node: target, advanced: advanced,
-                produced: advanced ? produced : [], checks: results,
-                failed: blocking.map(\.check), runnable: runnable)))
+            print(try encodeJSON(Outcome(node: outcome.node, slice: slice, advanced: outcome.advanced,
+                sliceCompleted: sliceCompleted, produced: outcome.advanced ? outcome.produced : [],
+                checks: outcome.results, failed: outcome.blocking.map(\.check), runnable: runnable)))
             return
         }
-        if advanced {
-            print("✓ \(target) accepted — produced \(produced.isEmpty ? "(nothing)" : produced.joined(separator: ", "))")
-            for r in results where r.status == .deferred { print("  · deferred: \(r.check)") }
-            if done {
-                print("✓ done — all nodes complete")
-            } else {
-                print("→ runnable: \(runnable.isEmpty ? "—" : runnable.joined(separator: ", "))  ·  factory next \(runId)")
-            }
-        } else {
-            print("✗ \(target) failed \(blocking.count) gate(s) → rework")
-            for r in blocking {
+        guard outcome.advanced else {
+            print("✗ \(label) failed \(outcome.blocking.count) gate(s) → rework")
+            for r in outcome.blocking {
                 print("  · \(r.check)\(r.exitCode.map { " (exit \($0))" } ?? "")")
                 if let out = r.output, !out.isEmpty {
                     print(out.split(separator: "\n").map { "      \($0)" }.joined(separator: "\n"))
                 }
             }
-            print("→ factory next \(runId)  (re-renders \(target) with the failures as context)")
+            print("→ factory next \(runId)  (re-renders \(label) with the failures as context)")
+            return
+        }
+        print("✓ \(label) accepted — produced \(outcome.produced.isEmpty ? "(nothing)" : outcome.produced.joined(separator: ", "))")
+        for r in outcome.results where r.status == .deferred { print("  · deferred: \(r.check)") }
+        if sliceCompleted { print("✓ slice '\(slice!)' complete") }
+
+        if Scheduler.isComplete(topState, topPipeline) {
+            print("✓ done — all nodes complete")
+        } else if let slice, !sliceCompleted {
+            print("→ slice '\(slice)' continues  ·  factory next \(runId)")
+        } else {
+            print("→ runnable: \(runnable.isEmpty ? "—" : runnable.joined(separator: ", "))  ·  factory next \(runId)")
         }
     }
 }
