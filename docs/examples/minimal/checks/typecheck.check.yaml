@@ -1,0 +1,7 @@
+apiVersion: factory/v1
+kind: Check
+metadata: { name: typecheck }
+spec:
+  checkKind: deterministic     # the engine runs the command; exit 0 == pass
+  # Placeholder standing in for the target repo's real tooling (e.g. `swift build`).
+  command: "true"

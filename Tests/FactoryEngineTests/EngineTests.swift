@@ -257,6 +257,111 @@ struct EngineTests {
         #expect(Renderer.markdown(instruction).contains("(none — this is a source node)"))
     }
 
+    // MARK: - submit: checks, gates, rework
+
+    private func runner(_ outcomes: [String: (Int32, String)]) -> CheckRunner {
+        // A CheckRunner whose command execution is stubbed per command string (no shelling out).
+        CheckRunner(workingDirectory: URL(fileURLWithPath: "/")) { command, _ in
+            outcomes[command] ?? (0, "")
+        }
+    }
+
+    // A deterministic check passes on exit 0 and fails (blocking) on non-zero; output is kept on failure.
+    @Test func deterministicCheckPassAndFail() {
+        let specs: [String: CheckSpec] = [
+            "ok":  CheckSpec(checkKind: "deterministic", command: "run-ok"),
+            "bad": CheckSpec(checkKind: "deterministic", command: "run-bad")
+        ]
+        let results = runner(["run-ok": (0, ""), "run-bad": (1, "boom")])
+            .run(["ok", "bad"], specs: specs)
+
+        #expect(results[0] == CheckResult(check: "ok", status: .passed, required: true, exitCode: 0))
+        #expect(results[1].status == .failed)
+        #expect(results[1].isBlockingFailure)
+        #expect(results[1].output == "boom")
+    }
+
+    // judge/human checks are deferred (non-blocking); a non-required failing check does not block.
+    @Test func judgeIsDeferredAndOptionalDoesNotBlock() {
+        let specs: [String: CheckSpec] = [
+            "judge.x": CheckSpec(checkKind: "judge"),
+            "soft":    CheckSpec(checkKind: "deterministic", command: "run-soft", required: false)
+        ]
+        let results = runner(["run-soft": (1, "warned")]).run(["judge.x", "soft"], specs: specs)
+
+        #expect(results[0].status == .deferred)
+        #expect(!results[0].isBlockingFailure)
+        #expect(results[1].status == .failed)
+        #expect(!results[1].isBlockingFailure, "an optional check must not block")
+    }
+
+    // A deterministic check missing its command is a misconfiguration → blocking failure, not a pass.
+    @Test func deterministicWithoutCommandFails() {
+        let specs = ["x": CheckSpec(checkKind: "deterministic")]
+        let result = runner([:]).run(["x"], specs: specs)[0]
+        #expect(result.status == .failed)
+        #expect(result.isBlockingFailure)
+    }
+
+    // A failed submit returns the node to runnable carrying its rework context; passing clears it.
+    @Test func checkFailedThenCompletedClearsRework() {
+        var state = RunState()
+        state = Reducer.reduce(state, .nodeStarted(node: "coder"))
+        state = Reducer.reduce(state, .checkFailed(node: "coder", checks: ["unit"]))
+        #expect(state.inProgressNodes.isEmpty)
+        #expect(state.completedNodes.isEmpty)
+        #expect(state.failedChecks["coder"] == ["unit"])
+
+        // The node is re-dispensed and this time passes.
+        state = Reducer.reduce(state, .nodeStarted(node: "coder"))
+        #expect(state.failedChecks["coder"] == ["unit"], "rework context persists across the re-attempt")
+        state = Reducer.reduce(state, .nodeCompleted(node: "coder", producedArtifacts: ["code.v1"]))
+        #expect(state.failedChecks["coder"] == nil)
+        #expect(state.completedNodes == ["coder"])
+    }
+
+    // The renderer surfaces a node's rework context (its last failed gates).
+    @Test func rendererShowsReworkContext() {
+        let node = PipelineNode(id: "coder", worker: "coder")
+        let worker = WorkerSpec(consumes: [PortSpec(schema: "plan.v1", required: true)],
+                                produces: [PortSpec(schema: "code.v1")], checks: ["unit"])
+        let state = RunState(readyArtifacts: ["plan.v1"], failedChecks: ["coder": ["unit"]])
+
+        let instruction = Renderer.instruction(node: node, worker: worker, state: state)
+        #expect(instruction.rework == ["unit"])
+        let md = Renderer.markdown(instruction)
+        #expect(md.contains("## Rework"))
+        #expect(md.contains("- unit"))
+    }
+
+    // A worker referencing a check that has no spec is caught at validation.
+    @Test func unknownCheckIsCaught() throws {
+        let pipeline = try loader.loadPipeline(Data("""
+        {
+          "apiVersion": "factory/v1", "kind": "Pipeline", "metadata": { "name": "c" },
+          "spec": { "nodes": [ { "id": "architect", "worker": "architect" } ], "edges": [] }
+        }
+        """.utf8)).spec
+        let workers = ["architect": WorkerSpec(workerKind: "transform",
+                                               produces: [PortSpec(schema: "plan.v1")],
+                                               checks: ["ghost-check"])]
+        let issues = SpecValidator.validate(pipeline: pipeline, workers: workers, checks: [:])
+        #expect(issues.contains { $0.kind == .unknownCheck }, "got: \(issues)")
+
+        // With the check declared, it validates clean.
+        let withCheck = SpecValidator.validate(pipeline: pipeline, workers: workers,
+                                               checks: ["ghost-check": CheckSpec(checkKind: "deterministic", command: "true")])
+        #expect(withCheck.isEmpty, "got: \(withCheck)")
+    }
+
+    // A Check spec decodes into the strict type.
+    @Test func loadsCheckSpec() throws {
+        let env = try loader.loadCheck(Data(
+            #"{ "apiVersion":"factory/v1","kind":"Check","metadata":{"name":"unit"},"spec":{"checkKind":"deterministic","command":"swift test"}}"#.utf8))
+        #expect(env.metadata.name == "unit")
+        #expect(env.spec == CheckSpec(checkKind: "deterministic", command: "swift test"))
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

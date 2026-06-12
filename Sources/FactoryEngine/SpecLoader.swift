@@ -26,23 +26,37 @@ public struct SpecLoader: Sendable {
 
     public func loadPipelineYAML(_ yaml: String) throws -> SpecEnvelope<PipelineSpec> { try Self.decodeYAML(yaml) }
     public func loadWorkerYAML(_ yaml: String) throws -> SpecEnvelope<WorkerSpec> { try Self.decodeYAML(yaml) }
+    public func loadCheckYAML(_ yaml: String) throws -> SpecEnvelope<CheckSpec> { try Self.decodeYAML(yaml) }
     public func loadPipeline(_ data: Data) throws -> SpecEnvelope<PipelineSpec> { try Self.decodeJSON(data) }
     public func loadWorker(_ data: Data) throws -> SpecEnvelope<WorkerSpec> { try Self.decodeJSON(data) }
+    public func loadCheck(_ data: Data) throws -> SpecEnvelope<CheckSpec> { try Self.decodeJSON(data) }
 
-    /// Load a pipeline workspace from disk (paths via `WorkspaceLayout`).
+    /// Load a pipeline workspace from disk (paths via `WorkspaceLayout`): the pipeline, its
+    /// Workers (by name), and its Checks (by name). A missing `checks/` folder is fine — a
+    /// workspace need not declare any.
     public func loadBundle(at directory: URL) throws
-        -> (pipeline: SpecEnvelope<PipelineSpec>, workers: [String: WorkerSpec]) {
+        -> (pipeline: SpecEnvelope<PipelineSpec>, workers: [String: WorkerSpec], checks: [String: CheckSpec]) {
         let layout = WorkspaceLayout(dir: directory)
         let pipeline = try loadPipelineYAML(try String(contentsOf: layout.pipeline, encoding: .utf8))
 
         var workers: [String: WorkerSpec] = [:]
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: layout.workers, includingPropertiesForKeys: nil)) ?? []
-        for file in files where file.pathExtension == Layout.Workspace.workerExtension {
+        for file in specFiles(in: layout.workers, ext: Layout.Workspace.workerExtension) {
             let env = try loadWorkerYAML(try String(contentsOf: file, encoding: .utf8))
             workers[env.metadata.name] = env.spec
         }
-        return (pipeline, workers)
+
+        var checks: [String: CheckSpec] = [:]
+        for file in specFiles(in: layout.checks, ext: Layout.Workspace.checkExtension) {
+            let env = try loadCheckYAML(try String(contentsOf: file, encoding: .utf8))
+            checks[env.metadata.name] = env.spec
+        }
+        return (pipeline, workers, checks)
+    }
+
+    private func specFiles(in directory: URL, ext: String) -> [URL] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == ext }
     }
 
     private static func decodeYAML<T: Decodable>(_ yaml: String) throws -> T {

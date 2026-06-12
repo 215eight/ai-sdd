@@ -6,6 +6,7 @@ public struct ValidationIssue: Equatable, Sendable {
         case unknownWorker      // a node references a worker that does not exist
         case unknownNode        // an edge references a node that does not exist
         case edgeTypeMismatch   // an edge's Schema is not produced/consumed by its endpoints
+        case unknownCheck       // a worker references a check that does not exist
     }
 
     public var kind: Kind
@@ -20,15 +21,22 @@ public struct ValidationIssue: Equatable, Sendable {
 /// Static checks that run at load time, before any token is spent (architecture.md §5):
 /// referential integrity + edge type-compatibility against Worker signatures.
 public enum SpecValidator {
-    public static func validate(pipeline: PipelineSpec, workers: [String: WorkerSpec]) -> [ValidationIssue] {
+    public static func validate(pipeline: PipelineSpec, workers: [String: WorkerSpec],
+                                checks: [String: CheckSpec] = [:]) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
         let nodeByID = Dictionary(uniqueKeysWithValues: pipeline.nodes.map { ($0.id, $0) })
 
-        // 1. Every node.worker reference resolves.
+        // 1. Every node.worker reference resolves; every check a worker references resolves.
         for node in pipeline.nodes {
-            if let worker = node.worker, workers[worker] == nil {
+            guard let workerName = node.worker else { continue }
+            guard let worker = workers[workerName] else {
                 issues.append(.init(kind: .unknownWorker,
-                                    message: "node '\(node.id)' references unknown worker '\(worker)'"))
+                                    message: "node '\(node.id)' references unknown worker '\(workerName)'"))
+                continue
+            }
+            for check in worker.checks ?? [] where checks[check] == nil {
+                issues.append(.init(kind: .unknownCheck,
+                                    message: "worker '\(workerName)' references unknown check '\(check)'"))
             }
         }
 

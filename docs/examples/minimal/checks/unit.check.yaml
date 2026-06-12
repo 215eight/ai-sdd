@@ -1,0 +1,6 @@
+apiVersion: factory/v1
+kind: Check
+metadata: { name: unit }
+spec:
+  checkKind: deterministic
+  command: "true"              # placeholder for the repo unit tests

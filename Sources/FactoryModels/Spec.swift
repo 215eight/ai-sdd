@@ -136,6 +136,20 @@ public struct WorkerTask: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Check (a gate/eval definition — one assertion run by the CheckRunner, §8)
+
+public struct CheckSpec: Codable, Equatable, Sendable {
+    public var checkKind: String?     // "deterministic" | "judge" | "human"
+    public var command: String?       // deterministic: the command to run (exit 0 == pass)
+    public var required: Bool?        // a blocking gate when true (default); false scores only
+
+    public init(checkKind: String? = nil, command: String? = nil, required: Bool? = nil) {
+        self.checkKind = checkKind
+        self.command = command
+        self.required = required
+    }
+}
+
 public struct PortSpec: Codable, Equatable, Sendable {
     public var schema: String
     public var cardinality: String?        // "one" | "many"

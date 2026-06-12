@@ -21,6 +21,8 @@ enum Layout {
         static let pipelineFile = "pipeline.yaml"
         static let workersDir = "workers"
         static let workerExtension = "yaml"
+        static let checksDir = "checks"
+        static let checkExtension = "yaml"
     }
 }
 
@@ -43,4 +45,5 @@ struct WorkspaceLayout {
 
     var pipeline: URL { dir.appendingPathComponent(Layout.Workspace.pipelineFile) }
     var workers: URL { dir.appendingPathComponent(Layout.Workspace.workersDir, isDirectory: true) }
+    var checks: URL { dir.appendingPathComponent(Layout.Workspace.checksDir, isDirectory: true) }
 }

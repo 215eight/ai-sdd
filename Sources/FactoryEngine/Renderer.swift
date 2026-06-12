@@ -28,11 +28,12 @@ public struct WorkerInstruction: Codable, Equatable, Sendable {
     public var consumes: [RenderedInput]
     public var produces: [String]
     public var checks: [String]
+    public var rework: [String]        // gates a prior attempt failed; empty on a first attempt
 
     public init(runId: String? = nil, node: String, worker: String, workerKind: String? = nil,
                 task: WorkerTask? = nil, model: String? = nil, reasoning: String? = nil,
                 requiredGate: Bool = false, consumes: [RenderedInput] = [],
-                produces: [String] = [], checks: [String] = []) {
+                produces: [String] = [], checks: [String] = [], rework: [String] = []) {
         self.runId = runId
         self.node = node
         self.worker = worker
@@ -44,6 +45,7 @@ public struct WorkerInstruction: Codable, Equatable, Sendable {
         self.consumes = consumes
         self.produces = produces
         self.checks = checks
+        self.rework = rework
     }
 }
 
@@ -66,7 +68,8 @@ public enum Renderer {
             requiredGate: node.required ?? false,
             consumes: consumes,
             produces: (worker.produces ?? []).map(\.schema),
-            checks: worker.checks ?? []
+            checks: worker.checks ?? [],
+            rework: state.failedChecks[node.id] ?? []
         )
     }
 
@@ -82,6 +85,13 @@ public enum Renderer {
         }
         if instruction.requiredGate { meta.append("required gate") }
         if !meta.isEmpty { lines.append(meta.joined(separator: "  ·  ")) }
+
+        if !instruction.rework.isEmpty {
+            lines.append("")
+            lines.append("## Rework")
+            lines.append("A prior attempt failed these gates — address them this attempt:")
+            for check in instruction.rework { lines.append("- \(check)") }
+        }
 
         lines.append("")
         lines.append("## Task")
