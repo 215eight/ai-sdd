@@ -2,7 +2,7 @@
 
 ## Source Of Truth
 
-`docs/enterprise-ai-sdd-requirements.md` is the closed requirements and contract
+`legacy/docs/enterprise-ai-sdd-requirements.md` is the closed requirements and contract
 document for the current implementation.
 
 OpenSpec is the durable workflow source of truth. The MVP stores feature-scoped

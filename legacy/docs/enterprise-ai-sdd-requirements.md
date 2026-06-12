@@ -1036,7 +1036,7 @@ This is an example of a canonical `NextAction` domain payload. The CLI and MCP s
       },
       {
         "type": "architecture_doc",
-        "path": "docs/architecture_doc.md"
+        "path": "legacy/docs/architecture-doc.md"
       }
     ],
     "required_outputs": [

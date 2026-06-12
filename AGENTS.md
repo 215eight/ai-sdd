@@ -23,8 +23,8 @@ surface options and let the maintainer decide. New questions go under "Open deci
   `CheckRunner`, `Renderer`, type-safe `Layout`.
 - `Sources/FactoryCLI` — the `factory` CLI: `validate · start · status · next · submit`.
 - `Tests/FactoryEngineTests` — Swift Testing (`@Test`/`#expect`/`#require`).
-- `legacy/` — the previous phase-engine implementation. **Reference only.** Generalize patterns
-  from it; never extend it. (Its old docs under `docs/*_doc.md`, `docs/enterprise-*` are legacy too.)
+- `legacy/` — the previous phase-engine implementation and its planning docs (`legacy/docs/`).
+  **Reference only.** Generalize patterns from it; never extend it.
 
 ## Build / test / run
 
