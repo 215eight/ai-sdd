@@ -13,8 +13,9 @@ public struct RunState: Equatable, Sendable {
 }
 
 /// An append-only event. (This slice models the two events the Scheduler/Reducer need;
-/// the full set — started/gate/blocked/approval/etc. — comes later.)
-public enum RunEvent: Equatable, Sendable {
+/// the full set — started/gate/blocked/approval/etc. — comes later.) `Codable` so the
+/// `RunStore` can persist one file per event.
+public enum RunEvent: Codable, Equatable, Sendable {
     case runStarted(seedArtifacts: [String])                       // pipeline inputs available at start
     case nodeCompleted(node: String, producedArtifacts: [String])  // a node finished and produced these
 }

@@ -29,6 +29,22 @@ public struct SpecLoader: Sendable {
     public func loadPipeline(_ data: Data) throws -> SpecEnvelope<PipelineSpec> { try Self.decodeJSON(data) }
     public func loadWorker(_ data: Data) throws -> SpecEnvelope<WorkerSpec> { try Self.decodeJSON(data) }
 
+    /// Load a pipeline workspace from disk (paths via `WorkspaceLayout`).
+    public func loadBundle(at directory: URL) throws
+        -> (pipeline: SpecEnvelope<PipelineSpec>, workers: [String: WorkerSpec]) {
+        let layout = WorkspaceLayout(dir: directory)
+        let pipeline = try loadPipelineYAML(try String(contentsOf: layout.pipeline, encoding: .utf8))
+
+        var workers: [String: WorkerSpec] = [:]
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: layout.workers, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension == Layout.Workspace.workerExtension {
+            let env = try loadWorkerYAML(try String(contentsOf: file, encoding: .utf8))
+            workers[env.metadata.name] = env.spec
+        }
+        return (pipeline, workers)
+    }
+
     private static func decodeYAML<T: Decodable>(_ yaml: String) throws -> T {
         do { return try YAMLDecoder().decode(T.self, from: yaml) }
         catch { throw classify(error) }

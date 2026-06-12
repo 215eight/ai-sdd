@@ -163,6 +163,30 @@ struct EngineTests {
         let issues = SpecValidator.validate(pipeline: pipeline, workers: try loadWorkers())
         #expect(issues.contains { $0.kind == .unknownNode }, "got: \(issues)")
     }
+
+    // MARK: - Run store
+
+    // The store is append-only; state is always a pure projection of the replayed event log.
+    @Test func runStorePersistsAndReplays() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("factory-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let store = RunStore(root: tmp)
+        try store.create(runId: "r1", pipelineDir: "/x")
+        try store.append(.runStarted(seedArtifacts: []), to: "r1")
+        try store.append(.nodeCompleted(node: "architect", producedArtifacts: ["plan.v1"]), to: "r1")
+        try store.append(.nodeCompleted(node: "coder", producedArtifacts: ["code.v1"]), to: "r1")
+
+        #expect(store.exists("r1"))
+        #expect(try store.meta(of: "r1").pipelineDir == "/x")
+        #expect(try store.events(of: "r1").count == 3)
+        #expect(try store.runIds() == ["r1"])
+
+        let state = try store.state(of: "r1")
+        #expect(state.completedNodes == ["architect", "coder"])
+        #expect(state.readyArtifacts == ["plan.v1", "code.v1"])
+    }
 }
 
 private extension SpecLoadError {

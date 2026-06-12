@@ -62,3 +62,6 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Local run store (Piece 2; the shared state plane of ADR-0025 lands later)
+.factory/
