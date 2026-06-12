@@ -9,14 +9,53 @@
 
 ## 1. What we are building
 
-A system that turns a high-level feature specification into a complete, tested,
-deployable change — across a multi-repo, multi-service codebase — that a human
-reviews rather than rewrites. Not a code generator; a **production system**.
+A system that turns a **spec** into a **verifiable output a human reviews rather than
+redoes** — for any team that produces structured work, not only engineering. You declare
+what to build and how to prove it is right; the engine sequences the work, runs the gates,
+and hands back a result that has already passed its checks. Not a generator that emits a
+draft to be cleaned up; a **production system** that treats **review and verification as
+first-class**, not afterthoughts.
 
-The premise (see the research doc): writing code is ~22% of software work, and AI
-already accelerates that slice. The remaining ~78% — requirements, design,
-architecture, integration, review, testing, rollout — is the bottleneck. This system
-attacks that 78%, and treats **review and verification as first-class**, not afterthoughts.
+The shape is the same in every domain: a typed **input** flows through a pipeline of
+**Workers**, each output guarded by a **Check**, until a final Artifact clears its gates and
+a human approves. Because the engine interprets specs and knows nothing about any particular
+domain (§2), the *same* engine drives a PM's requirements lock, a designer's sign-off, an
+engineer's release candidate, an analyst's report, or a contract review — each is a different
+spec, not a different system.
+
+**First instantiation — the software SDLC.** The worked, end-to-end case this document
+develops is producing a complete, tested, deployable change across a multi-repo,
+multi-service codebase. We build it first because it is the hardest and most
+verification-heavy instantiation — but it is an *example of* the system, not its definition.
+The premise that motivated starting here (see the research doc): writing code is ~22% of
+software work, and AI already accelerates that slice; the remaining ~78% — requirements,
+design, architecture, integration, review, testing, rollout — is the bottleneck. This system
+attacks that 78%, and the same leverage applies wherever a team's output can be specified and
+verified.
+
+### Domains beyond engineering
+
+The engine is domain-agnostic by construction (§2): Workers, Artifacts, Checks, the
+Scheduler, and the event log carry no assumption that the work is code. Onboarding a new
+domain is **add-only** — new specs, never engine changes:
+
+- its **Schemas / Artifacts** — a brief, a contract, a dataset, a campaign (§7);
+- its **Workers** and the **skills** they run (§7);
+- its **Checks** — the gates that make its output verifiable (§8);
+- its **Resources** and **Traits** — the systems and conventions it needs (§7).
+
+One honest boundary: the system's differentiated value — *a human reviews rather than redoes*
+— scales with how **verifiable** a domain's output is. Where outputs are machine-checkable
+(code, configs, data, schema-typed contracts), executable Checks serve as gate *and* eval at
+once (§8) and the leverage is highest. Where outputs are fuzzy (a strategy memo, ad copy),
+verification leans on judge and human Checks — weaker, and themselves eval-gated; the system
+still sequences, gates, and audits the work, but with less of its signature backpressure. The
+guidance follows §8: prefer executable verification, and invest in making a domain's outputs
+checkable.
+
+**Status:** general by design, first exercised on the software SDLC. The Traits, Resources,
+and example skills shipped today are engineering-flavored; other domains are reached by
+authoring their specs, not by extending the engine.
 
 ## 2. The one principle
 
