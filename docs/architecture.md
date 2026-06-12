@@ -114,6 +114,41 @@ The single most important structural rule, to keep the flow readable and not sca
 
 This makes Workers reusable across Pipelines while keeping each flow a single consolidated artifact.
 
+**"Authored" means *explicit*, not *hand-typed* — and a planning skill can be the author.** The
+thing we reject is the **engine** *inferring* topology (auto-wiring by type-match). We do **not**
+require a human to type the graph. So there are **two kinds of DAG, one engine**:
+
+- **Pattern pipelines** — hand-authored, reusable (the plan→implement→review line, the CRUD line).
+- **Slice / dependency graphs** — generated **per project by a planning skill** that decomposes
+  the requirements into work items and their dependencies, and **produces the graph as a spec/
+  artifact** (e.g. the legacy `SDD_ORCHESTRATION.md` Feature Catalog: slices + `depends_on`).
+
+The engine treats both **identically**: it reads the explicit graph and **validates it at load**
+(referential + edge type-check + **acyclicity**), so an LLM-generated graph passes the same
+deterministic gates as a hand-written one — it is never trusted blindly. Graph **creation** is
+skill work (LLM judgment, at planning time); graph **execution** — readiness = *all dependencies
+completed* — is the deterministic engine (ADR-0026). This does **not** weaken the DAG concept: the
+engine still never infers topology, the flow is still one consolidated, validated, acyclic
+artifact — only the *author* differs.
+
+### Discovered work → a graph amendment
+
+A slice's implementation routinely surfaces work *outside* its scope (a latent bug, a missing
+adapter, a needed refactor). This is handled with no special mechanism:
+
+- **Scope confinement (ADR-0022)** forbids fixing it inline — the current Worker cannot touch
+  another slice's scope — so the finding *must* become its own slice.
+- The discovery is recorded as a `RunEvent`, and a **replanning skill appends a new node** to the
+  dependency graph (a self-contained summary + `depends_on` + `status: pending`). The graph is
+  amendable; adding a node re-validates (acyclicity preserved).
+- The engine **schedules it later by readiness** — runnable once its `depends_on` are complete,
+  prepared/run when you reach it. If the *current* slice actually needs it, add the edge the other
+  way (`new → current`) and the current slice goes `blocked`.
+
+So the DAG is amended *between* runs (replanning) while the engine always executes the current
+validated graph — a discovered slice is just a graph amendment, not a new engine feature. (This
+is the pattern behind the many `fix-*` follow-up slices in a real `SDD_ORCHESTRATION.md`.)
+
 ## 6. Control model: enablers vs. gates
 
 Two concerns we keep strictly separate (the key refinement):
@@ -179,6 +214,37 @@ The backend is **Git-as-control-plane** (ADR-0025) — the Run state pushed to a
 optimistic-concurrency appends (one file per event, ULID-ordered, idempotent) — chosen as the
 starting solution and swappable for a control-plane service behind the `StateStore` abstraction
 with no flow-spec change.
+
+### Execution model — interactive vs autonomous (ADR-0026)
+
+The engine is a **deterministic planner**; the **LLM does the work via skills**. The engine
+owns control flow (what's runnable, did the gate pass, advance state) and **enforces gates**
+itself; the LLM never decides control flow ("don't use prompts for control flow"). Dynamism
+comes from the spec (the DAG) — so flows stay dynamic *and* execution stays deterministic;
+putting the LLM in the planner seat would add nondeterminism without adding capability.
+
+One engine, two modes:
+
+- **Interactive (Mode B)** — the engine is a registered command / MCP tool inside Claude Code
+  or Codex. The host session provides the LLM, tools, sandbox, and human-in-the-loop; it *is*
+  the Adapter. Loop: `next` (engine picks the runnable Worker + renders its prompt) → the agent
+  does the work via a skill → `submit` (engine validates, runs gates, reduces) → repeat. This
+  is the legacy `ai-sdd` methodology and the **MVP**.
+- **Autonomous (Mode A)** — `factory run` spawns headless agents (`claude -p` / `codex exec`)
+  per Worker for CI/batch/parallel. Same engine; the Adapter is headless.
+
+```mermaid
+flowchart LR
+    subgraph ENGINE["Deterministic engine (planner)"]
+        N["next — Scheduler over the DAG"]
+        S["submit — validate · run gates · reduce"]
+    end
+    D["driver skill (LLM)"] -->|next| N
+    N -->|"Worker + rendered prompt"| W["worker skill (LLM) does the work"]
+    W --> D
+    D -->|submit| S
+    S -->|"gate fail → rework · pass → next"| D
+```
 
 ## 7. Workers, Artifacts, Schemas
 
@@ -380,8 +446,8 @@ and advance:
 
 Because the shared state is durable and resume is just *fold-event-then-schedule*, the compute
 never needs to run continuously — a one-shot process suffices, while the shared store carries the
-state across people and machines. (This is the general mechanism behind ADR-0016's durable,
-resumable rollout.)
+state across people and machines. (This same mechanism would back any durable, resumable
+long-running flow, should one ever be needed.)
 
 ## 11. The Plant & the Conductor
 
@@ -498,9 +564,11 @@ Resources/Adapters, `map`/sensors, the shared state-plane store, and the Conduct
 
 ## 15. Open questions
 
-Tracked in [decisions.md](decisions.md) under "Open." Notable: durable/resumable rollout
-sub-pipeline mechanics; cross-repo atomicity for gRPC-contract changes; naming of the
-Conductor. (Inter-factory contract versioning is now resolved — ADR-0017.)
+All previously-open ADRs are resolved (0017 contract versioning, 0019 Conductor name) plus 0026
+(execution model). **ADR-0016 (rollout durability) and ADR-0018 (cross-repo atomicity) were
+dropped** — both came from the stress-test SDLC scenario and decompose into existing primitives
+(a graph of sensors/Workers + §10 resumption + the dependency graph), not engine features. New
+questions are tracked under "Open decisions" in [decisions.md](decisions.md) as they arise.
 
 ## References
 

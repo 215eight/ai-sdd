@@ -468,7 +468,8 @@ a flag day, the producer **dual-publishes** both `vN` and `vN+1` during a deprec
 consumers migrate at their own pace; once all are on `vN+1`, the producer drops `vN`. A version
 may be marked `deprecated` with a sunset; the registry warns during the window. (Optional: an
 **upcaster** Worker that translates `vN→vN+1` so the producer need not hand-maintain two
-emitters.) Same pattern ADR-0018 uses at the gRPC/code level.
+emitters.) The same expand-contract / parallel-change pattern applies to any shared interface
+that spans repos (the cross-repo *ordering* is just dependency edges — see ADR-0018, dropped).
 
 **Decision — the change itself is gated.** A `contract-compat` Check diffs a changed contract
 Schema against its registered predecessor and enforces the rule (additive ⇒ MINOR, breaking ⇒
@@ -486,28 +487,69 @@ decomposition is meant to avoid).
 
 ---
 
+## ADR-0026 — Execution model: deterministic planner + skills, two modes
+**Status:** Accepted · 2026-06-10
+
+**Context.** How does the factory run, and who owns control flow — the engine or the LLM?
+Legacy `ai-sdd` used a deterministic Swift engine for transitions plus agent-executed skills,
+invoked as registered commands inside Claude Code / Codex.
+
+**Decision (Option 3 — hybrid).**
+- **The deterministic engine is the planner.** `Scheduler` / `Reducer` / validator own control
+  flow (what's runnable, did the gate pass, advance state). **Gating is engine-enforced** (the
+  engine runs the check command and reads the result) — never agent-reported.
+- **The LLM does the work via skills.** A *driver* skill runs the loop (`next` → work →
+  `submit`); *worker* skills do the per-node work. "Don't use prompts for control flow."
+- **Dynamism is in the spec, not the LLM.** The declarative DAG already makes flows dynamic;
+  the engine interpreting it deterministically gives reliability. LLM-as-planner would add
+  nondeterminism without adding capability.
+- **Two modes, one engine.** *Interactive* (Mode B): the engine is a registered command / MCP
+  tool inside Claude Code / Codex; the host session is the Adapter; human-in-the-loop — the
+  legacy methodology and the **MVP**. *Autonomous* (Mode A): `factory run` spawns headless
+  agents (`claude -p` / `codex exec`) per Worker for CI/batch. The Adapter has **host** vs
+  **headless** realizations (ADR-0008).
+
+**Consequences.** Matches legacy methodology; reliable, auditable control flow; reuses the host
+agent's LLM/tools/sandbox/HITL in Mode B (smallest MVP).
+
+**Alternatives rejected.** LLM-as-planner (nondeterministic control flow — the BMAD/Ralph
+failure mode the project exists to avoid). The engine as an LLM wrapper (it has no LLM logic).
+
+---
+
+## ADR-0016 — Durable, resumable rollout (DROPPED)
+**Status:** Dropped · 2026-06-10
+
+Was: how a long-lived, monitored rollout resumes (not restarts) after an upstream fix, plus
+compensation/rollback. **Dropped — not a committed use case, and mostly not an engine feature.**
+A rollout flow is a Pipeline with `sensor` nodes; resume is the §10 async-resumption mechanism +
+the shared state plane (ADR-0025); "issue → fix → resume" is rework / scoped re-entry (ADR-0011).
+The one residual — compensation/rollback (a stage's inverse action) — is just a compensating
+Worker on a conditional edge, to be designed if/when the factory ever manages deployments.
+Like gRPC (ADR-0018), it came from the stress-test SDLC scenario, not a committed requirement.
+
+---
+
+## ADR-0018 — Cross-repo atomicity (DROPPED)
+**Status:** Dropped · 2026-06-10
+
+Was: "how does a gRPC-contract change land across repos atomically." **Dropped — not an engine
+concern.** Cross-repo ordering ("def repo before consumers") is just dependency edges in the
+**planning-skill-produced dependency graph**, sequenced by the engine like any other (§5, "two
+kinds of DAG"). gRPC was a stress-test example, not a feature. Contract *compatibility* (the
+separate, real concern) stays covered by ADR-0017.
+
+---
+
+## ADR-0019 — Name for the Conductor
+**Status:** Accepted · 2026-06-10
+
+**Decision.** Keep **Conductor** (the cross-factory saga orchestrator) — clear, on the orchestra
+metaphor, already used throughout. (Rejected: "Production Control" — heavier; the factory
+metaphor is already carried by Plant/Factory/Worker.) No Conductor in the MVP (single Factory).
+
+---
+
 ## Open decisions
 
-### ADR-0016 — Durable, resumable rollout sub-pipeline
-**Status:** Open
-
-The Deployment Factory's rollout is long-lived, sensor-driven, pausable, and must
-*resume* (not restart) after an upstream fix. This implies durable-execution semantics
-(Temporal-style). The **general** async-resumption mechanism — durable event-sourced runs +
-suspension at a `sensor`/`human` node with a correlation key + idempotent ingest + re-invoke
-to resume — is now described in architecture.md §10 ("Asynchronous, durable resumption"), and
-covers MR-approval / CI-completion / webhook triggers including on a local machine. **Still
-open:** the rollout-*specific* durability — resuming a partially-applied, monitored rollout and
-its compensation/rollback — which layers on top of that mechanism.
-
-### ADR-0018 — Cross-repo atomicity for gRPC-contract changes
-**Status:** Open
-
-A gRPC-def repo change must land before its consumer impl repos, across multiple repos,
-with back-compat. Atomicity/sequencing strategy across repos is unresolved.
-
-### ADR-0019 — Name for the Conductor
-**Status:** Open
-
-Working name "Conductor" (orchestra) vs "Production Control" (factory metaphor) vs other.
-Defer until structure is stable.
+_None — all decisions above are resolved. New questions will be appended here as they arise._
