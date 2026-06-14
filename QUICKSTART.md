@@ -58,18 +58,30 @@ factory status   demo        # repeat next/submit until "✓ done"
 
 ## Step 2 — Make the framework skills available to your agent (one-time)
 
-The framework skills live, provider-neutral, in `ai-sdd/skills/`. Surface them to your agent so it
-can run them by name:
+The framework skills (`factory-bootstrap`, `factory-compile-schema`, `factory-run`) are a **toolkit
+you point at a repo** — not part of any one project. Install them so your agent can run them in the
+repo you want to build. Set two paths, then link the skills in (Claude Code reads
+`<repo>/.claude/skills/`):
 
-- **Claude Code** — symlink them into your skills dir:
-  ```sh
-  for s in factory-bootstrap factory-compile-schema factory-run; do
-    ln -s "$PWD/skills/$s" ~/.claude/skills/$s
-  done
-  ```
-- **Codex** — point it at `ai-sdd/skills/` (reference them from your `AGENTS.md` or Codex prompts).
+```sh
+AISDD=/path/to/ai-sdd          # where you cloned ai-sdd (the toolkit source)
+TARGET=/path/to/your-repo      # the repo you want to bootstrap
 
-After Step 3 your repo carries its own copies + per-agent links, so this is only for the first run.
+mkdir -p "$TARGET/.claude/skills"
+for s in factory-bootstrap factory-compile-schema factory-run; do
+  ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"
+done
+ls -l "$TARGET/.claude/skills" | grep factory      # verify the links resolve
+```
+
+This scopes the toolkit to `$TARGET`. It's only a **seed**: when you run `/factory-bootstrap`
+(Step 3) it vendors the skills into the repo's own `.factory/skills/` and re-points these links
+there — so the repo becomes self-contained (only the `factory` binary stays external, until
+Homebrew).
+
+- **Codex** — point it at `$AISDD/skills/` (referenced from the repo's `AGENTS.md`).
+- **Machine-wide instead** (use across many repos)? Link into your user dir:
+  `mkdir -p ~/.claude/skills && for s in factory-bootstrap factory-compile-schema factory-run; do ln -sfn "$AISDD/skills/$s" ~/.claude/skills/$s; done`
 
 ---
 
