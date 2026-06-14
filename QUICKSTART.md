@@ -58,9 +58,9 @@ factory status   demo        # repeat next/submit until "✓ done"
 
 ## Step 2 — Make the framework skills available to your agent (one-time)
 
-The framework skills (`factory-bootstrap`, `factory-compile-schema`, `factory-run`) are a **toolkit
-you point at a repo** — not part of any one project. Install them so your agent can run them in the
-repo you want to build. Set two paths, then link the skills in (Claude Code reads
+The framework skills (`factory-bootstrap`, `factory-plan`, `factory-compile-schema`, `factory-run`)
+are a **toolkit you point at a repo** — not part of any one project. Install them so your agent can
+run them in the repo you want to build. Set two paths, then link the skills in (Claude Code reads
 `<repo>/.claude/skills/`):
 
 ```sh
@@ -68,7 +68,7 @@ AISDD=/path/to/ai-sdd          # where you cloned ai-sdd (the toolkit source)
 TARGET=/path/to/your-repo      # the repo you want to bootstrap
 
 mkdir -p "$TARGET/.claude/skills"
-for s in factory-bootstrap factory-compile-schema factory-run; do
+for s in factory-bootstrap factory-plan factory-compile-schema factory-run; do
   ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"
 done
 ls -l "$TARGET/.claude/skills" | grep factory      # verify the links resolve
@@ -81,7 +81,7 @@ Homebrew).
 
 - **Codex** — point it at `$AISDD/skills/` (referenced from the repo's `AGENTS.md`).
 - **Machine-wide instead** (use across many repos)? Link into your user dir:
-  `mkdir -p ~/.claude/skills && for s in factory-bootstrap factory-compile-schema factory-run; do ln -sfn "$AISDD/skills/$s" ~/.claude/skills/$s; done`
+  `mkdir -p ~/.claude/skills && for s in factory-bootstrap factory-plan factory-compile-schema factory-run; do ln -sfn "$AISDD/skills/$s" ~/.claude/skills/$s; done`
 
 ---
 
@@ -113,22 +113,31 @@ Review the generated `.factory/` and commit it.
 
 ---
 
-## Step 4 — Build a feature
+## Step 4 — Plan and build a feature
 
-Give the factory the feature requirement — this is the **input** the architect plans from (a short
-brief; the factory decides the files/decisions/tests). Then ask your agent to run **`factory-run`**:
+Start from a **brief** (a short description of what you want). Two skills carry it from idea to done.
+
+**Plan** — `/factory-plan` works with you to drive out decisions and emit a `requirements.md` plus
+the **orchestration graph** of slices at `.factory/features/<slug>/`:
 
 ```
-/factory-run <run-id>          # the agent loops next → work → submit for you
+/factory-plan "<your brief>"
+```
+
+**Run** — `/factory-run` executes that graph: it schedules slices by `depends_on` and descends into
+plan→implement→review for each, gating every step:
+
+```
+factory start .factory/features/<slug> --id <slug>
+/factory-run <slug>             # the agent loops next → work → submit for you
 ```
 
 Run `factory` **from your repo root** so the gates (`swift build`, `swift test`, scope) and the run
 store resolve against your codebase. As it goes:
 
 - a worker's output is checked by its **compiled gates**; a failure prints the exact reason and
-  routes to **rework** (the next `next` re-renders that worker with the failures as context);
-- when every node passes, the run reports **✓ done**. You review a change that already cleared its
-  gates.
+  routes to **rework** (the next render carries the failures as context);
+- when every slice completes, the run reports **✓ done** — a change that already cleared its gates.
 
 ---
 

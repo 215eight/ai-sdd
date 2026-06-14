@@ -38,8 +38,8 @@ deterministic check commands. (Reuse before adding: prefer existing models/patte
 ## 4. Copy the framework skills (provider-neutral source)
 
 Copy the framework skills from the ai-sdd install's `skills/` into `.factory/skills/`:
-`factory-run` (the driver) and `factory-compile-schema` (the gate compiler). They live alongside
-the worker skills — one neutral home.
+`factory-plan` (the planner), `factory-run` (the driver), and `factory-compile-schema` (the gate
+compiler). They live alongside the worker skills — one neutral home.
 
 ## 5. Compile the gates
 
@@ -67,8 +67,8 @@ The factory must be drivable by any agent, so skills are surfaced, not duplicate
   Upsert algorithm (same for any marker-managed file): if both markers exist, replace everything
   between them; else append the marked block (to a new file if none exists). The content between
   markers is regenerated each run, so it must be self-contained — never put hand-edited prose there.
-- **Per-agent symlinks** for the *framework* skills a human/agent invokes (`factory-run`,
-  `factory-compile-schema`, `factory-bootstrap`):
+- **Per-agent symlinks** for the *framework* skills a human/agent invokes (`factory-plan`,
+  `factory-run`, `factory-compile-schema`, `factory-bootstrap`):
   - Claude Code: `.claude/skills/<name>` → `../../.factory/skills/<name>`
   - add other agents' folders the same way as they're supported.
 - **Worker skills** (`plan-feature`, …) need *no* agent-folder symlink — the driver resolves them

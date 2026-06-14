@@ -55,9 +55,9 @@ The factory must run under any coding agent (claude-code, codex, …) — ADR-00
 **not** authored inside an agent-specific folder. They live once, provider-neutral, and each agent
 gets a thin pointer:
 
-- **Canonical source:** `skills/<name>/SKILL.md` (this repo's framework skills: `factory-run`,
-  `factory-compile-schema`, `factory-bootstrap`). In a *target* repo the equivalent home is
-  `.factory/skills/`.
+- **Canonical source:** `skills/<name>/SKILL.md` (this repo's framework skills: `factory-bootstrap`,
+  `factory-plan`, `factory-compile-schema`, `factory-run`). In a *target* repo the equivalent home
+  is `.factory/skills/`.
 - **Codex / any agent:** this `AGENTS.md` is the cross-agent surface — Codex reads it natively.
 - **Claude Code:** `.claude/skills/<name>` is a **symlink** to the canonical `skills/<name>` (so
   Claude's mechanism finds it without duplicating content).
