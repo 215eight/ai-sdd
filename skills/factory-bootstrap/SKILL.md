@@ -9,11 +9,31 @@ Stand up everything a repo needs to be built by ai-sdd, **provider-neutrally**. 
 committed `.factory/` home plus per-agent pointers — one source of truth, many agent front-ends.
 Repeatable: re-running refreshes conventions/schemas and regenerates gates intentionally.
 
-## 1. Discover the repo
+## 1. Discover the repo — evidence first, flag the rest
 
-Inspect the target: language/stack, the real **build/test/lint commands**, the module/persistence/
-test layout, and the house conventions. Capture this — it becomes the conventions doc and the
-deterministic check commands. (Reuse before adding: prefer existing models/patterns.)
+Discovery is the one non-deterministic step where the agent could *invent* conventions. Constrain it
+to a three-step contract so the output is **grounded, not guessed**:
+
+1. **Collect evidence (deterministic).** For each change-type in the checklist below, gather facts
+   from the repo — the manifest, the file tree, `grep`, and *how it was last done* (git history of a
+   representative change). Confirm commands by running them (`build`, `test`). Record where each fact
+   came from.
+2. **Synthesize the convention (AI).** Generalize each change-type's pattern **from that evidence** —
+   abstract the pattern from a real exemplar. Faithful abstraction is fine; introducing a step **no
+   exemplar supports** is not.
+3. **Verify groundedness, flag the rest.** Every convention must **cite its evidence** (a file, a
+   commit, a manifest entry). Check citations mechanically where possible (the path exists, the
+   command exits 0). Any change-type with **no evidence**, or any claim not traceable to evidence, is
+   **flagged and confirmed with the user** (or filled from ecosystem priors) — never silently
+   written. "No clear convention found" is a valid, expected outcome — surface it, don't guess.
+
+Cover this **checklist** of change-types — don't skip one for lack of an obvious example; flag it:
+build / test / lint / run commands · add a **module/feature** · a **model/entity** · a **migration**
+· a **test** · an **endpoint** · **config/secrets** · **a dependency / new package** (read the
+manifest + any existing local packages) · naming + layering · CI/release.
+
+Record, per change-type: the **evidence**, the **convention**, and whether it was **confirmed** or
+left an **open gap**. That record seeds the discovery eval set (see *Discovery quality* below).
 
 ## 2. Scaffold the `.factory/` home
 
@@ -82,6 +102,21 @@ The engine itself is already neutral: `factory` is a CLI any agent calls over a 
   Use the **same marker upsert** as AGENTS.md (`# factory:begin` / `# factory:end`, `#` comments)
   so an existing `.gitignore` is extended, not clobbered, and a re-run doesn't duplicate the block.
 - Run `factory validate .factory` — referential + edge-type + acyclicity must pass before any run.
+
+## Discovery quality — evals + observability
+
+Discovery is the riskiest AI step, so make its quality **measurable**, and more so as adoption grows.
+The per-change-type record from §1 (evidence → convention → confirmed / gap) is a labeled example —
+the user's confirmations are the ground truth, harvested for free. Across repos, track and surface:
+
+- **faithfulness rate** — conventions grounded in cited evidence;
+- **gap-detection rate** — real gaps correctly flagged (vs silently invented);
+- **false-invention rate** — ungrounded claims that slipped through.
+
+Watch these **per model version**, so a model swap that degrades discovery is caught — the same
+"judge-the-judge" eval-gating used for judge checks, pointed at discovery itself. This three-step
+contract (deterministic evidence → AI synthesis → grounded-or-flagged) is the house pattern for
+**every** non-deterministic step here — planning and implementation included, not just discovery.
 
 ## Notes
 
