@@ -456,6 +456,98 @@ struct EngineTests {
         #expect(md.contains("stack `core`"))
     }
 
+    // MARK: - Schema validator (Tier-1: structure + invariants → deterministic gate)
+
+    private let planSchemaJSON = """
+    {
+      "apiVersion": "factory/v1", "kind": "Schema", "metadata": { "name": "feature-plan", "version": 1 },
+      "spec": { "fields": {
+        "decisions": { "type": "list", "required": true,
+          "invariants": [ { "nonEmpty": true }, { "all": { "field": "status", "eq": "closed" } } ] },
+        "files": { "type": "list", "required": true,
+          "invariants": [ { "all": { "matches": "^Sources/|^Tests/" } } ] }
+      } }
+    }
+    """
+
+    // A conforming artifact yields no violations.
+    @Test func schemaValidatorAcceptsGoodArtifact() throws {
+        let schema = try loader.loadSchema(Data(planSchemaJSON.utf8)).spec
+        let good = """
+        decisions:
+          - { q: "db?", answer: "sqlite", status: closed }
+        files: [ "Sources/X.swift", "Tests/XTests.swift" ]
+        """
+        #expect(try SchemaValidator.validate(schema, artifactYAML: good).isEmpty)
+    }
+
+    // An open decision and an out-of-scope path are each caught, located precisely.
+    @Test func schemaValidatorCatchesViolations() throws {
+        let schema = try loader.loadSchema(Data(planSchemaJSON.utf8)).spec
+        let bad = """
+        decisions:
+          - { q: "db?", answer: "sqlite", status: closed }
+          - { q: "store?", answer: "TBD", status: open }
+        files: [ "Sources/X.swift", "scripts/hack.sh" ]
+        """
+        let violations = try SchemaValidator.validate(schema, artifactYAML: bad)
+        #expect(violations.contains { $0.field == "decisions[1].status" })
+        #expect(violations.contains { $0.field == "files[1]" })
+    }
+
+    // A missing required field is reported.
+    @Test func schemaValidatorFlagsMissingRequired() throws {
+        let schema = SchemaSpec(fields: ["plan": FieldSpec(required: true)])
+        let violations = try SchemaValidator.validate(schema, artifactYAML: "other: 1")
+        #expect(violations.contains { $0.field == "plan" && $0.message.contains("missing") })
+    }
+
+    // MARK: - Scope gate (Tier-2: changed files ⊆ declared manifest)
+
+    // Porcelain parsing counts modified, deleted, untracked/new, and both sides of a rename.
+    @Test func scopeParsesAllChangeKinds() {
+        let porcelain = """
+         M Sources/A.swift
+        ?? Sources/New.swift
+         D Sources/Gone.swift
+        R  Sources/Old.swift -> Sources/Renamed.swift
+        """
+        let changed = ScopeChecker.changedFiles(porcelain: porcelain)
+        #expect(Set(changed) == ["Sources/A.swift", "Sources/New.swift", "Sources/Gone.swift",
+                                 "Sources/Old.swift", "Sources/Renamed.swift"])
+    }
+
+    // The headline case: an undeclared NEW (untracked) file is caught — pattern checks miss this.
+    @Test func scopeCatchesUndeclaredNewFile() {
+        let porcelain = """
+        ?? Sources/Declared.swift
+        ?? Sources/Unexpected.swift
+        """
+        let changed = ScopeChecker.changedFiles(porcelain: porcelain)
+        let out = ScopeChecker.outOfScope(changed: changed, declared: ["Sources/Declared.swift"])
+        #expect(out == ["Sources/Unexpected.swift"])
+    }
+
+    // A clean change (every touched file declared) is in scope; directory prefixes cover children.
+    @Test func scopeAcceptsDeclaredAndPrefixes() {
+        let changed = ["Sources/Hyrox/Service.swift", "Sources/Hyrox/Model.swift", "Tests/T.swift"]
+        #expect(ScopeChecker.outOfScope(changed: changed,
+                                        declared: ["Sources/Hyrox/**", "Tests/T.swift"]).isEmpty)
+        // Without the prefix, a sibling under the dir is flagged.
+        #expect(ScopeChecker.outOfScope(changed: ["Sources/Other.swift"],
+                                        declared: ["Sources/Hyrox/**"]) == ["Sources/Other.swift"])
+    }
+
+    // The manifest is read from the plan artifact's `files:` list.
+    @Test func scopeReadsManifestFromPlan() throws {
+        let plan = """
+        files:
+          - Sources/A.swift
+          - Tests/ATests.swift
+        """
+        #expect(try ScopeChecker.declaredFiles(planYAML: plan) == ["Sources/A.swift", "Tests/ATests.swift"])
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

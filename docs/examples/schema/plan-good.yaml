@@ -1,0 +1,9 @@
+scope: { feature: "hyrox results scraper", outOfScope: ["UI"] }
+decisions:
+  - { q: "source format?", answer: "fixture JSON", status: closed }
+  - { q: "store where?",   answer: "HyroxRaceResult", status: closed }
+files:
+  - "Sources/Server/Modules/HyroxResults/HyroxResultsService.swift"
+  - "Tests/ServerTests/HyroxResultsServiceTests.swift"
+tests:
+  - "HyroxResultsServiceTests"

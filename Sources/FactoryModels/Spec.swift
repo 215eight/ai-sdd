@@ -166,3 +166,69 @@ public struct PortSpec: Codable, Equatable, Sendable {
         self.required = required
     }
 }
+
+// MARK: - Schema (an Artifact's type: structure + invariants → deterministic gates)
+//
+// A Schema describes a produced Artifact so that deterministic checks can be derived from it.
+// `fields` + `invariants` are the structural (Tier-1) part the `SchemaValidator` enforces;
+// the semantic (Tier-2) and judge (Tier-3) tiers compile to command/judge CheckSpecs elsewhere.
+
+public struct SchemaSpec: Codable, Equatable, Sendable {
+    public var handle: String?                  // file · files · git-ref · figma · url · …
+    public var format: String?                  // yaml · json · markdown · code · …
+    public var scope: String?                   // "internal" | "contract"
+    public var fields: [String: FieldSpec]?     // structured shape (when format is structured)
+
+    public init(handle: String? = nil, format: String? = nil, scope: String? = nil,
+                fields: [String: FieldSpec]? = nil) {
+        self.handle = handle
+        self.format = format
+        self.scope = scope
+        self.fields = fields
+    }
+}
+
+public struct FieldSpec: Codable, Equatable, Sendable {
+    public var type: String?                    // string · number · bool · enum · path · list · object
+    public var required: Bool?
+    public var invariants: [Invariant]?
+
+    public init(type: String? = nil, required: Bool? = nil, invariants: [Invariant]? = nil) {
+        self.type = type
+        self.required = required
+        self.invariants = invariants
+    }
+}
+
+/// A declarative predicate over a field's value. Structured (not a string DSL) so it compiles
+/// to a deterministic assertion unambiguously.
+public struct Invariant: Codable, Equatable, Sendable {
+    public var nonEmpty: Bool?                  // string/list/object must be non-empty
+    public var eq: String?                      // scalar must equal this
+    public var matches: String?                 // scalar must match this regex
+    public var all: ItemPredicate?              // every element of a list must satisfy this
+
+    public init(nonEmpty: Bool? = nil, eq: String? = nil, matches: String? = nil,
+                all: ItemPredicate? = nil) {
+        self.nonEmpty = nonEmpty
+        self.eq = eq
+        self.matches = matches
+        self.all = all
+    }
+}
+
+/// The per-element predicate of an `all` invariant. `field` targets a subkey of object items
+/// (omit for scalar lists).
+public struct ItemPredicate: Codable, Equatable, Sendable {
+    public var field: String?
+    public var nonEmpty: Bool?
+    public var eq: String?
+    public var matches: String?
+
+    public init(field: String? = nil, nonEmpty: Bool? = nil, eq: String? = nil, matches: String? = nil) {
+        self.field = field
+        self.nonEmpty = nonEmpty
+        self.eq = eq
+        self.matches = matches
+    }
+}

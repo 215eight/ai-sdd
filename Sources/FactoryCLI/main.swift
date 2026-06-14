@@ -11,7 +11,7 @@ struct Factory: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "factory",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
-        subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self]
+        subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self]
     )
 }
 
@@ -172,6 +172,83 @@ struct Status: ParsableCommand {
             printLevel(pipeline: sub.pipeline.spec, state: state.slices[sliceId] ?? RunState(),
                        dir: sliceDir(orchestrationDir: dir, node: node), indent: indent + "    ")
         }
+    }
+}
+
+// MARK: - check
+
+struct Check: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Validate a structured artifact against a Schema's fields + invariants (a deterministic gate)."
+    )
+    @Argument(help: "Path to the Schema spec (kind: Schema).")
+    var schema: String
+    @Argument(help: "Path to the artifact file (YAML/JSON) to validate.")
+    var artifact: String
+
+    func run() throws {
+        let env = try SpecLoader().loadSchemaYAML(try String(contentsOfFile: schema, encoding: .utf8))
+        let artifactText = try String(contentsOfFile: artifact, encoding: .utf8)
+        let violations = try SchemaValidator.validate(env.spec, artifactYAML: artifactText)
+        guard violations.isEmpty else {
+            for v in violations {
+                FileHandle.standardError.write(Data("✗ \(v.field): \(v.message)\n".utf8))
+            }
+            throw ExitCode.failure
+        }
+        print("✓ \(artifact) satisfies \(env.metadata.name).v\(env.metadata.version ?? 1)")
+    }
+}
+
+// MARK: - scope
+
+struct Scope: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Verify the working tree's changes stay within a plan's declared file manifest (Tier-2 gate)."
+    )
+    @Option(name: .long, help: "Plan artifact (YAML) whose `files:` list is the allowed manifest.")
+    var plan: String?
+    @Option(name: .long, parsing: .upToNextOption, help: "Explicit allowed files (instead of --plan).")
+    var files: [String] = []
+    @Option(name: .long, help: "Repo directory (default: current).")
+    var repo: String?
+    @Option(name: .long, help: "Baseline git ref — also include changes committed since it.")
+    var baseline: String?
+
+    func run() throws {
+        let repoDir = repo ?? FileManager.default.currentDirectoryPath
+        let declared = try plan.map { try ScopeChecker.declaredFiles(planYAML: String(contentsOfFile: $0, encoding: .utf8)) } ?? files
+        guard !declared.isEmpty else {
+            throw ValidationError("no declared files — pass --plan <file with a files: list> or --files")
+        }
+
+        // `-uall` lists untracked files individually (a new dir is otherwise collapsed to `dir/`,
+        // which would slip new files past the gate). Ignored files (e.g. `.factory/`) stay omitted.
+        let porcelain = try git(["status", "--porcelain", "--untracked-files=all"], in: repoDir)
+        let committed = baseline.flatMap { try? git(["diff", "--name-status", $0, "HEAD"], in: repoDir) }
+        let changed = ScopeChecker.changedFiles(porcelain: porcelain, committed: committed)
+        let outOfScope = ScopeChecker.outOfScope(changed: changed, declared: declared)
+
+        guard outOfScope.isEmpty else {
+            for file in outOfScope {
+                FileHandle.standardError.write(Data("✗ out of scope: \(file)\n".utf8))
+            }
+            throw ExitCode.failure
+        }
+        print("✓ \(changed.count) changed file(s), all within the declared manifest")
+    }
+
+    private func git(_ args: [String], in dir: String) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git", "-C", dir] + args
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
     }
 }
 

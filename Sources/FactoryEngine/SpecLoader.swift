@@ -27,9 +27,11 @@ public struct SpecLoader: Sendable {
     public func loadPipelineYAML(_ yaml: String) throws -> SpecEnvelope<PipelineSpec> { try Self.decodeYAML(yaml) }
     public func loadWorkerYAML(_ yaml: String) throws -> SpecEnvelope<WorkerSpec> { try Self.decodeYAML(yaml) }
     public func loadCheckYAML(_ yaml: String) throws -> SpecEnvelope<CheckSpec> { try Self.decodeYAML(yaml) }
+    public func loadSchemaYAML(_ yaml: String) throws -> SpecEnvelope<SchemaSpec> { try Self.decodeYAML(yaml) }
     public func loadPipeline(_ data: Data) throws -> SpecEnvelope<PipelineSpec> { try Self.decodeJSON(data) }
     public func loadWorker(_ data: Data) throws -> SpecEnvelope<WorkerSpec> { try Self.decodeJSON(data) }
     public func loadCheck(_ data: Data) throws -> SpecEnvelope<CheckSpec> { try Self.decodeJSON(data) }
+    public func loadSchema(_ data: Data) throws -> SpecEnvelope<SchemaSpec> { try Self.decodeJSON(data) }
 
     /// Load a pipeline workspace from disk (paths via `WorkspaceLayout`): the pipeline, its
     /// Workers (by name), and its Checks (by name). A missing `checks/` folder is fine — a

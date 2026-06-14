@@ -1,0 +1,26 @@
+apiVersion: factory/v1
+kind: Schema
+metadata: { name: feature-plan, version: 1 }
+spec:
+  handle: file
+  format: yaml          # structured ⇒ the fields below compile to deterministic checks
+  scope: internal
+  fields:
+    scope:
+      type: object
+      required: true
+    decisions:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { field: status, eq: closed } }     # "no open decisions" — deterministic
+    files:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { matches: "^Sources/|^Tests/" } }  # plan only touches source/test paths
+    tests:
+      type: list
+      invariants: [ { nonEmpty: true } ]
