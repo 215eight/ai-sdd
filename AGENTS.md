@@ -34,7 +34,7 @@ swift test
 swift run factory validate docs/examples/minimal
 ```
 
-## Execution model — interactive (Mode B), the MVP
+## Execution model — interactive
 
 The engine is the **deterministic planner**; the **agent does the work via skills** (ADR-0026).
 The engine owns control flow and **enforces gates** — the LLM never decides control flow.
@@ -44,11 +44,27 @@ worker's skill → `factory submit <id>` (engine validates output, runs gates, r
 repeat. A failing required gate routes to **rework**. An orchestration run's slices each descend
 into their own plan→implement→review pipeline.
 
-To drive a run, use the **`/factory-run`** command / the `factory-run` skill
-(`.claude/skills/factory-run/`). A Worker's `task.skill: X` resolves to `<workspace>/skills/X.md`
-in an example, or to the repo skill of that name in a real project.
+A Worker's `task.skill: X` resolves to `<workspace>/skills/X.md` in an example, or to the repo
+skill of that name in a real project.
 
 A future MCP server (`factory next`/`submit` as MCP tools) is not built yet; drive via the CLI.
+
+## Framework skills are provider-neutral
+
+The factory must run under any coding agent (claude-code, codex, …) — ADR-0021/0026. So skills are
+**not** authored inside an agent-specific folder. They live once, provider-neutral, and each agent
+gets a thin pointer:
+
+- **Canonical source:** `skills/<name>/SKILL.md` (this repo's framework skills: `factory-run`,
+  `factory-compile-schema`, `factory-bootstrap`). In a *target* repo the equivalent home is
+  `.factory/skills/`.
+- **Codex / any agent:** this `AGENTS.md` is the cross-agent surface — Codex reads it natively.
+- **Claude Code:** `.claude/skills/<name>` is a **symlink** to the canonical `skills/<name>` (so
+  Claude's mechanism finds it without duplicating content).
+
+The **`factory-bootstrap`** skill wires this for a target repo (copy framework skills into
+`.factory/skills/`, write `AGENTS.md`, create the per-agent symlinks). The engine itself is already
+provider-neutral — `factory` is a CLI any agent calls over a shell.
 
 ## Conventions
 
