@@ -51,9 +51,22 @@ before promoting them to blocking.
 
 The factory must be drivable by any agent, so skills are surfaced, not duplicated:
 
-- **`AGENTS.md`** (repo root) — write/extend it to point at `.factory/skills/` and how to drive
-  (the `factory-run` loop). This is the **cross-agent surface**; Codex reads it natively, and so do
-  others.
+- **`AGENTS.md`** (repo root) — point at `.factory/skills/` and how to drive (the `factory-run`
+  loop). This is the **cross-agent surface**; Codex reads it natively, and so do others.
+  **Never overwrite an existing AGENTS.md.** Wrap the factory section in idempotent markers and
+  **upsert** it — replace the existing managed block in place, or append it if absent — so a repo's
+  own guidelines are preserved and a re-bootstrap doesn't duplicate the section:
+
+  ```md
+  <!-- factory:begin — managed by factory-bootstrap; edits between these markers are overwritten on re-bootstrap -->
+  ## AI Software Factory (`.factory/`)
+  …pointer to .factory/skills/ + the factory-run loop…
+  <!-- factory:end -->
+  ```
+
+  Upsert algorithm (same for any marker-managed file): if both markers exist, replace everything
+  between them; else append the marked block (to a new file if none exists). The content between
+  markers is regenerated each run, so it must be self-contained — never put hand-edited prose there.
 - **Per-agent symlinks** for the *framework* skills a human/agent invokes (`factory-run`,
   `factory-compile-schema`, `factory-bootstrap`):
   - Claude Code: `.claude/skills/<name>` → `../../.factory/skills/<name>`
@@ -66,6 +79,8 @@ The engine itself is already neutral: `factory` is a CLI any agent calls over a 
 ## 7. Ignore runtime + validate
 
 - Add `.factory/runs/` and `.factory/artifacts/` to `.gitignore` (commit the rest of `.factory/`).
+  Use the **same marker upsert** as AGENTS.md (`# factory:begin` / `# factory:end`, `#` comments)
+  so an existing `.gitignore` is extended, not clobbered, and a re-run doesn't duplicate the block.
 - Run `factory validate .factory` — referential + edge-type + acyclicity must pass before any run.
 
 ## Notes
@@ -73,5 +88,8 @@ The engine itself is already neutral: `factory` is a CLI any agent calls over a 
 - **Symlinks**: clean on macOS/Linux (git stores them); Windows needs `core.symlinks=true`.
 - **Re-bootstrap** is how conventions stay fresh (architecture §8): re-run to refresh
   `conventions/` + `schemas/` from the evolved codebase, then recompile gates. Mechanical output is
-  stable, so a no-change re-run produces no diff.
+  stable, so a no-change re-run produces no diff — this holds for the generated `.factory/` specs
+  **and** for the marker-managed edits to shared files (`AGENTS.md`, `.gitignore`), because they are
+  upserted between `factory:begin`/`factory:end` rather than appended. Files outside those markers
+  are never touched.
 - **Don't commit secrets**; surface required env/secrets in the repo's docs, not git.
