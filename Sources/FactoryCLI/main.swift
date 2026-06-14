@@ -11,6 +11,7 @@ struct Factory: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "factory",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
+        version: "ai-sdd factory 0.0.1",
         subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self]
     )
 }
