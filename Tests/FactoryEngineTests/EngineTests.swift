@@ -618,6 +618,28 @@ struct EngineTests {
         #expect(try ScopeChecker.declaredFiles(planYAML: plan) == ["Sources/A.swift", "Tests/ATests.swift"])
     }
 
+    // MARK: - Coverage gate (cross-artifact: review item ids ⊇ plan acceptance ids)
+
+    // A review judging every acceptance item leaves nothing uncovered.
+    @Test func coverageAcceptsFullReview() throws {
+        let plan = "acceptance:\n  - { id: a, description: x }\n  - { id: b, description: y }"
+        let review = "items:\n  - { id: a, verdict: pass }\n  - { id: b, verdict: fail }"
+        let acceptance = try CoverageChecker.acceptanceIDs(planYAML: plan)
+        let reviewed = try CoverageChecker.reviewedIDs(reviewYAML: review)
+        #expect(acceptance == ["a", "b"])
+        #expect(CoverageChecker.uncovered(acceptance: acceptance, reviewed: reviewed).isEmpty)
+    }
+
+    // A review that skips an acceptance item is caught — in plan order.
+    @Test func coverageCatchesSkippedItem() throws {
+        let plan = "acceptance:\n  - { id: a, description: x }\n  - { id: b, description: y }"
+        let review = "items:\n  - { id: a, verdict: pass }"   // b never judged
+        let uncovered = CoverageChecker.uncovered(
+            acceptance: try CoverageChecker.acceptanceIDs(planYAML: plan),
+            reviewed: try CoverageChecker.reviewedIDs(reviewYAML: review))
+        #expect(uncovered == ["b"])
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

@@ -12,7 +12,7 @@ struct Factory: ParsableCommand {
         commandName: "factory",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd factory 0.0.1",
-        subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self]
+        subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self]
     )
 }
 
@@ -250,6 +250,34 @@ struct Scope: ParsableCommand {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+// MARK: - cover
+
+struct Cover: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Verify a review judges every acceptance item the plan declares (a deterministic cross-artifact gate)."
+    )
+    @Option(name: .long, help: "Plan artifact (YAML) whose `acceptance[].id` list must be covered.")
+    var plan: String
+    @Option(name: .long, help: "Review artifact (YAML) whose `items[].id` list must cover them.")
+    var review: String
+
+    func run() throws {
+        let acceptance = try CoverageChecker.acceptanceIDs(planYAML: String(contentsOfFile: plan, encoding: .utf8))
+        let reviewed = try CoverageChecker.reviewedIDs(reviewYAML: String(contentsOfFile: review, encoding: .utf8))
+        guard !acceptance.isEmpty else {
+            throw ValidationError("no acceptance items in \(plan) — nothing to cover (is it a feature-plan artifact?)")
+        }
+        let uncovered = CoverageChecker.uncovered(acceptance: acceptance, reviewed: reviewed)
+        guard uncovered.isEmpty else {
+            for id in uncovered {
+                FileHandle.standardError.write(Data("✗ acceptance item not reviewed: \(id)\n".utf8))
+            }
+            throw ExitCode.failure
+        }
+        print("✓ all \(acceptance.count) acceptance item(s) judged by the review")
     }
 }
 
