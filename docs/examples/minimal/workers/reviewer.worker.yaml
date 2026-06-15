@@ -3,7 +3,12 @@ kind: Worker
 metadata: { name: reviewer }
 spec:
   workerKind: transform
-  consumes: [{ schema: code.v1, required: true }]
+  # Consumes BOTH the plan and the code: the reviewer judges code against the plan's acceptance
+  # checklist, and the two incoming edges are the routable rework targets — a reject routes to the
+  # producer of the input it indicts (code.v1 -> coder, plan.v1 -> architect).
+  consumes:
+    - { schema: plan.v1, required: true }
+    - { schema: code.v1, required: true }
   produces: [{ schema: review.v1 }]
   task: { skill: review-change }
   model: deep-reasoning

@@ -55,6 +55,23 @@ left an **open gap**. That record seeds the discovery eval set (see *Discovery q
 - Write a **schema** per produced artifact in `.factory/schemas/` — its structure, `rules`, and
   `judge` (the schema-metadata vocabulary). This is what makes gates deterministic.
 
+**Thread an acceptance checklist through the three roles** — this is what turns the reviewer into a
+real gate instead of advisory notes:
+
+- `plan-feature` emits an **`acceptance`** checklist in its plan artifact — one verifiable item per
+  outcome, each `{ id, description }`.
+- `implement-feature` addresses every item and records the ids it covers in the changeset's
+  **`satisfies`** list.
+- `review-feature` returns a **per-item verdict** (`items[].verdict: pass|fail`) plus an **overall
+  `verdict: approve|reject`**, and **must `reject`** if any item is unmet or a convention is
+  violated. On reject it names the indicted input in a **`rework`** list (`target: <consumed
+  schema>`) so the engine routes the rework to that input's producer — the implementer for a code
+  defect, the planner for a plan/contract defect.
+
+The review schema's invariants (all items `pass`, overall `verdict == approve`) make this verdict a
+**deterministic, blocking gate** — see [factory-compile-schema](../factory-compile-schema/SKILL.md);
+the reviewer *is* the judge, captured and enforced structurally, no judge-runner required.
+
 ## 4. Copy the framework skills (provider-neutral source)
 
 Copy the framework skills from the ai-sdd install's `skills/` into `.factory/skills/`:

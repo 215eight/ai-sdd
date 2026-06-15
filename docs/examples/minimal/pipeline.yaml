@@ -9,4 +9,5 @@ spec:
     - { id: reviewer,  worker: reviewer, required: true }
   edges:
     - { from: architect, to: coder,    artifact: plan.v1 }
-    - { from: coder,     to: reviewer, artifact: code.v1 }
+    - { from: architect, to: reviewer, artifact: plan.v1 }   # reviewer judges against the plan …
+    - { from: coder,     to: reviewer, artifact: code.v1 }   # … and reviews the code; both are rework targets
