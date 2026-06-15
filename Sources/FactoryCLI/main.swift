@@ -51,12 +51,20 @@ private struct AdvanceOutcome {
     var produced: [String]
     var results: [CheckResult]
     var blocking: [CheckResult]
+    var routedTo: [String]      // §9: producers the rework was routed to (empty unless routed upstream)
+    var invalidated: [String]   // nodes invalidated by routing (re-run); for the report
+    var escalated: Bool         // gate kept failing past the bound (or no route) → parked for a human
 }
 
 /// Validate a worker's output, run its gates, and append the resulting event (wrapped by `scope`
 /// so the same logic serves a flat run and a slice's sub-pipeline). Gating is engine-enforced.
+/// On a blocking failure the engine decides where the rework goes (§9 / ADR-0011): a *verdict*
+/// artifact (a reviewer's) indicts its inputs → route to their producers (or escalate); any other
+/// artifact's failure re-runs the node itself.
 private func advance(node: String, worker: WorkerSpec, checks: [String: CheckSpec],
-                     producedOverride: [String], store: RunStore, runId: String,
+                     producedOverride: [String], pipeline: PipelineSpec,
+                     workers: [String: WorkerSpec], state: RunState,
+                     store: RunStore, runId: String,
                      scope: (RunEvent) -> RunEvent) throws -> AdvanceOutcome {
     let declared = (worker.produces ?? []).map(\.schema)
     let producedSet = producedOverride.isEmpty ? declared : producedOverride
@@ -67,13 +75,66 @@ private func advance(node: String, worker: WorkerSpec, checks: [String: CheckSpe
     }
     let results = CheckRunner(workingDirectory: workspace()).run(worker.checks ?? [], specs: checks)
     let blocking = results.filter(\.isBlockingFailure)
-    if blocking.isEmpty {
-        try store.append(scope(.nodeCompleted(node: node, producedArtifacts: producedSet)), to: runId)
-    } else {
-        try store.append(scope(.checkFailed(node: node, checks: blocking.map(\.check))), to: runId)
+
+    func outcome(advanced: Bool, routedTo: [String] = [], invalidated: [String] = [],
+                 escalated: Bool = false) -> AdvanceOutcome {
+        AdvanceOutcome(node: node, advanced: advanced, produced: producedSet, results: results,
+                       blocking: blocking, routedTo: routedTo, invalidated: invalidated, escalated: escalated)
     }
-    return AdvanceOutcome(node: node, advanced: blocking.isEmpty,
-                          produced: producedSet, results: results, blocking: blocking)
+
+    guard !blocking.isEmpty else {
+        try store.append(scope(.nodeCompleted(node: node, producedArtifacts: producedSet)), to: runId)
+        return outcome(advanced: true)
+    }
+
+    let failedChecks = blocking.map(\.check)
+
+    // Route by the failed artifact's shape: a verdict artifact indicts its inputs → upstream rework.
+    if let hint = verdictHint(producedSchemas: declared) {
+        switch Rework.decide(round: state.reworkRounds[node] ?? 0, failedNode: node,
+                             indicted: hint.targets, pipeline: pipeline,
+                             produces: producesMap(pipeline: pipeline, workers: workers)) {
+        case let .route(routing):
+            try store.append(scope(.reworkRouted(
+                failedNode: node, producers: routing.producers,
+                invalidatedNodes: routing.invalidatedNodes,
+                invalidatedArtifacts: routing.invalidatedArtifacts, checks: failedChecks)), to: runId)
+            return outcome(advanced: false, routedTo: routing.producers, invalidated: routing.invalidatedNodes)
+        case .escalate:
+            // Past the bound, or a reject with no resolvable target → escalate to a human.
+            try store.append(scope(.escalated(node: node, checks: failedChecks)), to: runId)
+            return outcome(advanced: false, escalated: true)
+        }
+    }
+
+    // Not a verdict artifact: the node's own output is wrong → re-run this node (self-rework).
+    try store.append(scope(.checkFailed(node: node, checks: failedChecks)), to: runId)
+    return outcome(advanced: false)
+}
+
+/// Map each worker node → the artifact schemas it produces (for §9 scope invalidation).
+private func producesMap(pipeline: PipelineSpec, workers: [String: WorkerSpec]) -> [String: [String]] {
+    var map: [String: [String]] = [:]
+    for node in pipeline.nodes {
+        if let worker = node.worker.flatMap({ workers[$0] }) {
+            map[node.id] = (worker.produces ?? []).map(\.schema)
+        }
+    }
+    return map
+}
+
+/// Read a §9 routing hint from a failed node's produced artifact, trying the convention path
+/// `.factory/artifacts/<schema>.<ext>`. Returns the first verdict artifact's hint, else nil.
+private func verdictHint(producedSchemas: [String]) -> Rework.RoutingHint? {
+    let layout = ArtifactLayout(workspace: workspace())
+    for schema in producedSchemas {
+        for ext in ["yaml", "yml", "json"] {
+            guard let text = try? String(contentsOf: layout.file(schema: schema, ext: ext), encoding: .utf8),
+                  let hint = try? Rework.routingHint(artifactYAML: text) else { continue }
+            return hint
+        }
+    }
+    return nil
 }
 
 /// Load a pipeline workspace and fail fast if the wiring is invalid (prints issues to stderr).
@@ -164,6 +225,7 @@ struct Status: ParsableCommand {
         line("rework     ", state.failedChecks.keys.sorted().map {
             "\($0) (\(state.failedChecks[$0]!.joined(separator: ", ")))"
         })
+        if !state.escalatedNodes.isEmpty { line("escalated  ", Array(state.escalatedNodes)) }
         // Descend into any in-progress slice to show its sub-pipeline progress.
         for sliceId in state.inProgressNodes.sorted() {
             guard let node = pipeline.nodes.first(where: { $0.id == sliceId }), isSlice(node),
@@ -367,13 +429,21 @@ struct Next: ParsableCommand {
         print(json ? try encodeJSON(instruction) : Renderer.markdown(instruction))
     }
 
-    /// Nothing to dispense: either this pipeline is done, or it is waiting on gates/inputs.
+    /// Nothing to dispense: the pipeline is done, parked on a human escalation, or waiting on inputs.
     private func emitIdle(state: RunState, pipeline: PipelineSpec) throws {
         let done = Scheduler.isComplete(state, pipeline)
+        let escalated = state.escalatedNodes.sorted()
         if json {
-            print(try encodeJSON(["status": done ? "done" : "idle"]))
+            var status: [String: String] = ["status": done ? "done" : (escalated.isEmpty ? "idle" : "escalated")]
+            if !escalated.isEmpty { status["escalated"] = escalated.joined(separator: ",") }
+            print(try encodeJSON(status))
+        } else if done {
+            print("✓ done — all nodes complete")
+        } else if !escalated.isEmpty {
+            print("⚠ parked for a human — escalated: \(escalated.joined(separator: ", ")) "
+                + "(gate failed past \(Rework.maxRounds) rework round(s))")
         } else {
-            print(done ? "✓ done — all nodes complete" : "nothing runnable now (waiting on gates/inputs)")
+            print("nothing runnable now (waiting on gates/inputs)")
         }
     }
 }
@@ -416,8 +486,9 @@ struct Submit: ParsableCommand {
                             slice: topNode, topPipeline: pipeline)
         } else {
             let outcome = try advance(node: topTarget, worker: workers[topTarget] ?? WorkerSpec(),
-                                      checks: checks, producedOverride: produced, store: store,
-                                      runId: runId, scope: { $0 })
+                                      checks: checks, producedOverride: produced,
+                                      pipeline: pipeline, workers: workers, state: state,
+                                      store: store, runId: runId, scope: { $0 })
             try report(outcome: outcome, slice: nil, sliceCompleted: false,
                        topPipeline: pipeline, topState: try store.state(of: runId))
         }
@@ -436,8 +507,9 @@ struct Submit: ParsableCommand {
         let subTarget = try resolve(node, among: subState.inProgressNodes, level: "slice '\(slice.id)': ")
 
         let outcome = try advance(node: subTarget, worker: subWorkers[subTarget] ?? WorkerSpec(),
-                                  checks: subChecks, producedOverride: produced, store: store,
-                                  runId: runId, scope: { .scoped(slice: slice.id, event: $0) })
+                                  checks: subChecks, producedOverride: produced,
+                                  pipeline: subEnv.spec, workers: subWorkers, state: subState,
+                                  store: store, runId: runId, scope: { .scoped(slice: slice.id, event: $0) })
 
         // If the sub-pipeline is now fully complete, the slice node completes at the top level.
         var sliceCompleted = false
@@ -472,22 +544,37 @@ struct Submit: ParsableCommand {
         if json {
             struct Outcome: Encodable {
                 var node: String, slice: String?, advanced: Bool, sliceCompleted: Bool
-                var produced: [String], checks: [CheckResult], failed: [String], runnable: [String]
+                var produced: [String], checks: [CheckResult], failed: [String]
+                var routedTo: [String], invalidated: [String], escalated: Bool, runnable: [String]
             }
             print(try encodeJSON(Outcome(node: outcome.node, slice: slice, advanced: outcome.advanced,
                 sliceCompleted: sliceCompleted, produced: outcome.advanced ? outcome.produced : [],
-                checks: outcome.results, failed: outcome.blocking.map(\.check), runnable: runnable)))
+                checks: outcome.results, failed: outcome.blocking.map(\.check),
+                routedTo: outcome.routedTo, invalidated: outcome.invalidated, escalated: outcome.escalated,
+                runnable: runnable)))
             return
         }
         guard outcome.advanced else {
-            print("✗ \(label) failed \(outcome.blocking.count) gate(s) → rework")
+            print("✗ \(label) failed \(outcome.blocking.count) gate(s)")
             for r in outcome.blocking {
                 print("  · \(r.check)\(r.exitCode.map { " (exit \($0))" } ?? "")")
                 if let out = r.output, !out.isEmpty {
                     print(out.split(separator: "\n").map { "      \($0)" }.joined(separator: "\n"))
                 }
             }
-            print("→ factory next \(runId)  (re-renders \(label) with the failures as context)")
+            if outcome.escalated {
+                // Bound spent (or nowhere to route): the loop can't resolve itself — a human decides.
+                print("⚠ escalated to a human — the gate kept failing past \(Rework.maxRounds) rework round(s)")
+                print("  the run is parked at \(label); resolve it or override, then continue")
+            } else if !outcome.routedTo.isEmpty {
+                // §9: a verdict rejected → rework routes to the producers of the indicted inputs.
+                let producers = outcome.routedTo.joined(separator: ", ")
+                print("↩ rejected → rework routed to \(producers) (re-runs with the failure as context)")
+                print("  invalidated: \(outcome.invalidated.sorted().joined(separator: ", "))")
+                print("→ factory next \(runId)  (re-renders \(producers))")
+            } else {
+                print("→ rework: factory next \(runId)  (re-renders \(label) with the failures as context)")
+            }
             return
         }
         print("✓ \(label) accepted — produced \(outcome.produced.isEmpty ? "(nothing)" : outcome.produced.joined(separator: ", "))")

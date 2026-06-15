@@ -17,9 +17,10 @@ Do:
      with a failed item, or a missing item, fails the gate too (the verdict + coverage gates enforce
      this) — so judge every item honestly.
 4. On `reject`, name where the rework goes in a **`rework`** list: `target` is the indicted input
-   schema — `changeset.v1` (the implementation is wrong → routes to the implementer) or
-   `feature-plan.v1` (the plan/contract is wrong → routes to the planner). The engine reads this to
-   route the rework; a reject with no target escalates to a human.
+   schema — `code.v1` (the implementation is wrong → routes to the implementer) or `plan.v1` (the
+   plan/contract is wrong → routes to the planner). The target must match a schema this reviewer
+   consumes (its incoming edges are the routable producers). The engine reads this to route the
+   rework; a reject with no resolvable target escalates to a human.
 5. Record `review.v1` and `factory submit`.
 
 ```yaml
@@ -29,5 +30,5 @@ items:
   - { id: persist-result, verdict: fail, notes: "reads back the wrong race on id collision" }
 verdict: reject
 rework:
-  - { target: changeset.v1, reason: "persist-result: lookup keys on name, not race id" }
+  - { target: code.v1, reason: "persist-result: lookup keys on name, not race id" }
 ```

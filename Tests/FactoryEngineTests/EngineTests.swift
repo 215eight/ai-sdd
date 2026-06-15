@@ -618,6 +618,111 @@ struct EngineTests {
         #expect(try ScopeChecker.declaredFiles(planYAML: plan) == ["Sources/A.swift", "Tests/ATests.swift"])
     }
 
+    // MARK: - §9 rework routing (a failed verdict routes to the producer of the indicted input)
+
+    // The plan→implement→review sub-pipeline; the reviewer consumes BOTH plan.v1 and code.v1.
+    private func reviewLinePipeline() -> PipelineSpec {
+        PipelineSpec(
+            nodes: [PipelineNode(id: "architect", worker: "architect"),
+                    PipelineNode(id: "coder", worker: "coder"),
+                    PipelineNode(id: "reviewer", worker: "reviewer", required: true)],
+            edges: [PipelineEdge(from: OneOrMany(["architect"]), to: "coder", artifact: "plan.v1"),
+                    PipelineEdge(from: OneOrMany(["architect"]), to: "reviewer", artifact: "plan.v1"),
+                    PipelineEdge(from: OneOrMany(["coder"]), to: "reviewer", artifact: "code.v1")])
+    }
+    private let reviewLineProduces = ["architect": ["plan.v1"], "coder": ["code.v1"], "reviewer": ["review.v1"]]
+
+    // A reject indicting code.v1 routes to the coder; the coder + reviewer subtree is invalidated,
+    // the upstream architect/plan.v1 is left intact.
+    @Test func reworkRoutesToImplementerOnCodeDefect() {
+        let routing = Rework.route(failedNode: "reviewer", indicted: ["code.v1"],
+                                   pipeline: reviewLinePipeline(), produces: reviewLineProduces)
+        #expect(routing?.producers == ["coder"])
+        #expect(routing?.invalidatedNodes == ["coder", "reviewer"])
+        #expect(routing?.invalidatedArtifacts == ["code.v1", "review.v1"])   // plan.v1 untouched
+    }
+
+    // A reject indicting plan.v1 routes to the planner; the whole subtree (architect→coder→reviewer)
+    // re-runs — this is the contract/plan-defect case.
+    @Test func reworkRoutesToPlannerOnContractDefect() {
+        let routing = Rework.route(failedNode: "reviewer", indicted: ["plan.v1"],
+                                   pipeline: reviewLinePipeline(), produces: reviewLineProduces)
+        #expect(routing?.producers == ["architect"])
+        #expect(routing?.invalidatedNodes == ["architect", "coder", "reviewer"])
+        #expect(routing?.invalidatedArtifacts == ["code.v1", "plan.v1", "review.v1"])
+    }
+
+    // A reject naming an input no incoming edge carries can't be routed → nil (caller escalates).
+    @Test func reworkWithNoMatchingInputDoesNotRoute() {
+        #expect(Rework.route(failedNode: "reviewer", indicted: ["ghost.v1"],
+                             pipeline: reviewLinePipeline(), produces: reviewLineProduces) == nil)
+    }
+
+    // The decision policy: route within the bound, escalate at it, escalate with no target.
+    @Test func reworkDecisionBoundsAndEscalates() {
+        let pipeline = reviewLinePipeline()
+        // Within the bound + resolvable → route.
+        if case .route(let r) = Rework.decide(round: Rework.maxRounds - 1, failedNode: "reviewer",
+                indicted: ["code.v1"], pipeline: pipeline, produces: reviewLineProduces) {
+            #expect(r.producers == ["coder"])
+        } else { Issue.record("expected a route within the bound") }
+        // At the bound → escalate even with a resolvable target.
+        #expect(Rework.decide(round: Rework.maxRounds, failedNode: "reviewer", indicted: ["code.v1"],
+                pipeline: pipeline, produces: reviewLineProduces) == .escalate)
+        // No resolvable target → escalate.
+        #expect(Rework.decide(round: 0, failedNode: "reviewer", indicted: [],
+                pipeline: pipeline, produces: reviewLineProduces) == .escalate)
+    }
+
+    // The routing hint reads only from a *verdict* artifact (one carrying a verdict / rework block).
+    @Test func routingHintOnlyForVerdictArtifacts() throws {
+        let reject = "verdict: reject\nrework:\n  - { target: code.v1, reason: wrong }"
+        #expect(try Rework.routingHint(artifactYAML: reject) == Rework.RoutingHint(targets: ["code.v1"]))
+        // An approve carries a verdict but no rework targets → a hint with no targets (would escalate).
+        #expect(try Rework.routingHint(artifactYAML: "verdict: approve")?.targets == [])
+        // A changeset (no verdict, no rework) is not a verdict artifact → nil → self-rework.
+        #expect(try Rework.routingHint(artifactYAML: "summary: x\nsatisfies: [a]") == nil)
+    }
+
+    // The Reducer folds a routed rework: subtree invalidated, producers carry the failure, round counted.
+    @Test func reducerFoldsReworkRouted() {
+        var state = RunState(readyArtifacts: ["plan.v1", "code.v1"],
+                             completedNodes: ["architect", "coder"], inProgressNodes: ["reviewer"])
+        state = Reducer.reduce(state, .reworkRouted(failedNode: "reviewer", producers: ["coder"],
+            invalidatedNodes: ["coder", "reviewer"], invalidatedArtifacts: ["code.v1", "review.v1"],
+            checks: ["review.structure"]))
+        #expect(state.inProgressNodes.isEmpty)
+        #expect(state.completedNodes == ["architect"])         // coder invalidated; architect intact
+        #expect(state.readyArtifacts == ["plan.v1"])           // code.v1 dropped
+        #expect(state.failedChecks["coder"] == ["review.structure"])   // producer carries the context
+        #expect(state.reworkRounds["reviewer"] == 1)
+
+        // The coder is runnable again (plan.v1 ready); the reviewer is not (code.v1 gone).
+        #expect(Scheduler.runnable(state, reviewLinePipeline()) == ["coder"])
+    }
+
+    // The Reducer folds an escalation: the node is parked and the Scheduler stops dispensing it.
+    @Test func reducerFoldsEscalationAndSchedulerParks() {
+        var state = RunState(readyArtifacts: ["plan.v1", "code.v1"],
+                             completedNodes: ["architect", "coder"], inProgressNodes: ["reviewer"])
+        state = Reducer.reduce(state, .escalated(node: "reviewer", checks: ["review.structure"]))
+        #expect(state.escalatedNodes == ["reviewer"])
+        #expect(state.inProgressNodes.isEmpty)
+        // reviewer would otherwise be runnable (both inputs ready) — escalation parks it.
+        #expect(Scheduler.runnable(state, reviewLinePipeline()).isEmpty)
+    }
+
+    // A routed rework scoped into a slice folds into that slice's sub-state (not the top level).
+    @Test func reworkRoutedScopesIntoSlice() {
+        var state = RunState()
+        state = Reducer.reduce(state, .scoped(slice: "s", event: .reworkRouted(
+            failedNode: "reviewer", producers: ["coder"], invalidatedNodes: ["coder", "reviewer"],
+            invalidatedArtifacts: ["code.v1"], checks: ["review.structure"])))
+        #expect(state.slices["s"]?.failedChecks["coder"] == ["review.structure"])
+        #expect(state.slices["s"]?.reworkRounds["reviewer"] == 1)
+        #expect(state.failedChecks.isEmpty)   // top level untouched
+    }
+
     // MARK: - Coverage gate (cross-artifact: review item ids ⊇ plan acceptance ids)
 
     // A review judging every acceptance item leaves nothing uncovered.

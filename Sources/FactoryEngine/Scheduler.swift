@@ -11,6 +11,8 @@ public enum Scheduler {
     public static func runnable(_ state: RunState, _ pipeline: PipelineSpec) -> [String] {
         pipeline.nodes.compactMap { node in
             guard !state.completedNodes.contains(node.id) else { return nil }
+            // A node escalated to a human is parked — not runnable until the human acts (§9).
+            guard !state.escalatedNodes.contains(node.id) else { return nil }
 
             let incoming = pipeline.edges.filter { $0.to == node.id }
             let sourcesComplete = incoming.allSatisfy { edge in

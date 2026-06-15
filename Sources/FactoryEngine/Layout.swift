@@ -5,6 +5,7 @@ import Foundation
 enum Layout {
     static let factoryDir = ".factory"
     static let runsDir = "runs"
+    static let artifactsDir = "artifacts"
 
     /// Names within a single run directory.
     enum Run {
@@ -36,6 +37,22 @@ struct RunLayout {
     var eventsDir: URL { dir.appendingPathComponent(Layout.Run.eventsDir, isDirectory: true) }
     func eventFile(_ sequence: Int) -> URL {
         eventsDir.appendingPathComponent(Layout.Run.eventFile(sequence))
+    }
+}
+
+/// Where produced artifacts live under a workspace (interim convention, see factory-compile-schema):
+/// `<workspace>/.factory/artifacts/<schema>.<ext>`. The gates read from here; the engine reads a
+/// failed verdict artifact from here to route rework (§9).
+public struct ArtifactLayout {
+    public let workspace: URL
+    public init(workspace: URL) { self.workspace = workspace }
+
+    public var dir: URL {
+        workspace.appendingPathComponent(Layout.factoryDir, isDirectory: true)
+            .appendingPathComponent(Layout.artifactsDir, isDirectory: true)
+    }
+    public func file(schema: String, ext: String) -> URL {
+        dir.appendingPathComponent("\(schema).\(ext)")
     }
 }
 

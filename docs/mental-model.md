@@ -30,7 +30,9 @@ the same way every time. The agent never decides the flow, and the engine never 
 - **Artifact** + **Schema** — a worker's typed output and the structure/rules it must satisfy.
   Schemas are what make gates deterministic.
 - **Check (gate)** — an assertion on an output: *deterministic* (a command, exit 0/1) or *judge*
-  (an LLM rubric, advisory). A failed required gate triggers rework.
+  (an LLM rubric, advisory). A failed required gate triggers rework. The **reviewer is a real gate,
+  not advisory notes**: its verdict is captured as a structured artifact (per-item pass/fail + an
+  overall approve/reject) whose schema invariants make it a deterministic gate — a reject blocks.
 - **Slice** — an independently-buildable unit of a feature. Slices form an **orchestration graph**
   wired by `depends_on`.
 - **Run** — one execution: the engine computes what's runnable, folds events into state, and
@@ -61,8 +63,18 @@ Three layers, each with one job — **stand it up once, then plan and run per fe
 
 `factory next` hands you the next runnable worker — its role, the skill to run, the inputs it
 consumes, and the gates its output must pass. You do that work via the skill. `factory submit` runs
-the gates: **pass → advance**, **fail → rework** (the worker is re-rendered with the failure as
-context). Slices unlock as their dependencies finish. When every node is complete, you review a
+the gates: **pass → advance**, **fail → rework**. Rework routes by *what failed* (architecture §9):
+
+- a worker whose **own output** is wrong (a failing build/test) re-runs **itself** with the failure
+  as context;
+- a **verdict** failure (a reviewer's reject) routes back to the **producer of the input it indicts** —
+  the implementer for a code defect, the planner for a plan/contract defect — re-running that worker
+  (and invalidating its downstream) so review→implement→review is a real loop, not a re-review of
+  unchanged code. The reviewer names the indicted input (`rework.target`) and the engine resolves it
+  against the pipeline edges.
+
+Rework is **bounded**: after a few rounds the engine **escalates to a human** rather than looping
+forever. Slices unlock as their dependencies finish. When every node is complete, you review a
 change that has already cleared its gates.
 
 ## Where things live
@@ -74,7 +86,9 @@ change that has already cleared its gates.
 
 ## Current limits (first iteration)
 
-Judge checks are advisory (the LLM gate-runner isn't wired yet); a slice's brief is passed to its
+Free-form *judge* checks are advisory (the LLM gate-runner isn't wired yet) — but the reviewer's
+verdict is **not** a judge check: it's a structured artifact gated deterministically, so it blocks
+today. A slice's brief is passed to its
 architect by convention rather than as a typed artifact; requirements are markdown today; you run
 `factory` from the repo root; there's no MCP server yet (drive via the CLI). These are unbuilt
 pieces, not different intentions — the flow above is the model.
