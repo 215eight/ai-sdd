@@ -9,6 +9,13 @@ spec:
     scope:
       type: object
       required: true
+    acceptance:                                          # the checklist threaded plan → implement → review
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { field: id, nonEmpty: true } }         # every item has a stable id …
+        - { all: { field: description, nonEmpty: true } } # … and a human-readable description
     decisions:
       type: list
       required: true

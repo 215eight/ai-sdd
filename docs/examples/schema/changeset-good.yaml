@@ -1,0 +1,5 @@
+# A changeset that addresses every acceptance id from plan-good.yaml.
+summary: "Add HyroxResultsService: parse fixture JSON and persist by race id."
+satisfies:
+  - parse-fixture
+  - persist-result

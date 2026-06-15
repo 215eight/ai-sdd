@@ -1,4 +1,7 @@
 scope: { feature: "hyrox results scraper", outOfScope: ["UI"] }
+acceptance:
+  - { id: parse-fixture,  description: "Parse a fixture JSON race result into HyroxRaceResult" }
+  - { id: persist-result, description: "Persist a parsed result and read it back by race id" }
 decisions:
   - { q: "source format?", answer: "fixture JSON", status: closed }
   - { q: "store where?",   answer: "HyroxRaceResult", status: closed }

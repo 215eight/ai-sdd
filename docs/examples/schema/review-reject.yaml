@@ -1,0 +1,10 @@
+# One acceptance item fails and the overall verdict rejects → the gate FAILS (blocks the slice).
+# The `rework` block names the indicted input so the engine routes the rework to its producer:
+# `changeset.v1` → the implementer (the persistence is wrong); a `feature-plan.v1` target would
+# instead route to the planner (the plan/contract is wrong).
+items:
+  - { id: parse-fixture,  verdict: pass, notes: "Parses the fixture and maps all fields." }
+  - { id: persist-result, verdict: fail, notes: "Reads back the wrong race when ids collide." }
+verdict: reject
+rework:
+  - { target: changeset.v1, reason: "persist-result: lookup keys on name, not race id" }

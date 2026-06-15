@@ -502,6 +502,76 @@ struct EngineTests {
         #expect(violations.contains { $0.field == "plan" && $0.message.contains("missing") })
     }
 
+    // MARK: - Review verdict gate (D1: the reviewer is a real, blocking gate)
+
+    // The review Schema: per-item verdicts must all be `pass`, and the overall verdict `approve`.
+    private let reviewSchemaJSON = """
+    {
+      "apiVersion": "factory/v1", "kind": "Schema", "metadata": { "name": "review", "version": 1 },
+      "spec": { "fields": {
+        "items": { "type": "list", "required": true, "invariants": [
+          { "nonEmpty": true },
+          { "all": { "field": "id", "nonEmpty": true } },
+          { "all": { "field": "verdict", "matches": "^(pass|fail)$" } },
+          { "all": { "field": "verdict", "eq": "pass" } } ] },
+        "verdict": { "type": "string", "required": true,
+          "invariants": [ { "matches": "^(approve|reject)$" }, { "eq": "approve" } ] }
+      } }
+    }
+    """
+
+    // approve + every item pass → the gate passes (no violations).
+    @Test func reviewGateAcceptsApproveAllPass() throws {
+        let schema = try loader.loadSchema(Data(reviewSchemaJSON.utf8)).spec
+        let approve = """
+        items:
+          - { id: parse-fixture,  verdict: pass }
+          - { id: persist-result, verdict: pass }
+        verdict: approve
+        """
+        #expect(try SchemaValidator.validate(schema, artifactYAML: approve).isEmpty)
+    }
+
+    // A reject blocks: both the failed item and the overall verdict are flagged.
+    @Test func reviewGateBlocksOnRejectAndFailedItem() throws {
+        let schema = try loader.loadSchema(Data(reviewSchemaJSON.utf8)).spec
+        let reject = """
+        items:
+          - { id: parse-fixture,  verdict: pass }
+          - { id: persist-result, verdict: fail }
+        verdict: reject
+        """
+        let violations = try SchemaValidator.validate(schema, artifactYAML: reject)
+        #expect(violations.contains { $0.field == "items[1].verdict" }, "the failed item must be flagged")
+        #expect(violations.contains { $0.field == "verdict" }, "the overall reject must be flagged")
+    }
+
+    // An approve verdict does not excuse a single failed item — the gate still blocks.
+    @Test func reviewGateBlocksWhenApproveButItemFails() throws {
+        let schema = try loader.loadSchema(Data(reviewSchemaJSON.utf8)).spec
+        let inconsistent = """
+        items:
+          - { id: parse-fixture,  verdict: fail }
+        verdict: approve
+        """
+        let violations = try SchemaValidator.validate(schema, artifactYAML: inconsistent)
+        #expect(violations.contains { $0.field == "items[0].verdict" })
+    }
+
+    // The acceptance checklist: every item needs a non-empty id and description (the plan schema).
+    @Test func acceptanceChecklistRequiresIdAndDescription() throws {
+        let schema = SchemaSpec(fields: ["acceptance": FieldSpec(type: "list", required: true, invariants: [
+            Invariant(nonEmpty: true),
+            Invariant(all: ItemPredicate(field: "id", nonEmpty: true)),
+            Invariant(all: ItemPredicate(field: "description", nonEmpty: true))])])
+        let good = "acceptance:\n  - { id: a, description: \"does a\" }"
+        #expect(try SchemaValidator.validate(schema, artifactYAML: good).isEmpty)
+
+        let badId = "acceptance:\n  - { id: \"\", description: \"does a\" }"
+        let violations = try SchemaValidator.validate(schema, artifactYAML: badId)
+        #expect(violations.contains { $0.field == "acceptance[0].id" })
+    }
+
     // MARK: - Scope gate (Tier-2: changed files ⊆ declared manifest)
 
     // Porcelain parsing counts modified, deleted, untracked/new, and both sides of a rename.

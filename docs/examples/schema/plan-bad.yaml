@@ -1,5 +1,8 @@
-# Three deliberate violations: an open decision, an out-of-scope file, and empty tests.
+# Four deliberate violations: a malformed acceptance item, an open decision, an out-of-scope
+# file, and empty tests.
 scope: { feature: "hyrox results scraper" }
+acceptance:
+  - { id: "", description: "Parse a fixture JSON race result" }   # ✗ empty id
 decisions:
   - { q: "source format?", answer: "fixture JSON", status: closed }
   - { q: "store where?",   answer: "TBD",          status: open }     # ✗ open decision

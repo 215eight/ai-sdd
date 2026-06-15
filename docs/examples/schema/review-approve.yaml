@@ -1,0 +1,5 @@
+# Every acceptance item passes and the overall verdict approves → the gate passes.
+items:
+  - { id: parse-fixture,  verdict: pass, notes: "Parses the fixture and maps all fields." }
+  - { id: persist-result, verdict: pass, notes: "Round-trips by race id; covered by a test." }
+verdict: approve

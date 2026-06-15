@@ -1,0 +1,25 @@
+apiVersion: factory/v1
+kind: Schema
+metadata: { name: review, version: 1 }
+spec:
+  handle: file
+  format: yaml          # structured ⇒ the fields below compile to deterministic gates
+  scope: internal
+  fields:
+    items:                                            # one verdict per acceptance item
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { field: id, nonEmpty: true } }      # every item names the acceptance id it judges
+        - { all: { field: verdict, matches: "^(pass|fail)$" } }
+        - { all: { field: verdict, eq: pass } }       # BLOCKING: any failed item fails the gate → rework
+    verdict:                                          # the overall call
+      type: string
+      required: true
+      invariants:
+        - { matches: "^(approve|reject)$" }
+        - { eq: approve }                             # BLOCKING: a reject fails the gate → rework
+    rework:                                           # routing on reject — which input each finding indicts
+      type: list                                      # entries: { target: <consumed schema>, reason }
+      # not required (absent on approve); the engine reads it to route rework to the input's producer
