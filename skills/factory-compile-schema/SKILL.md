@@ -45,19 +45,28 @@ spec:
   required: true
 ```
 
+**The structural check IS the verdict gate.** When a schema encodes its accept/reject decision as
+field invariants — a `review` schema whose `items[].verdict` must all be `pass` and whose overall
+`verdict` must `eq: approve` — the Tier-1 structural check enforces that decision. It is mechanical
+and trusted, so it is **`required: true`** like any structural check: a `reject`, or any failed item,
+fails the gate and triggers rework. There is no separate judge-runner to wait on — the reviewer *is*
+the judge, and its verdict is captured structurally and enforced deterministically.
+
 ### Tier 2 — `rules` → one deterministic command check each
 
-For each rule:
-- **explicit `command`** → copy it verbatim into a check (mechanical):
-  ```yaml
-  metadata: { name: <name>.<rule.id> }
-  spec: { checkKind: deterministic, command: "<rule.command>", required: <rule.severity == blocking> }
-  ```
-- **intent-based** (no `command`) → author the command. Map known intents to known executors;
-  only hand-write a script when none fits, and then **eval-gate it** (below). Known mapping:
-  - `intent: "changed files ⊆ <plan>.files"` → `command: "factory scope --plan .factory/artifacts/<plan>.v<ver>.<fmt> --repo ."`
-  - else: write the smallest deterministic command that decides the rule, reading only the fields
-    in `over:`; prefer existing tools over bespoke scripts.
+A rule's check is `required: true` when its command is **trusted by construction**, and advisory
+until eval'd only when you **hand-authored** a bespoke command. Trusted means: an `factory` engine
+subcommand (`factory check` / `factory scope` / `factory cover`), verified by the engine's own
+tests — not something to re-prove per repo. For each rule:
+
+- **explicit `command`** → copy it verbatim; `required: <rule.severity == blocking>` (mechanical).
+- **intent mapped to a trusted executor** → emit the mapped command **`required: true` immediately**
+  (no eval gate — the executor is already verified). Known mappings:
+  - `intent: "changed files ⊆ <plan>.files"` → `factory scope --plan .factory/artifacts/<plan>.v<ver>.<fmt> --repo .`
+  - `intent: "review items ⊇ <plan>.acceptance"` → `factory cover --plan .factory/artifacts/<plan>.v<ver>.<fmt> --review .factory/artifacts/<name>.v<ver>.<fmt>`
+- **intent with no trusted executor** (you hand-write a script) → emit it **`required: false`** and
+  **eval-gate it** (below); promote to `required: true` only once it clears its eval. Write the
+  smallest deterministic command that decides the rule, reading only the fields in `over:`.
 
 ### Tier 3 — `judge` → a judge check (carries its own validation contract)
 
@@ -78,14 +87,17 @@ checks attach as blocking; judge checks attach (advisory until eval'd).
 
 ## Eval-gate the authored gates (don't trust them blindly)
 
-The mechanical checks (Tier-1 template, explicit-command rules) are trusted by construction. Any
-gate you *authored* — an intent-based Tier-2 command or a Tier-3 judge — must prove itself before
-it's promoted to `required: true`:
+Two things are **trusted by construction** and ship `required: true` with no eval: the mechanical
+checks (Tier-1 structural template, explicit-command rules) and any intent that maps to a **trusted
+`factory` executor** (`factory check` / `factory scope` / `factory cover`) — those executors are
+verified by the engine's own tests, so re-proving them per repo is redundant. What must prove itself
+is anything you **hand-authored** — a bespoke (non-executor) Tier-2 command, or a Tier-3 judge:
 
 - Keep fixtures under `.factory/evals/<check-id>/` with known-good and known-bad cases.
 - The check must pass the good and fail the bad (for a judge: agree with the human labels above its
-  `threshold`). A scope check's bad fixture is "an undeclared file was touched — does it fail?"
-- Until a gate clears its eval, leave it `required: false` (advisory). Promote it only when it does.
+  `threshold`).
+- Until such a gate clears its eval, leave it `required: false` (advisory). Promote it only when it
+  does. (A trusted-executor intent like `factory scope` is **not** in this set — it is blocking now.)
 
 ## Freeze + regenerate intentionally
 
@@ -100,8 +112,16 @@ regenerate during a run.
 - `feature-plan.plan-sound.check.yaml` — judge, advisory until eval'd.
 …both wired onto the `architect` worker (it `produces: feature-plan.v1`).
 
-`changeset.schema.yaml` (rules: build, unit, diff-in-scope; judge: review) compiles to:
+`changeset.schema.yaml` (fields: summary, satisfies; rules: build, unit, diff-in-scope) compiles to:
+- `changeset.structure.check.yaml` — deterministic (`factory check …`), blocking.
 - `changeset.build.check.yaml` / `changeset.unit.check.yaml` — explicit commands, blocking.
-- `changeset.diff-in-scope.check.yaml` — `factory scope --plan …feature-plan.v1.yaml --repo .`, blocking after eval.
-- `changeset.review.check.yaml` — judge, advisory until eval'd.
+- `changeset.diff-in-scope.check.yaml` — `factory scope --plan …feature-plan.v1.yaml --repo .`,
+  **blocking** (trusted executor — no eval gate; this was the bug: scope was being left advisory).
 …wired onto the `implementer` worker.
+
+`review.schema.yaml` (fields encode the verdict; rule: coverage) compiles to:
+- `review.structure.check.yaml` — deterministic (`factory check …`) — **this is the verdict gate**,
+  blocking (a reject or any failed item fails it → rework).
+- `review.coverage.check.yaml` — `factory cover --plan …feature-plan.v1.yaml --review …review.v1.yaml`,
+  blocking (trusted executor): the review must judge every acceptance item.
+…wired onto the `reviewer` worker. The reviewer is a real gate, not advisory notes.
