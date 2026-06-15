@@ -67,11 +67,30 @@ only if truly empty, but always state Caveats):
 
 That's the middle ground: skip the full reasoning, keep the context.
 
-### 3. Log input + output
-For **every** invocation, record both — the **input** (the instruction handed to the sub-agent) and
-the **output** (its structured summary above) — and surface them to the user. This is the run's
-observable trail (and the raw material for evals). If a **Caveat** flags out-of-scope work, note it
-for a plan amendment (a new slice via `factory-plan`) — don't act on it now.
+### 3. Log input + output (one ASCII block per invocation)
+For **every** invocation, surface both — the **input** (the rendered instruction handed to the
+sub-agent) and the **output** (its structured summary) — to the user as a single plain-ASCII block.
+This is the run's observable trail (and the raw material for evals). Plain ASCII, nothing fancy: a
+banner line identifying the work, then an `INPUT` section and an `OUTPUT` section.
+
+```
+================================================================
+ SLICE <slice> · NODE <node> · WORKER <worker>   (rework round N, if any)
+================================================================
+--- INPUT ------------------------------------------------------
+role / slice / stack · consumes (ready?) · produces · checks · rework (if any)
+<the rendered instruction, verbatim enough to scan>
+--- OUTPUT -----------------------------------------------------
+Outcome:   <one line — what this worker accomplished>
+Produced:  <artifact(s) / files written, with paths>
+Decisions: <2–4 notable choices>
+Caveats:   <none | stubs / assumptions / out-of-scope work discovered>
+================================================================
+```
+
+Keep it scannable — a reader skims the banners to follow the run, and drops into a block's INPUT/
+OUTPUT only when they want detail. If a **Caveat** flags out-of-scope work, note it for a plan
+amendment (a new slice via `factory-plan`) — don't act on it now.
 
 ### 4. Submit
 ```sh
@@ -83,12 +102,27 @@ for a plan amendment (a new slice via `factory-plan`) — don't act on it now.
   fix exactly that, resubmit. Never force a gate through.
 - `sliceCompleted: true` → go to step 5.
 
-### 5. Commit on slice completion
-When `submit` reports `sliceCompleted: true`, **commit the slice's work** before starting the next:
+### 5. Snapshot the slice's artifacts, then commit on slice completion
+When `submit` reports `sliceCompleted: true`, first **snapshot the slice's produced artifacts** into
+a committed per-slice directory, then **commit the slice's work** before starting the next.
+
+The working artifacts live at `.factory/artifacts/<schema>.<fmt>` — a single fixed path the gates
+read, **overwritten by the next slice**. So copy this slice's artifacts into a durable, browsable
+per-slice home (under `.factory/features/<slug>/`, which is committed — only `runs/` and `artifacts/`
+are gitignored):
+
 ```sh
+DEST=.factory/features/<slug>/slices/<slice>
+mkdir -p "$DEST"
+cp .factory/artifacts/plan.v1.yaml   "$DEST"/      # each artifact this slice produced …
+cp .factory/artifacts/review.v1.yaml "$DEST"/      # … (plan, review, changeset, …)
 git add -A && git commit -m "[<slug>] <slice>: <one-line summary>"   # or the repo's commit convention
 ```
-One commit per slice — reviewable history, **and** it resets the baseline (next section).
+
+The gates still read the working path (`.factory/artifacts/`); the per-slice copy is the **durable
+record** — every slice's plan and review stay inspectable in the tree, committed with the slice,
+without git archaeology. One commit per slice — reviewable history, **and** it resets the baseline
+(next section).
 
 ### 6. Back to step 1.
 
@@ -109,5 +143,6 @@ scope when each slice starts from a **clean tree**:
 ## Reporting
 
 At `done`, summarize per slice from the logged input/output: what each worker produced, which gates
-needed rework, and the commit made. `.build/debug/factory status <slug>` shows the nested state any
-time.
+needed rework (and whether any escalated to a human), and the commit made. Each slice's plan and
+review are browsable at `.factory/features/<slug>/slices/<slice>/`. `.build/debug/factory status
+<slug>` shows the nested state any time.
