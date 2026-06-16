@@ -107,17 +107,36 @@ The factory must be drivable by any agent, so skills are surfaced, not duplicate
 - **Per-agent symlinks** for the *framework* skills a human/agent invokes (`factory-plan`,
   `factory-run`, `factory-compile-schema`, `factory-bootstrap`):
   - Claude Code: `.claude/skills/<name>` → `../../.factory/skills/<name>`
-  - add other agents' folders the same way as they're supported.
+  - add other agents' folders the same way as they're supported (e.g. `.codex/`).
+  - These folders are **local, not committed** — they're gitignored (§7) and recreated by
+    re-bootstrap. `AGENTS.md` is the committed cross-agent surface; the symlinks are just local
+    convenience, so cloning the repo + re-running bootstrap restores them.
 - **Worker skills** (`plan-feature`, …) need *no* agent-folder symlink — the driver resolves them
   by path (`task.skill: X` → `.factory/skills/X.md`).
 
 The engine itself is already neutral: `factory` is a CLI any agent calls over a shell.
 
-## 7. Ignore runtime + validate
+## 7. Ignore runtime + per-agent surfacing, then validate
 
-- Add `.factory/runs/` and `.factory/artifacts/` to `.gitignore` (commit the rest of `.factory/`).
-  Use the **same marker upsert** as AGENTS.md (`# factory:begin` / `# factory:end`, `#` comments)
-  so an existing `.gitignore` is extended, not clobbered, and a re-run doesn't duplicate the block.
+The `.gitignore` is the **one place** that declares what stays out of git — so a commit never has to
+*ask* what to include. The managed block ignores the factory runtime **and** the per-agent surfacing
+folders (the symlinks from §6 are local conveniences, recreated by re-bootstrap — never committed):
+
+```gitignore
+# factory:begin — managed by factory-bootstrap; edits between these markers are overwritten on re-bootstrap
+# Software factory runtime (the rest of .factory/ is committed)
+.factory/runs/
+.factory/artifacts/
+# Per-agent skill surfacing — local symlinks, recreated by re-bootstrap; never committed
+.claude/
+.codex/
+# factory:end
+```
+
+- Write this with the **same marker upsert** as AGENTS.md (`# factory:begin` / `# factory:end`,
+  `#` comments) so an existing `.gitignore` is extended, not clobbered, and a re-run doesn't
+  duplicate the block. The committed set is therefore exactly `.factory/` (minus runtime) + `AGENTS.md`
+  + `.gitignore` + any tool config a gate needs — decided by `.gitignore`, not by prompting per commit.
 - Run `factory validate .factory` — referential + edge-type + acyclicity must pass before any run.
 
 ## Discovery quality — evals + observability
@@ -137,7 +156,8 @@ contract (deterministic evidence → AI synthesis → grounded-or-flagged) is th
 
 ## Notes
 
-- **Symlinks**: clean on macOS/Linux (git stores them); Windows needs `core.symlinks=true`.
+- **Symlinks**: the per-agent surfacing symlinks are local (gitignored, §7) and recreated by
+  re-bootstrap; clean on macOS/Linux, Windows needs `core.symlinks=true`.
 - **Re-bootstrap** is how conventions stay fresh (architecture §8): re-run to refresh
   `conventions/` + `schemas/` from the evolved codebase, then recompile gates. Mechanical output is
   stable, so a no-change re-run produces no diff — this holds for the generated `.factory/` specs
