@@ -322,7 +322,9 @@ struct Graph: ParsableCommand {
         abstract: "Render a Pipeline as a Mermaid dependency graph (Markdown) — the 1:1 DAG view (ADR-0027)."
     )
     @Argument(help: "A pipeline dir (feature graph / build pattern), or a repo factory dir with --project.")
-    var dir: String
+    var dir: String?
+    @Option(name: .long, help: "Aggregate a multi-repo program from a plant.yaml — grouped by milestone (ADR-0027).")
+    var plant: String?
     @Option(name: .long, help: "Write the Markdown here instead of stdout (parent dirs created).")
     var out: String?
     @Option(name: .long, help: "Mermaid flow direction: TD (top-down) or LR (left-right).")
@@ -331,7 +333,14 @@ struct Graph: ParsableCommand {
     var project = false
 
     func run() throws {
-        let doc = project ? try projectDoc() : try singleDoc()
+        let doc: String
+        if let plant {
+            doc = try plantDoc(plant)
+        } else if let dir {
+            doc = project ? try projectDoc(dir) : try singleDoc(dir)
+        } else {
+            throw ValidationError("pass a pipeline dir (optionally --project), or --plant <plant.yaml>")
+        }
         if let out {
             try FileManager.default.createDirectory(
                 at: URL(fileURLWithPath: out).deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -344,7 +353,7 @@ struct Graph: ParsableCommand {
 
     /// One pipeline → one graph (a feature graph or the build pattern). Decode-only — a graph
     /// renders the topology regardless of whether the gates are wired (validation is `factory validate`).
-    private func singleDoc() throws -> String {
+    private func singleDoc(_ dir: String) throws -> String {
         let env = try SpecLoader().loadPipeline(atDirectory: URL(fileURLWithPath: dir, isDirectory: true))
         let header = GraphRenderer.fragmentHeader(env.metadata).map { "\($0)\n\n" } ?? ""
         return "# \(env.metadata.name) — dependency graph\n\n"
@@ -353,10 +362,53 @@ struct Graph: ParsableCommand {
             + GraphRenderer.mermaid(env.spec, direction: direction, inheritedOwner: env.metadata.owner ?? []) + "\n"
     }
 
+    /// Multi-repo program: load each fragment a `plant.yaml` references (by local path, resolved
+    /// against the plant file), group by `correlation` (milestone), and render the program index. A
+    /// fragment that fails to load renders as a note.
+    private func plantDoc(_ plantPath: String) throws -> String {
+        let plantURL = URL(fileURLWithPath: plantPath)
+        let env = try SpecLoader().loadPlantYAML(String(contentsOf: plantURL, encoding: .utf8))
+        let baseDir = plantURL.deletingLastPathComponent()
+        let loader = SpecLoader()
+
+        // Group fragment sections by milestone, preserving plant declaration order within each.
+        var order: [String] = []
+        var byMilestone: [String: [GraphRenderer.Section]] = [:]
+        for ref in env.spec.fragments {
+            guard let path = ref.path else { continue }
+            let fragmentURL = URL(fileURLWithPath: path, relativeTo: baseDir)
+            let (milestone, section) = fragmentSection(at: fragmentURL, declaredPath: path, loader: loader)
+            if byMilestone[milestone] == nil { order.append(milestone) }
+            byMilestone[milestone, default: []].append(section)
+        }
+        guard !order.isEmpty else {
+            throw ValidationError("plant '\(plantPath)' references no fragments (need `fragments: [{ path: … }]`)")
+        }
+        let milestones = order.sorted().map { GraphRenderer.Milestone(name: $0, fragments: byMilestone[$0] ?? []) }
+        return GraphRenderer.programIndex(title: env.metadata.name, milestones: milestones) + "\n"
+    }
+
+    /// Load one fragment and turn it into a (milestone, section) — its lane/owner in the heading, its
+    /// header + graph in the body. Falls back to a note + the "(no milestone)" group on failure.
+    private func fragmentSection(at url: URL, declaredPath: String, loader: SpecLoader)
+        -> (milestone: String, section: GraphRenderer.Section) {
+        guard let env = try? loader.loadPipeline(atDirectory: url) else {
+            return ("(no milestone)", .init(heading: declaredPath,
+                body: "> ⚠ could not load `\(declaredPath)/pipeline.yaml` — see `factory validate \(declaredPath)`."))
+        }
+        let meta = env.metadata
+        var heading = meta.name
+        if let factory = meta.factory { heading += " · \(factory)" }
+        if let owner = meta.owner, !owner.isEmpty { heading += " · @\(owner.joined(separator: ","))" }
+        let header = GraphRenderer.fragmentHeader(meta).map { "\($0)\n\n" } ?? ""
+        let body = header + GraphRenderer.mermaid(env.spec, direction: direction, inheritedOwner: meta.owner ?? [])
+        return (meta.correlation ?? "(no milestone)", .init(heading: heading, body: body))
+    }
+
     /// A repo factory → one index: the build pattern (`<dir>/pipeline.yaml`) + each feature under
     /// `<dir>/features/*`. A feature that fails to load renders as a note, so one bad graph doesn't
     /// sink the index.
-    private func projectDoc() throws -> String {
+    private func projectDoc(_ dir: String) throws -> String {
         var sections: [GraphRenderer.Section] = []
         var title = URL(fileURLWithPath: dir, isDirectory: true).standardizedFileURL.lastPathComponent
         let loader = SpecLoader()

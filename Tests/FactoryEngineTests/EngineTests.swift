@@ -847,6 +847,38 @@ struct EngineTests {
         #expect(!doc.contains("## Contents"))
     }
 
+    // The program index groups fragments under milestone headings, each fragment an H3 section.
+    @Test func programIndexGroupsFragmentsByMilestone() {
+        let doc = GraphRenderer.programIndex(title: "bnpl", milestones: [
+            .init(name: "bnpl/loan-origination", fragments: [
+                .init(heading: "ledger-svc · code", body: "LEDGER"),
+                .init(heading: "gql-gateway · code", body: "GQL")]),
+            .init(name: "bnpl/accounting", fragments: [.init(heading: "accounting-svc · code", body: "ACCT")])])
+        #expect(doc.contains("# bnpl — program graph"))
+        #expect(doc.contains("- [bnpl/loan-origination](#bnplloan-origination)"))
+        #expect(doc.contains("## bnpl/loan-origination"))
+        #expect(doc.contains("### ledger-svc · code"))
+        #expect(doc.contains("LEDGER"))
+        // Both fragments of the first milestone precede the second milestone's fragment.
+        #expect(doc.range(of: "GQL")!.lowerBound < doc.range(of: "ACCT")!.lowerBound)
+    }
+
+    // A Plant spec decodes its fragment list from YAML.
+    @Test func plantSpecDecodes() throws {
+        let env = try loader.loadPlantYAML("""
+        apiVersion: factory/v1
+        kind: Plant
+        metadata: { name: bnpl, version: 1 }
+        spec:
+          fragments:
+            - { path: ../ledger-svc/.factory/features/loan-origination }
+            - { path: ../gql-gateway/.factory/features/loan-origination }
+        """)
+        #expect(env.metadata.name == "bnpl")
+        #expect(env.spec.fragments.count == 2)
+        #expect(env.spec.fragments[0].path == "../ledger-svc/.factory/features/loan-origination")
+    }
+
     // A join edge with the `*` wildcard renders an unlabelled arrow per source.
     @Test func graphRendersJoinWithoutWildcardLabel() {
         let pipeline = PipelineSpec(

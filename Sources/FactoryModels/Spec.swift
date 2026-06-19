@@ -84,6 +84,23 @@ public struct OneOrMany<Element: Codable & Equatable & Sendable>: Codable, Equat
     }
 }
 
+// MARK: - Plant (multi-repo aggregation root — ADR-0027)
+
+/// The thin composition root: a list of fragment locations to aggregate into a program graph,
+/// grouped by each fragment's `correlation` (milestone). The first iteration references fragments by
+/// **local path** (a single machine / local checkouts); remote `repo`/`ref` fetch is a later layer.
+public struct PlantSpec: Codable, Equatable, Sendable {
+    public var fragments: [FragmentRef]
+
+    public init(fragments: [FragmentRef]) { self.fragments = fragments }
+}
+
+public struct FragmentRef: Codable, Equatable, Sendable {
+    public var path: String?               // local path to a fragment workspace dir (its pipeline.yaml)
+
+    public init(path: String? = nil) { self.path = path }
+}
+
 // MARK: - Pipeline (the typed DAG — topology lives here, §5)
 
 public struct PipelineSpec: Codable, Equatable, Sendable {
