@@ -84,6 +84,24 @@ public enum GraphRenderer {
         return lines.joined(separator: "\n")
     }
 
+    /// A "Contracts" section listing each cross-repo contract — its provider + version and each
+    /// consumer's requirement with a ✓ / ⚠ / ? compatibility mark (ADR-0027). nil when there are no
+    /// contracts, so a program without them renders unchanged.
+    public static func contractsSection(_ statuses: [Contracts.Status]) -> String? {
+        guard !statuses.isEmpty else { return nil }
+        var lines = ["## Contracts", "",
+                     "_Cross-repo model-defining artifacts: provider version vs each consumer's range._", ""]
+        for status in statuses {
+            let provider = status.providedTag.map { "`\($0)` — \(status.provider ?? "?")" } ?? "⚠ no provider declared"
+            lines.append("- **\(status.name)** · provider \(provider)")
+            for consumer in status.consumers.sorted(by: { $0.fragment < $1.fragment }) {
+                let mark = consumer.satisfied == nil ? "?" : (consumer.satisfied! ? "✓" : "⚠ skew")
+                lines.append("    - \(mark) \(consumer.fragment) requires `\(consumer.range)`")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// A GitHub-style heading anchor: lowercase, spaces → `-`, drop other punctuation.
     static func anchor(_ heading: String) -> String {
         var out = ""

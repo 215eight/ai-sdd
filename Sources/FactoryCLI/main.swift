@@ -371,30 +371,36 @@ struct Graph: ParsableCommand {
         let baseDir = plantURL.deletingLastPathComponent()
         let loader = SpecLoader()
 
-        // Group fragment sections by milestone, preserving plant declaration order within each.
+        // Group fragment sections by milestone, preserving plant declaration order within each;
+        // collect each fragment's metadata for the cross-repo contract overlay.
         var order: [String] = []
         var byMilestone: [String: [GraphRenderer.Section]] = [:]
+        var metas: [(name: String, metadata: SpecMetadata)] = []
         for ref in env.spec.fragments {
             guard let path = ref.path else { continue }
             let fragmentURL = URL(fileURLWithPath: path, relativeTo: baseDir)
-            let (milestone, section) = fragmentSection(at: fragmentURL, declaredPath: path, loader: loader)
+            let (milestone, section, meta) = fragmentSection(at: fragmentURL, declaredPath: path, loader: loader)
             if byMilestone[milestone] == nil { order.append(milestone) }
             byMilestone[milestone, default: []].append(section)
+            if let meta { metas.append((meta.name, meta)) }
         }
         guard !order.isEmpty else {
             throw ValidationError("plant '\(plantPath)' references no fragments (need `fragments: [{ path: … }]`)")
         }
         let milestones = order.sorted().map { GraphRenderer.Milestone(name: $0, fragments: byMilestone[$0] ?? []) }
-        return GraphRenderer.programIndex(title: env.metadata.name, milestones: milestones) + "\n"
+        var doc = GraphRenderer.programIndex(title: env.metadata.name, milestones: milestones)
+        if let contracts = GraphRenderer.contractsSection(Contracts.statuses(metas)) { doc += "\n" + contracts + "\n" }
+        return doc + "\n"
     }
 
-    /// Load one fragment and turn it into a (milestone, section) — its lane/owner in the heading, its
-    /// header + graph in the body. Falls back to a note + the "(no milestone)" group on failure.
+    /// Load one fragment and turn it into a (milestone, section, metadata) — its lane/owner in the
+    /// heading, its header + graph in the body. Falls back to a note + the "(no milestone)" group on
+    /// failure (metadata nil), so one bad fragment doesn't sink the program.
     private func fragmentSection(at url: URL, declaredPath: String, loader: SpecLoader)
-        -> (milestone: String, section: GraphRenderer.Section) {
+        -> (milestone: String, section: GraphRenderer.Section, metadata: SpecMetadata?) {
         guard let env = try? loader.loadPipeline(atDirectory: url) else {
             return ("(no milestone)", .init(heading: declaredPath,
-                body: "> ⚠ could not load `\(declaredPath)/pipeline.yaml` — see `factory validate \(declaredPath)`."))
+                body: "> ⚠ could not load `\(declaredPath)/pipeline.yaml` — see `factory validate \(declaredPath)`."), nil)
         }
         let meta = env.metadata
         var heading = meta.name
@@ -402,7 +408,7 @@ struct Graph: ParsableCommand {
         if let owner = meta.owner, !owner.isEmpty { heading += " · @\(owner.joined(separator: ","))" }
         let header = GraphRenderer.fragmentHeader(meta).map { "\($0)\n\n" } ?? ""
         let body = header + GraphRenderer.mermaid(env.spec, direction: direction, inheritedOwner: meta.owner ?? [])
-        return (meta.correlation ?? "(no milestone)", .init(heading: heading, body: body))
+        return (meta.correlation ?? "(no milestone)", .init(heading: heading, body: body), meta)
     }
 
     /// A repo factory → one index: the build pattern (`<dir>/pipeline.yaml`) + each feature under

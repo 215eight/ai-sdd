@@ -863,6 +863,38 @@ struct EngineTests {
         #expect(doc.range(of: "GQL")!.lowerBound < doc.range(of: "ACCT")!.lowerBound)
     }
 
+    // Caret compatibility: same major and tag ≥ range passes; a lower minor or wrong major fails.
+    @Test func contractSemverCaretSatisfies() {
+        #expect(Contracts.satisfies(providerTag: "v2.1.0", range: "^2.0") == true)   // 2.1 ≥ 2.0, same major
+        #expect(Contracts.satisfies(providerTag: "v2.1.0", range: "^2.2") == false)  // 2.1 < 2.2
+        #expect(Contracts.satisfies(providerTag: "v1.4.0", range: "^2.0") == false)  // wrong major
+        #expect(Contracts.satisfies(providerTag: nil, range: "^2.0") == nil)         // no provider → unknown
+        #expect(Contracts.satisfies(providerTag: "v2.0.0", range: "garbage") == nil) // unparseable → unknown
+    }
+
+    // Cross-referencing provides/requires across fragments yields a status per contract, flagging skew.
+    @Test func contractStatusesFlagSkew() {
+        let fragments: [(name: String, metadata: SpecMetadata)] = [
+            ("ledger-svc", SpecMetadata(name: "ledger-svc",
+                provides: [ContractRef(name: "payments.proto", tag: "v2.1.0")])),
+            ("gql-gateway", SpecMetadata(name: "gql-gateway",
+                requires: [ContractRef(name: "payments.proto", range: "^2.0")])),
+            ("billing-svc", SpecMetadata(name: "billing-svc",
+                requires: [ContractRef(name: "payments.proto", range: "^3.0")]))]   // skew: needs v3
+        let statuses = Contracts.statuses(fragments)
+        #expect(statuses.count == 1)
+        let payments = statuses[0]
+        #expect(payments.provider == "ledger-svc")
+        #expect(payments.providedTag == "v2.1.0")
+        #expect(payments.consumers.first { $0.fragment == "gql-gateway" }?.satisfied == true)
+        #expect(payments.consumers.first { $0.fragment == "billing-svc" }?.satisfied == false)
+
+        // The rendered section marks the skew.
+        let section = GraphRenderer.contractsSection(statuses)
+        #expect(section?.contains("**payments.proto**") == true)
+        #expect(section?.contains("⚠ skew billing-svc") == true)
+    }
+
     // A Plant spec decodes its fragment list from YAML.
     @Test func plantSpecDecodes() throws {
         let env = try loader.loadPlantYAML("""

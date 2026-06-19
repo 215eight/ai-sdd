@@ -16,15 +16,37 @@ public struct SpecMetadata: Codable, Equatable, Sendable {
     public var factory: String?          // discipline lane: requirements | design | code | deploy
     public var owner: [String]?          // accountable people (the feature lead; 1+)
     public var origin: Origin?           // where this fragment lives (repo + git ref + path)
+    public var provides: [ContractRef]?  // model-defining artifacts this fragment publishes (with their tag)
+    public var requires: [ContractRef]?  // contracts this fragment consumes (with a caret range)
 
     public init(name: String, version: Int? = nil, correlation: String? = nil,
-                factory: String? = nil, owner: [String]? = nil, origin: Origin? = nil) {
+                factory: String? = nil, owner: [String]? = nil, origin: Origin? = nil,
+                provides: [ContractRef]? = nil, requires: [ContractRef]? = nil) {
         self.name = name
         self.version = version
         self.correlation = correlation
         self.factory = factory
         self.owner = owner
         self.origin = origin
+        self.provides = provides
+        self.requires = requires
+    }
+}
+
+/// A reference to a model-defining contract artifact (ADR-0027): a gRPC/iOS-models/schema package
+/// versioned git-natively. A producer sets `tag` (the semver it publishes); a consumer sets `range`
+/// (a caret requirement, e.g. `^2.0`). `hash` optionally pins the exact commit for staleness.
+public struct ContractRef: Codable, Equatable, Sendable {
+    public var name: String
+    public var tag: String?
+    public var range: String?
+    public var hash: String?
+
+    public init(name: String, tag: String? = nil, range: String? = nil, hash: String? = nil) {
+        self.name = name
+        self.tag = tag
+        self.range = range
+        self.hash = hash
     }
 }
 
