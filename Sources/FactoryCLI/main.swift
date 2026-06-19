@@ -331,15 +331,22 @@ struct Graph: ParsableCommand {
     var direction: String = "TD"
     @Flag(name: .long, help: "Treat <dir> as a repo factory: index the build pattern + every feature.")
     var project = false
+    @Flag(name: .long, help: "Wrap the output in a self-contained HTML page (renders Mermaid in a browser).")
+    var html = false
 
     func run() throws {
-        let doc: String
+        var doc: String
         if let plant {
             doc = try plantDoc(plant)
         } else if let dir {
             doc = project ? try projectDoc(dir) : try singleDoc(dir)
         } else {
             throw ValidationError("pass a pipeline dir (optionally --project), or --plant <plant.yaml>")
+        }
+        if html {
+            let title = doc.split(separator: "\n").first
+                .map { String($0.drop { $0 == "#" || $0 == " " }) } ?? "factory graph"
+            doc = GraphRenderer.htmlPage(title: title, markdown: doc)
         }
         if let out {
             try FileManager.default.createDirectory(

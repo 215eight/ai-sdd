@@ -847,6 +847,19 @@ struct EngineTests {
         #expect(!doc.contains("## Contents"))
     }
 
+    // The HTML page embeds the Markdown and wires up Mermaid; </script> in content can't break out.
+    @Test func htmlPageEmbedsMarkdownAndMermaid() {
+        let md = "# demo\n\n```mermaid\nflowchart TD\n  a --> b\n```\n"
+        let page = GraphRenderer.htmlPage(title: "demo", markdown: md)
+        #expect(page.hasPrefix("<!doctype html>"))
+        #expect(page.contains("<title>demo — factory graph</title>"))
+        #expect(page.contains("flowchart TD"))                     // the markdown is embedded
+        #expect(page.contains("mermaid.esm.min.mjs"))              // mermaid is loaded
+        #expect(page.contains("marked.parse"))                     // markdown is rendered
+        // A literal closing-script tag in content is neutralised.
+        #expect(GraphRenderer.htmlPage(title: "x", markdown: "</script>").contains("<\\/script"))
+    }
+
     // The program index groups fragments under milestone headings, each fragment an H3 section.
     @Test func programIndexGroupsFragmentsByMilestone() {
         let doc = GraphRenderer.programIndex(title: "bnpl", milestones: [

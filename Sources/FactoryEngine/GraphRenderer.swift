@@ -84,6 +84,40 @@ public enum GraphRenderer {
         return lines.joined(separator: "\n")
     }
 
+    /// Wrap a generated Markdown doc into a self-contained HTML page — the "anyone-with-a-link"
+    /// artifact (ADR-0027). One file, no server: it renders the Markdown and its Mermaid diagrams in
+    /// the browser (marked + mermaid from a CDN). Truly-offline pre-rendered SVG would need a JS
+    /// runtime the engine doesn't have, so this MVP renders client-side.
+    public static func htmlPage(title: String, markdown: String) -> String {
+        let safe = markdown.replacingOccurrences(of: "</script", with: "<\\/script")   // can't break out of the block
+        return [
+            "<!doctype html>",
+            "<html lang=\"en\"><head><meta charset=\"utf-8\">",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+            "<title>\(title) — factory graph</title>",
+            "<style>",
+            "  body{font-family:-apple-system,system-ui,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;line-height:1.5;color:#1f2328}",
+            "  h2{border-bottom:1px solid #d0d7de;padding-bottom:.3em;margin-top:2rem}",
+            "  code{background:#f6f8fa;padding:.15em .3em;border-radius:4px}",
+            "  pre.mermaid{background:#f6f8fa;border-radius:6px;padding:1rem;text-align:center}",
+            "  a{color:#0969da;text-decoration:none}",
+            "</style></head><body>",
+            "<div id=\"content\">Rendering…</div>",
+            "<script type=\"text/markdown\" id=\"md\">",
+            safe,
+            "</script>",
+            "<script src=\"https://cdn.jsdelivr.net/npm/marked/marked.min.js\"></script>",
+            "<script type=\"module\">",
+            "  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';",
+            "  document.getElementById('content').innerHTML = marked.parse(document.getElementById('md').textContent);",
+            "  document.querySelectorAll('code.language-mermaid').forEach(c => {",
+            "    const pre = document.createElement('pre'); pre.className = 'mermaid';",
+            "    pre.textContent = c.textContent; c.closest('pre').replaceWith(pre); });",
+            "  mermaid.initialize({ startOnLoad: false }); await mermaid.run();",
+            "</script></body></html>",
+        ].joined(separator: "\n")
+    }
+
     /// A "Contracts" section listing each cross-repo contract — its provider + version and each
     /// consumer's requirement with a ✓ / ⚠ / ? compatibility mark (ADR-0027). nil when there are no
     /// contracts, so a program without them renders unchanged.
