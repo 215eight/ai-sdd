@@ -8,10 +8,11 @@ public enum GraphRenderer {
     /// A fenced Mermaid `flowchart` block for the pipeline. Every node is declared (so isolated
     /// nodes still appear and labels are controlled); each edge renders an arrow, carrying its
     /// artifact Schema as the edge label unless it is absent or the `*` wildcard.
-    public static func mermaid(_ pipeline: PipelineSpec, direction: String = "TD") -> String {
+    public static func mermaid(_ pipeline: PipelineSpec, direction: String = "TD",
+                               inheritedOwner: [String] = []) -> String {
         var lines = ["```mermaid", "flowchart \(direction)"]
         for node in pipeline.nodes {
-            lines.append("    \(safeID(node.id))\(label(node))")
+            lines.append("    \(safeID(node.id))\(label(node, inheritedOwner: inheritedOwner))")
         }
         for edge in pipeline.edges {
             let schema = edge.artifact.flatMap { $0 == "*" ? nil : $0 }
@@ -68,14 +69,37 @@ public enum GraphRenderer {
         String(id.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" })
     }
 
-    /// The visible node label: the id, plus a second line noting the worker, that it is a slice, and
-    /// its stack — whatever the node declares.
-    private static func label(_ node: PipelineNode) -> String {
+    /// The visible node label: the id, plus a second line noting the worker, that it is a slice, its
+    /// stack, and its owner — whatever the node declares (owner inherits the feature lead if unset).
+    private static func label(_ node: PipelineNode, inheritedOwner: [String]) -> String {
         var detail: [String] = []
         if let worker = node.worker, worker != node.id { detail.append(worker) }   // skip if redundant
         if node.pipeline != nil { detail.append("slice") }
         if let stack = node.stack { detail.append("[\(stack)]") }
+        let owner = node.owner ?? (inheritedOwner.isEmpty ? nil : inheritedOwner)
+        if let owner, !owner.isEmpty { detail.append("@\(owner.joined(separator: ","))") }
         let second = detail.isEmpty ? "" : "<br/>\(detail.joined(separator: " "))"
         return "[\"\(node.id)\(second)\"]"
+    }
+
+    /// A one-line fragment header for the four tags (ADR-0027), or nil when none are set — so a plain
+    /// pipeline renders unchanged. Goes above the graph in the rendered Markdown.
+    public static func fragmentHeader(_ metadata: SpecMetadata) -> String? {
+        var parts: [String] = []
+        if let factory = metadata.factory { parts.append("**lane** \(factory)") }
+        if let owner = metadata.owner, !owner.isEmpty { parts.append("**owner** \(owner.joined(separator: ", "))") }
+        if let correlation = metadata.correlation { parts.append("**milestone** \(correlation)") }
+        if let origin = metadata.origin, let text = originLabel(origin) { parts.append("**origin** \(text)") }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
+    }
+
+    /// `repo@tag (hash) /path` — only the parts that are present.
+    private static func originLabel(_ origin: Origin) -> String? {
+        var text = origin.repo ?? ""
+        if let tag = origin.tag { text += "@\(tag)" }
+        if let hash = origin.hash { text += " (\(hash.prefix(8)))" }
+        if let path = origin.path { text += text.isEmpty ? path : " \(path)" }
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

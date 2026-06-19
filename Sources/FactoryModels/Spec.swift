@@ -10,10 +10,37 @@ import Foundation
 public struct SpecMetadata: Codable, Equatable, Sendable {
     public var name: String
     public var version: Int?
+    // Fragment tags for cross-repo graph aggregation (ADR-0027). All optional & additive; only a
+    // feature pipeline sets them, every other spec kind ignores them.
+    public var correlation: String?      // milestone/program join-key — fragments aggregate by this
+    public var factory: String?          // discipline lane: requirements | design | code | deploy
+    public var owner: [String]?          // accountable people (the feature lead; 1+)
+    public var origin: Origin?           // where this fragment lives (repo + git ref + path)
 
-    public init(name: String, version: Int? = nil) {
+    public init(name: String, version: Int? = nil, correlation: String? = nil,
+                factory: String? = nil, owner: [String]? = nil, origin: Origin? = nil) {
         self.name = name
         self.version = version
+        self.correlation = correlation
+        self.factory = factory
+        self.owner = owner
+        self.origin = origin
+    }
+}
+
+/// Where a fragment lives, for multi-repo composition (ADR-0027). Versioned git-natively: `tag`
+/// carries the semver (semantic compatibility), `hash` the exact commit (identity + staleness).
+public struct Origin: Codable, Equatable, Sendable {
+    public var repo: String?
+    public var tag: String?
+    public var hash: String?
+    public var path: String?
+
+    public init(repo: String? = nil, tag: String? = nil, hash: String? = nil, path: String? = nil) {
+        self.repo = repo
+        self.tag = tag
+        self.hash = hash
+        self.path = path
     }
 }
 
@@ -79,10 +106,11 @@ public struct PipelineNode: Codable, Equatable, Sendable {
     public var mapOver: String?            // dynamic fan-out (§10)
     public var pipeline: String?           // a sub-pipeline workspace this node expands into (a slice)
     public var stack: String?              // the slice's stack — its late-bound specialization (§7)
+    public var owner: [String]?            // the IC(s) driving this slice; inherits the feature lead if absent (ADR-0027)
 
     public init(id: String, worker: String? = nil, kind: String? = nil,
                 required: Bool? = nil, mapOver: String? = nil,
-                pipeline: String? = nil, stack: String? = nil) {
+                pipeline: String? = nil, stack: String? = nil, owner: [String]? = nil) {
         self.id = id
         self.worker = worker
         self.kind = kind
@@ -90,6 +118,7 @@ public struct PipelineNode: Codable, Equatable, Sendable {
         self.mapOver = mapOver
         self.pipeline = pipeline
         self.stack = stack
+        self.owner = owner
     }
 }
 

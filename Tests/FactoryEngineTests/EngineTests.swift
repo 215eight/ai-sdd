@@ -795,6 +795,52 @@ struct EngineTests {
         #expect(doc.range(of: "BP-BODY")!.lowerBound < doc.range(of: "HS-BODY")!.lowerBound)
     }
 
+    // Node labels carry owner — the node's own, else the inherited feature lead.
+    @Test func graphLabelsCarryOwner() {
+        let pipeline = PipelineSpec(nodes: [
+            PipelineNode(id: "models", kind: "pipeline", pipeline: "../..", stack: "swift", owner: ["bob"]),
+            PipelineNode(id: "api", kind: "pipeline", pipeline: "../..", stack: "swift")], edges: [])
+        let md = GraphRenderer.mermaid(pipeline, inheritedOwner: ["alice"])
+        #expect(md.contains("models<br/>slice [swift] @bob"))   // node owner wins
+        #expect(md.contains("api<br/>slice [swift] @alice"))    // inherits the feature lead
+    }
+
+    // The fragment header renders the four tags, and is nil when none are set (plain pipeline).
+    @Test func fragmentHeaderRendersTagsOrNil() {
+        let tagged = SpecMetadata(name: "loan-origination", correlation: "bnpl/loan-origination",
+            factory: "code", owner: ["alice"],
+            origin: Origin(repo: "acme/ledger-svc", tag: "v2.1.0", hash: "def4567890", path: ".factory/features/loan"))
+        let header = GraphRenderer.fragmentHeader(tagged)
+        #expect(header?.contains("**lane** code") == true)
+        #expect(header?.contains("**owner** alice") == true)
+        #expect(header?.contains("**milestone** bnpl/loan-origination") == true)
+        #expect(header?.contains("acme/ledger-svc@v2.1.0 (def45678)") == true)   // tag + short hash
+        #expect(GraphRenderer.fragmentHeader(SpecMetadata(name: "plain")) == nil)
+    }
+
+    // The new metadata + node owner decode from YAML (additive, optional).
+    @Test func fragmentTagsDecodeFromYAML() throws {
+        let yaml = """
+        apiVersion: factory/v1
+        kind: Pipeline
+        metadata:
+          name: loan-origination
+          correlation: bnpl/loan-origination
+          factory: code
+          owner: [alice]
+          origin: { repo: acme/ledger-svc, tag: v2.1.0, hash: def456, path: .factory/features/loan }
+        spec:
+          nodes: [ { id: models, kind: pipeline, pipeline: ../.., stack: swift, owner: [bob] } ]
+          edges: []
+        """
+        let env = try loader.loadPipelineYAML(yaml)
+        #expect(env.metadata.correlation == "bnpl/loan-origination")
+        #expect(env.metadata.factory == "code")
+        #expect(env.metadata.owner == ["alice"])
+        #expect(env.metadata.origin == Origin(repo: "acme/ledger-svc", tag: "v2.1.0", hash: "def456", path: ".factory/features/loan"))
+        #expect(env.spec.nodes[0].owner == ["bob"])
+    }
+
     // A single section omits the contents list (nothing to drill into).
     @Test func projectIndexSkipsTOCForOneSection() {
         let doc = GraphRenderer.projectIndex(title: "x", sections: [.init(heading: "Only", body: "B")])
