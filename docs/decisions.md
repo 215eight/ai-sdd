@@ -550,6 +550,96 @@ metaphor is already carried by Plant/Factory/Worker.) No Conductor in the MVP (s
 
 ---
 
+## ADR-0027 — Dependency-graph rendering & multi-repo Plant aggregation (observability)
+**Status:** Accepted · 2026-06-19
+
+**Context.** Adopters need a shared, drill-downable view of the work — per feature and across a whole
+program — as a team grows past a single developer. The worked example is a fintech BNPL program: ~24
+repos (mobile ×5; a GQL gateway + 2 subgraphs + their deps; 1 integration + 3–5 product microservices
++ 3 gRPC-contract repos; a 3rd-party gateway), 9 people (PM, designer, frontend, gql, 5 backend), and
+5 milestones, each running PRD → design → RFC → implement → test → rollout → monitor. That is the §13
+four-Factory Plant (Requirements/Design/Code/Deployment) threaded by a single correlation id (§11).
+The workflow that worked single-dev was **Mermaid-in-markdown** rendered in a browser; the architecture
+already states the Pipeline "renders 1:1 to the DAG diagram" (§5, ADR-0005) and uses Mermaid as the
+house medium — but **no command renders it, and nothing aggregates across repos.** This was a gap, not
+a recorded decision (a memory sweep found no prior decision; the only "observability" note concerns
+eval quality, a different axis).
+
+**Decision.**
+
+- **A deterministic `factory graph` renderer over committed specs.** Rendering a DAG is a pure transform
+  of spec data (no LLM) — *specs are data; the engine is the only code* — so it is an engine subcommand
+  beside `validate`/`status`. It emits **portable static artifacts**: Mermaid-in-`.md` for in-repo/IDE
+  viewing and a self-contained static site (HTML + inline SVG/Mermaid, no server) for an
+  "anyone-with-a-link" view. **Publishing is a separate, pluggable step** — GitHub Pages is *one*
+  adapter; GitLab Pages, S3, internal nginx, or `open index.html` are equals — so the engine stays
+  git-host-agnostic, mirroring the `stateStore.backend`-in-config pattern (ADR-0025).
+
+- **Three orthogonal node dimensions, not one "lane".** A node carries `factory` (the discipline lane —
+  requirements/design/code/deploy), `stack` (the tech — backend/gql/ios; already a node field), and
+  `owner` (the people). `owner` is a **list, per-node, inherited from the feature lead and overridable
+  per slice by the IC**, so a feature's lead and its per-task ICs both surface without flattening the
+  hierarchy. Views are filterable **projections** of one tagged graph (by milestone / lane / stack /
+  owner / status); zoom follows the self-similar levels (§3): Plant → per-milestone Conductor backbone
+  → Factory → Pipeline → per-repo slice graph → build pattern.
+
+- **Self-describing fragments; the join key is the correlation id.** A feature pipeline gains additive,
+  optional metadata: `origin` (repo + git tag + commit hash + path), `correlation` (the milestone/program
+  key), `factory`, and `owner`. Because a milestone spans many repos, fragments are aggregated **by
+  `correlation`, not by repo** — the architecture's single-id-threads-all-factories (§11). The fields are
+  additive and namespaced so they never collide with existing artifacts.
+
+- **Single-repo first; a configurable, thin Plant layer for multi-repo.** The MVP renders one repo's
+  features with no extra config. Multi-repo uses the *same* renderer pointed at a thin **`plant.yaml`**
+  in a thin control/Plant repo that owns only the program-level + non-code factories + the published
+  site — the narrow, correct slice of "one central repo", **not** centralizing all development (the
+  distributed-monolith trap, ADR-0012). At ~24 repos, fragments are **push-published** (each repo's CI
+  renders its fragment + a small machine-readable manifest to the shared location) rather than
+  central-fetched (which would need read creds to every repo + clone-at-render cost). Output lives in
+  its own namespace (`.factory/graph/`, `plant.yaml`) — never under `features/`, `runs/`, or `artifacts/`.
+
+- **Contracts generalized and git-versioned.** Any model-defining artifact (a gRPC contract, an iOS
+  models/API package, a shared schema package, an OpenAPI doc) is a versioned cross-repo edge, identified
+  by a **git tag (semver → semantic compatibility) plus the commit hash (exact identity + staleness)**.
+  The tag lets the renderer compare versions semantically (consumer requires `^2.0`, producer provides
+  `2.1` → compatible); the hash shows drift ("pinned 3 commits behind"). Both are git-native, no bespoke
+  registry. Enforcing that a tag is *honest* (a breaking change really bumped major) is deferred to
+  ADR-0017's `contract-compat` check — the view is fully useful without it.
+
+- **Upstream (PM/Design) is an adoption path, gated only on git.** A non-code workspace is just a **git
+  repo with a `.factory/`** — durability comes from git (ADR-0025), so no bespoke storage is needed. If
+  the PM/Designer adopt ai-sdd (in a terminal or via an agent) their phases become **real fragments**
+  reusing the existing schemas; if they don't, the phase renders as a **placeholder external/human node**
+  (a typed handle + a human gate, ADR-0009/§10) so the milestone's correlation chain never breaks.
+
+- **The Conductor stays optional and pluggable.** Human-driven coordination is the default and is already
+  the MVP execution model (interactive Mode B, ADR-0026). The graph only needs to **represent** the
+  cross-factory flow (read-only); the cross-factory **seam** — declared edges + contracts + the
+  correlation id — is present so an automatic Conductor can plug in later, but is never required to run.
+
+- **Static structure now; live overlay later.** The static structure view ships first (committed specs,
+  no shared state needed). A **live progress overlay** — coloring nodes by `done/in-progress/runnable/
+  rework/escalated` from the run log — is a planned **expansion** behind the shared state plane (ADR-0025);
+  at this fan-out it likely wants the **service backend**, since many tiny event commits to one git ref
+  contend.
+
+**Consequences.** The whole-program view becomes the first concrete use of the **Plant** level even
+before the execution Conductor exists (§14/§19) — read-only aggregation needs only the Plant index +
+published fragments. Adopters keep their Mermaid-in-markdown workflow, now generated from live specs and
+shared. Specs stay next to their code (ADR-0012); the thin Plant repo owns only program-level/non-code
+concerns + state + site. New work: the `factory graph` renderer; the additive fragment metadata + manifest
+format; a `plant.yaml` aggregator; and (later) the live-state overlay + a shared-state backend at scale.
+
+**Alternatives rejected.** Coupling to GitHub Pages (one git host of many; the renderer must stay
+host-agnostic). One central repo for *all* development (distributed-monolith trap, ADR-0012; specs would
+drift from the code they describe) — only the *thin* program/state/site layer is centralized.
+Central-fetch of every repo at render time (permissions + clone cost at scale) over push-published
+fragments. A bespoke version registry (git tag + hash already give semantic intent + identity).
+LLM-rendered graphs (rendering is a deterministic transform; an LLM there adds nondeterminism without
+capability — the ADR-0026 reasoning).
+
+---
+
 ## Open decisions
 
 _None — all decisions above are resolved. New questions will be appended here as they arise._
