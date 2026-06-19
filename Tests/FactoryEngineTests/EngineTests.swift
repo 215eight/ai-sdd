@@ -780,6 +780,27 @@ struct EngineTests {
         #expect(md.contains("package_skeleton[\"package-skeleton<br/>slice [swift]\"]"))  // original id + stack
     }
 
+    // The project index assembles a TOC over its sections, then each section's body in order.
+    @Test func projectIndexBuildsTOCAndSections() {
+        let doc = GraphRenderer.projectIndex(title: "roxwod", sections: [
+            .init(heading: "Build pattern · roxwod", body: "BP-BODY"),
+            .init(heading: "Feature · hyrox-scraper", body: "HS-BODY")])
+        #expect(doc.contains("# roxwod — project graph"))
+        #expect(doc.contains("## Contents"))
+        #expect(doc.contains("- [Feature · hyrox-scraper](#feature--hyrox-scraper)"))  // GitHub-style anchor
+        #expect(doc.contains("## Build pattern · roxwod"))
+        #expect(doc.contains("BP-BODY"))
+        #expect(doc.contains("HS-BODY"))
+        // Build pattern precedes the feature (section order preserved).
+        #expect(doc.range(of: "BP-BODY")!.lowerBound < doc.range(of: "HS-BODY")!.lowerBound)
+    }
+
+    // A single section omits the contents list (nothing to drill into).
+    @Test func projectIndexSkipsTOCForOneSection() {
+        let doc = GraphRenderer.projectIndex(title: "x", sections: [.init(heading: "Only", body: "B")])
+        #expect(!doc.contains("## Contents"))
+    }
+
     // A join edge with the `*` wildcard renders an unlabelled arrow per source.
     @Test func graphRendersJoinWithoutWildcardLabel() {
         let pipeline = PipelineSpec(
