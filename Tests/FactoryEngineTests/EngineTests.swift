@@ -745,6 +745,52 @@ struct EngineTests {
         #expect(uncovered == ["b"])
     }
 
+    // MARK: - Graph renderer (Pipeline → Mermaid, ADR-0027)
+
+    // A build pattern (artifact edges) renders arrows labelled with the Schema, and node detail.
+    @Test func graphRendersArtifactEdgesWithLabels() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "architect", worker: "architect"),
+                    PipelineNode(id: "coder", worker: "coder")],
+            edges: [PipelineEdge(from: OneOrMany(["architect"]), to: "coder", artifact: "plan.v1")])
+        let md = GraphRenderer.mermaid(pipeline)
+        #expect(md.contains("```mermaid"))
+        #expect(md.contains("flowchart TD"))
+        #expect(md.contains("architect -->|plan.v1| coder"))
+        #expect(md.contains("architect[\"architect\"]"))   // worker == id → not repeated in the label
+    }
+
+    // A worker that differs from the node id IS shown as label detail.
+    @Test func graphShowsWorkerWhenItDiffersFromID() {
+        let pipeline = PipelineSpec(nodes: [PipelineNode(id: "n1", worker: "architect")], edges: [])
+        #expect(GraphRenderer.mermaid(pipeline).contains("n1[\"n1<br/>architect\"]"))
+    }
+
+    // An orchestration graph (depends_on, no artifact) renders plain arrows; ids are made safe and
+    // slice nodes note their stack.
+    @Test func graphRendersDependencyEdgesAndSlices() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "package-skeleton", kind: "pipeline", pipeline: "../..", stack: "swift"),
+                    PipelineNode(id: "domain-models", kind: "pipeline", pipeline: "../..", stack: "swift")],
+            edges: [PipelineEdge(from: OneOrMany(["package-skeleton"]), to: "domain-models")])
+        let md = GraphRenderer.mermaid(pipeline, direction: "LR")
+        #expect(md.contains("flowchart LR"))
+        #expect(md.contains("package_skeleton -->  domain_models") == false)  // no double space
+        #expect(md.contains("package_skeleton --> domain_models"))            // plain arrow, sanitized ids
+        #expect(md.contains("package_skeleton[\"package-skeleton<br/>slice [swift]\"]"))  // original id + stack
+    }
+
+    // A join edge with the `*` wildcard renders an unlabelled arrow per source.
+    @Test func graphRendersJoinWithoutWildcardLabel() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "a"), PipelineNode(id: "b"), PipelineNode(id: "join", kind: "join")],
+            edges: [PipelineEdge(from: OneOrMany(["a", "b"]), to: "join", artifact: "*")])
+        let md = GraphRenderer.mermaid(pipeline)
+        #expect(md.contains("a --> join"))
+        #expect(md.contains("b --> join"))
+        #expect(!md.contains("|*|"))   // the wildcard is not shown as a label
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.
