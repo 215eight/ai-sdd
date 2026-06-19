@@ -147,7 +147,7 @@ into a different composition without change.
 
 The single most important structural rule, to keep the flow readable and not scattered:
 
-- **Topology lives in the Pipeline.** The Pipeline spec lists nodes and edges. It is the *one* place you read to understand the flow, and it renders 1:1 to the DAG diagram.
+- **Topology lives in the Pipeline.** The Pipeline spec lists nodes and edges. It is the *one* place you read to understand the flow, and it renders 1:1 to the DAG diagram — literally: `factory graph` emits that diagram (Mermaid) deterministically from the spec, per feature and across repos (ADR-0027).
 - **A Worker declares only its typed signature** (`consumes`/`produces` Schemas) — *not* which other Workers it connects to. Like a function declaring its parameter types but not its callers.
 - **Edges are authored, not inferred.** We do **not** auto-wire by matching types (that would scatter the flow). At load, each Edge is **type-checked** against the two Workers' signatures; a mis-wired edge fails to load.
 
@@ -512,6 +512,7 @@ flowchart LR
 - The `✓` on each Edge is a **boundary Check** = the APPROVAL gate / the inter-factory contract.
 - **Contracts are versioned** (ADR-0017): each carries a `MAJOR.MINOR` (the `.vN` is the major). Minors are **additive-only** (back- *and* forward-compatible); breaking changes go to a new major via **dual-publish / expand-contract**. Producers declare `provides`, consumers a caret `requires` range, and the load-time validator enforces *producer-satisfies-consumer* — incompatible Factories fail to load.
 - A single **correlation Run id** threads through all Factories for end-to-end tracing.
+- **Observability — the Plant's first realization (ADR-0027).** Even before the execution Conductor exists, the Plant level is realized read-only by `factory graph --plant`: it aggregates per-repo/per-feature graph **fragments** (self-describing with `origin`/`correlation`/`factory`/`owner` tags) into one program view, grouped by milestone (`correlation`) — with a contract-version overlay that flags cross-repo semver skew (the `provides`/`requires` above). A live run-state overlay is a planned expansion behind the shared state plane (§6, ADR-0025).
 
 ## 12. The spec hierarchy & the engine boundary
 
@@ -525,7 +526,7 @@ checks/<name>.check.yaml         # a gate/eval definition
 templates/<name>.md              # instruction templates per Worker
 
 —— the ONLY compiled code ——
-engine/                          # spec loader + validator · Scheduler · Reducer · CheckRunner · Conductor runtime
+engine/                          # spec loader + validator · Scheduler · Reducer · CheckRunner · graph renderer · Conductor runtime
 ```
 
 Every spec is **forkable** (`fork`/`init`/`validate`) and **versioned**. Context is
@@ -593,13 +594,21 @@ engine is greenfield (`Sources/FactoryModels`, `Sources/FactoryEngine`). The pha
 | Secrets | `SecretResolving` | port; wire into `Resource` credentials |
 | Execution | `AgentAdapter` | `Adapter` (LLM) + `Resource` (systems), resolved via the Model Catalog |
 
-**Status — first engine slice built.** `FactoryModels` (Codable spec types: `SpecEnvelope`,
-`PipelineSpec`, `WorkerSpec`, `PortSpec`, `OneOrMany`) + `FactoryEngine` (`SpecLoader`,
-`SpecValidator`, `Scheduler`, `Reducer`) compile and are tested: a pipeline + workers load, the
-edge type-check catches a mis-wired edge, and the Scheduler/Reducer resolve the DAG (parallel
-branches included). Specs decode from JSON for now; YAML via Yams plugs into the same Codable
-types later (ADR-0020). Not yet built: the full `RunEvent` set, the CheckRunner,
-Resources/Adapters, `map`/sensors, the shared state-plane store, and the Conductor.
+**Status — the interactive engine + observability are built.** `FactoryModels` (Codable spec types)
++ `FactoryEngine` drive the full interactive loop (Mode B, ADR-0026): `SpecLoader`/`SpecValidator`
+(referential + edge-type + acyclicity), `Scheduler`/`Reducer` over the DAG (parallel branches,
+slice descent), and a deterministic `CheckRunner` that runs the gates and advances state. Gating is
+real: the `SchemaValidator` (structural/verdict gates incl. the reviewer's approve/reject + per-item
+verdicts), `ScopeChecker` (`factory scope`), and `CoverageChecker` (`factory cover`) all block, and
+**§9 bounded rework routing** is implemented (`Rework` — a failing verdict routes to the producer of
+the indicted input, scope-invalidates the subtree, bounds the rounds, then escalates). The
+`GraphRenderer` realizes the "renders 1:1 to the DAG diagram" principle as `factory graph` — Mermaid
+per feature, a repo index (`--project`), multi-repo aggregation (`--plant`), a contract-version
+overlay, and a static HTML site (ADR-0027). Specs load from YAML via Yams (ADR-0020); the CLI is
+`validate / start / status / next / submit / check / scope / cover / graph`. Not yet built: the
+**judge** CheckRunner (LLM-run checks stay advisory), Resources/Adapters, `map`/sensors, the shared
+state-plane store (runs are local today), the live graph overlay (ADR-0027 expansion), and the
+Conductor.
 
 ## 15. Open questions
 

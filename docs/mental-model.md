@@ -77,7 +77,22 @@ Rework is **bounded**: after a few rounds the engine **escalates to a human** ra
 forever. Slices unlock as their dependencies finish. When every node is complete, you review a
 change that has already cleared its gates.
 
+## Seeing the work
+
+The graph is the *one* place the flow lives, so the engine can **render** it — `factory graph` emits
+it as **Mermaid** (shows in any Markdown viewer), per feature or for the whole repo (`--project`),
+and across repos (`--plant`, grouped by milestone, flagging contract-version skew). It's a
+deterministic render of your committed specs, so the whole team reads the same plan from one place
+and drills down. A *live* progress overlay (who's on what right now) is a planned expansion — it
+needs shared run state, which is still local today.
+
 ## Where things live
+
+- `.factory/` — your repo's factory (committed).
+- `.factory/features/<slug>/` — a feature's requirements + orchestration graph.
+- `.factory/graph/` — generated dependency graphs (`factory graph … --out`), browsable in the tree.
+- `.factory/runs/`, `.factory/artifacts/` — runtime state (gitignored).
+- The skills — `factory-bootstrap`, `factory-plan`, `factory-compile-schema`, `factory-run`.
 
 - `.factory/` — your repo's factory (committed).
 - `.factory/features/<slug>/` — a feature's requirements + orchestration graph.

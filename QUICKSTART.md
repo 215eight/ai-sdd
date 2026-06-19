@@ -141,17 +141,40 @@ store resolve against your codebase. As it goes:
 
 ---
 
+## Visualize the work (for you and your team)
+
+The dependency graph is the *one* place the flow lives — and `factory graph` renders it as **Mermaid**
+(it shows in GitHub, VS Code, and most Markdown viewers), so the whole team sees the plan in one place:
+
+```sh
+factory graph .factory/features/<slug>            # one feature's slice graph
+factory graph .factory --project                  # the repo: build pattern + every feature, one index
+factory graph .factory --project --out .factory/graph/index.md   # committed, browsable in the tree
+factory graph .factory/features/<slug> --html --out graph.html   # a self-contained page (any host / open locally)
+```
+
+Across repos, a thin `plant.yaml` lists fragment locations and `factory graph --plant plant.yaml`
+aggregates them into one program view, grouped by milestone, flagging cross-repo contract-version
+skew (ADR-0027). It's a deterministic render of your committed specs — no separate source of truth.
+
+---
+
 ## How the gates work (why you can trust "done")
 
 A schema describes each artifact; the compiler turns it into gates in three tiers:
 
 - **Tier 1 — structure** (`factory check`): the artifact's required shape/invariants, e.g. "every
-  decision is closed", "files are under `Sources/`/`Tests/`". Deterministic.
-- **Tier 2 — semantics** (`factory scope`, build, test): e.g. **changed files ⊆ the plan's declared
-  files** (catches out-of-scope edits, including new files), the project compiling, the suite
-  passing. Deterministic.
+  decision is closed", "files are under `Sources/`/`Tests/`". Deterministic. **This includes the
+  reviewer's verdict**: a `review.v1` whose schema requires `verdict == approve` and every
+  `items[].verdict == pass` makes the reviewer a *real, blocking gate* — a reject routes to rework,
+  not advisory notes. The reviewer *is* the judge; its verdict is captured as data and gated
+  deterministically (no LLM gate-runner needed).
+- **Tier 2 — semantics** (`factory scope`, `factory cover`, build, test): e.g. **changed files ⊆ the
+  plan's declared files** (catches out-of-scope edits, including new files), **the review covers every
+  acceptance item** (`factory cover`), the project compiling, the suite passing. Deterministic.
 - **Tier 3 — judgement** (judge checks): the irreducibly qualitative ("is the approach sound?").
-  Advisory until validated against labeled examples; never a fake deterministic gate.
+  Advisory until validated against labeled examples; never a fake deterministic gate. (Distinct from
+  the reviewer verdict above, which *is* deterministic.)
 
 The discipline: structure the artifact so most checks are **deterministic**; keep the judge layer
 small and honest.
@@ -167,8 +190,10 @@ small and honest.
 | `factory next <id>` | render the runnable worker (`--json` for drivers) |
 | `factory submit <id>` | validate output, run gates, advance or rework |
 | `factory status <id>` | run state + what's runnable (nested for slices) |
-| `factory check <schema> <artifact>` | run a Tier-1 structure gate standalone |
+| `factory check <schema> <artifact>` | run a Tier-1 structure/verdict gate standalone |
 | `factory scope --plan <plan> --repo <dir>` | run the Tier-2 scope gate standalone |
+| `factory cover --plan <plan> --review <review>` | check the review judged every acceptance item |
+| `factory graph <dir>` | render the dependency graph as Mermaid (`--project`, `--plant`, `--html`) |
 
 Skills (agent-run): **`factory-bootstrap`** (stand up a factory), **`factory-compile-schema`**
 (schema → gates), **`factory-run`** (drive the loop).
@@ -178,13 +203,19 @@ Skills (agent-run): **`factory-bootstrap`** (stand up a factory), **`factory-com
 ## Status & caveats (honest)
 
 This is an early, from-source tool. What's solid: the engine loop (validate/start/next/submit/
-status), schema + scope gates, the orchestration graph (slices), and provider-neutral surfacing.
+status), the deterministic gates (structure + the reviewer **verdict gate**, scope, coverage,
+build/test), **§9 bounded rework routing** (a reject re-runs the producer, then escalates), the
+orchestration graph (slices), `factory graph` visualization, and provider-neutral surfacing.
 Known rough edges:
 
 - **Run from the target repo root** — the engine doesn't yet separate workspace / target / run-store
   (all keyed off the current directory).
 - **Artifacts** live at the interim path `.factory/artifacts/<name>.v<ver>.<fmt>` (no artifact store yet).
-- **Judge checks** are advisory — the LLM Adapter that runs them isn't wired yet.
+- **Judge checks** (free-form LLM rubrics) are advisory — the LLM gate-runner isn't wired. *The
+  reviewer verdict is **not** one of these* — it's a structured artifact gated deterministically, so
+  it blocks today.
+- **Run state is local** (`.factory/runs/`, gitignored) — no shared state plane yet, so a *live*
+  team graph overlay is a future expansion; the *structure* graph works for everyone today.
 - **Traits / resources / permissions** specs are authored but not yet enforced by the engine.
 - **No MCP server** yet — drive via the CLI.
 - **Symlinks** assume macOS/Linux (Windows needs `git config core.symlinks true`).
