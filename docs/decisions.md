@@ -638,6 +638,34 @@ fragments. A bespoke version registry (git tag + hash already give semantic inte
 LLM-rendered graphs (rendering is a deterministic transform; an LLM there adds nondeterminism without
 capability — the ADR-0026 reasoning).
 
+**Implementation status (2026-06-19).** Built and committed — the `GraphRenderer`/`Contracts` engine
++ the `factory graph` CLI (Swift Testing coverage):
+
+- ✅ **Slice 1** — `factory graph <dir>`: a Pipeline → Mermaid (both DAG kinds).
+- ✅ **Slice 2** — `--project`: a repo index (build pattern + every feature, one file + TOC).
+- ✅ **Slice 3** — the four-tag fragment metadata (`origin`/`correlation`/`factory`/`owner`) + per-node
+  `owner` (inherits the feature lead), surfaced in headers + node labels.
+- ✅ **Slice 4** — `--plant`: multi-repo aggregation grouped by `correlation` (milestone). **Reads
+  fragments by LOCAL path only** (single machine / local checkouts).
+- ✅ **Slice 5** — contract-version overlay: `provides`/`requires` cross-referenced, semver caret skew
+  flagged (✓ / ⚠ skew / ?).
+- ✅ **Slice 6** — `--html`: a self-contained page rendering Mermaid client-side (CDN; first load needs
+  network).
+
+Pending (designed above, **not yet built** — start here on resumption):
+
+- ⬜ **Live progress overlay** — color nodes by run state (`done`/`in-progress`/`runnable`/`rework`/
+  `escalated`). Blocked on the **shared state plane** (ADR-0025); local runs (`.factory/runs/`,
+  gitignored) aren't visible cross-machine, so a team-live view needs the service backend at scale.
+- ⬜ **Remote / push-published fragments** — today `FragmentRef` is `{ path }` (local). The ADR's
+  push model needs (a) a machine-readable **fragment manifest** (nodes/edges/status as JSON) each
+  repo's CI publishes, and (b) the `--plant` aggregator reading manifests / fetching by `origin`
+  (repo + ref) instead of local paths.
+- ⬜ **Publish adapter** — `--html` emits a file; the pluggable publish step (GitHub Pages / GitLab
+  Pages / S3 / nginx) is a thin CI convention, intentionally outside the engine.
+- ⬜ **Contract-tag honesty** — that a tag truly reflects additive-vs-breaking; deferred to ADR-0017's
+  `contract-compat` check (the overlay uses the declared tag as-is today).
+
 ---
 
 ## Open decisions
