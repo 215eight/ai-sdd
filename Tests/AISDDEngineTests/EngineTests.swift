@@ -1316,6 +1316,7 @@ struct EngineTests {
         #expect(page.contains("1/2 done"))
         #expect(page.contains("class=\"dashboard-chart dashboard-status-donut\""))
         #expect(page.contains("class=\"dashboard-chart dashboard-grouped-bars\""))
+        #expect(page.contains("justify-content: center; list-style: none"))
         #expect(page.contains("grid-template-columns: minmax(0, 1fr)"))
         #expect(page.contains(".dashboard-status-donut { justify-self: center; max-width: 360px; }"))
         #expect(page.contains(".dashboard-grouped-bars { width: 100%; }"))

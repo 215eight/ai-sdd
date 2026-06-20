@@ -447,7 +447,7 @@ public enum GraphRenderer {
         .progress-wrap p { color: var(--muted); margin: 8px 0 0; }
         .progress-track { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; height: 14px; overflow: hidden; }
         .progress-fill { background: var(--status-done); height: 100%; }
-        .status-legend ul { display: flex; flex-wrap: wrap; gap: 10px 18px; list-style: none; margin: 22px 0; padding: 0; }
+        .status-legend ul { display: flex; flex-wrap: wrap; gap: 10px 18px; justify-content: center; list-style: none; margin: 22px 0; padding: 0; }
         .status-legend li { align-items: center; color: var(--muted); display: flex; gap: 8px; font-size: 0.92rem; }
         .legend-swatch { border-radius: 999px; display: inline-block; height: 10px; width: 10px; }
         .dashboard-charts { align-items: start; display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-bottom: 28px; }
