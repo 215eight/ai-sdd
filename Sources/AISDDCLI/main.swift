@@ -11,7 +11,7 @@ struct AISDD: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
-        version: "ai-sdd 0.0.1",
+        version: "ai-sdd 0.1.0",
         subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self]
     )
 }

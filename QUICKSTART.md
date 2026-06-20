@@ -37,7 +37,7 @@ export PATH="$PWD/.build/debug:$PATH"         # so `ai-sdd` (and compiled gates)
 this must succeed from any directory:
 
 ```sh
-ai-sdd --version        # → ai-sdd 0.0.1   (if "command not found", fix your PATH)
+ai-sdd --version        # → ai-sdd 0.1.0   (if "command not found", fix your PATH)
 ```
 
 > **Future install (roadmap).** Building from source is the only path today. Planned, in order of
