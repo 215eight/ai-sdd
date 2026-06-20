@@ -452,7 +452,7 @@ public enum GraphRenderer {
         .legend-swatch { border-radius: 999px; display: inline-block; height: 10px; width: 10px; }
         .dashboard-charts { align-items: start; display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-bottom: 28px; }
         .dashboard-chart { max-width: 100%; }
-        .dashboard-status-donut { max-width: 360px; }
+        .dashboard-status-donut { justify-self: center; max-width: 360px; }
         .dashboard-grouped-bars { width: 100%; }
         .dashboard-section { border-top: 1px solid var(--line); padding: 26px 0; }
         .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }

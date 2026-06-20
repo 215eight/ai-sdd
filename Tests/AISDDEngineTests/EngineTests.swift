@@ -1317,6 +1317,7 @@ struct EngineTests {
         #expect(page.contains("class=\"dashboard-chart dashboard-status-donut\""))
         #expect(page.contains("class=\"dashboard-chart dashboard-grouped-bars\""))
         #expect(page.contains("grid-template-columns: minmax(0, 1fr)"))
+        #expect(page.contains(".dashboard-status-donut { justify-self: center; max-width: 360px; }"))
         #expect(page.contains(".dashboard-grouped-bars { width: 100%; }"))
         for status in DashboardStatus.allCases {
             #expect(page.contains("--status-\(status.rawValue): \(DashboardCharts.defaultColors[status]!)"))
