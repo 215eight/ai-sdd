@@ -787,7 +787,8 @@ struct EngineTests {
             .init(heading: "Feature · hyrox-scraper", body: "HS-BODY")])
         #expect(doc.contains("# roxwod — project graph"))
         #expect(doc.contains("## Contents"))
-        #expect(doc.contains("- [Feature · hyrox-scraper](#feature--hyrox-scraper)"))  // GitHub-style anchor
+        #expect(doc.contains("- [Feature · hyrox-scraper](#feature-hyrox-scraper)"))   // collapsed slug
+        #expect(doc.contains("<a id=\"feature-hyrox-scraper\"></a>"))                  // explicit anchor → link works
         #expect(doc.contains("## Build pattern · roxwod"))
         #expect(doc.contains("BP-BODY"))
         #expect(doc.contains("HS-BODY"))
@@ -868,7 +869,8 @@ struct EngineTests {
                 .init(heading: "gql-gateway · code", body: "GQL")]),
             .init(name: "bnpl/accounting", fragments: [.init(heading: "accounting-svc · code", body: "ACCT")])])
         #expect(doc.contains("# bnpl — program graph"))
-        #expect(doc.contains("- [bnpl/loan-origination](#bnplloan-origination)"))
+        #expect(doc.contains("- [bnpl/loan-origination](#bnpl-loan-origination)"))   // collapsed slug
+        #expect(doc.contains("<a id=\"bnpl-loan-origination\"></a>"))                 // explicit anchor
         #expect(doc.contains("## bnpl/loan-origination"))
         #expect(doc.contains("### ledger-svc · code"))
         #expect(doc.contains("LEDGER"))

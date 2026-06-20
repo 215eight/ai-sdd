@@ -45,6 +45,8 @@ public enum GraphRenderer {
             lines.append("")
         }
         for section in sections {
+            // An explicit anchor so the TOC link works regardless of the viewer's heading-slug rules.
+            lines.append("<a id=\"\(anchor(section.heading))\"></a>")
             lines.append("## \(section.heading)")
             lines.append("")
             lines.append(section.body)
@@ -72,6 +74,7 @@ public enum GraphRenderer {
             lines.append("")
         }
         for milestone in milestones {
+            lines.append("<a id=\"\(anchor(milestone.name))\"></a>")
             lines.append("## \(milestone.name)")
             lines.append("")
             for fragment in milestone.fragments {
@@ -136,12 +139,19 @@ public enum GraphRenderer {
         return lines.joined(separator: "\n")
     }
 
-    /// A GitHub-style heading anchor: lowercase, spaces → `-`, drop other punctuation.
+    /// A clean slug for an explicit anchor id: lowercase, alphanumerics kept, separators (space /
+    /// hyphen / dropped punctuation like `·`) collapsed to a single `-`, with no leading/trailing `-`.
     static func anchor(_ heading: String) -> String {
         var out = ""
+        var pendingSeparator = false
         for ch in heading.lowercased() {
-            if ch.isLetter || ch.isNumber { out.append(ch) }
-            else if ch == " " || ch == "-" { out.append("-") }
+            if ch.isLetter || ch.isNumber {
+                if pendingSeparator && !out.isEmpty { out.append("-") }
+                out.append(ch)
+                pendingSeparator = false
+            } else {
+                pendingSeparator = true   // space, hyphen, or dropped punctuation → one separator
+            }
         }
         return out
     }
