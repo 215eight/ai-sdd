@@ -1,0 +1,12 @@
+summary: >-
+  Documented the project dashboard command and local-state caveats in
+  QUICKSTART.md, and added Swift Testing coverage that assembles a small factory
+  fixture, renders the dashboard page, writes dashboard HTML to disk, and asserts
+  the written output is a self-contained dashboard document.
+satisfies:
+  - quickstart-command
+  - quickstart-local-state
+  - quickstart-plant-live-out-of-scope
+  - generated-dashboard-verification
+  - existing-dashboard-behavior-preserved
+  - verification-commands

@@ -1,0 +1,20 @@
+items:
+  - id: quickstart-command
+    verdict: pass
+    notes: "QUICKSTART.md documents ai-sdd graph .ai-sdd --project --dashboard --out dashboard.html as the self-contained local project dashboard command."
+  - id: quickstart-local-state
+    verdict: pass
+    notes: "QUICKSTART.md states that dashboard status is overlaid from local .ai-sdd/runs state and is a machine-local snapshot, not a shared live team dashboard."
+  - id: quickstart-plant-live-out-of-scope
+    verdict: pass
+    notes: "QUICKSTART.md explicitly marks --plant --dashboard and live multi-user/team dashboards as out of scope for this workflow today."
+  - id: generated-dashboard-verification
+    verdict: pass
+    notes: "projectDashboardWorkflowWritesSelfContainedHTMLFile builds a small factory fixture, writes dashboard HTML to disk, and asserts a complete self-contained dashboard document with no script or CDN dependency."
+  - id: existing-dashboard-behavior-preserved
+    verdict: pass
+    notes: "The diff is limited to QUICKSTART.md and Tests/AISDDEngineTests/EngineTests.swift, with no changes to projection, rendering, run matching, or graph command implementation."
+  - id: verification-commands
+    verdict: pass
+    notes: "swift build, swift test, swift run ai-sdd validate .ai-sdd/features/project-status-dashboard, and swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/ai-sdd-dashboard.html && test -s /tmp/ai-sdd-dashboard.html passed."
+verdict: approve

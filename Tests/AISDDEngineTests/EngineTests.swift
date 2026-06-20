@@ -1137,6 +1137,41 @@ struct EngineTests {
         #expect(dashboard.sections[0].projection.rows.map(\.status) == [.runnable])
     }
 
+    @Test func projectDashboardWorkflowWritesSelfContainedHTMLFile() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try writePipeline(at: tmp, name: "factory", nodes: ["build"], edges: [])
+        let feature = tmp
+            .appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("dashboard", isDirectory: true)
+        try writePipeline(at: feature, name: "dashboard", nodes: ["plan", "implement"],
+                          edges: [("plan", "implement")])
+
+        let store = RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true))
+        try store.create(runId: "dashboard-run", pipelineDir: feature.standardizedFileURL.path)
+        try store.append(.nodeCompleted(node: "plan", producedArtifacts: []), to: "dashboard-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: tmp, runStore: store)
+        let page = GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
+        let output = tmp.appendingPathComponent("dashboard.html")
+        try page.write(to: output, atomically: true, encoding: .utf8)
+
+        let written = try String(contentsOf: output, encoding: .utf8)
+        #expect(!written.isEmpty)
+        #expect(written.hasPrefix("<!doctype html>"))
+        #expect(written.contains("<title>factory — ai-sdd dashboard</title>"))
+        #expect(written.contains("<style>"))
+        #expect(written.contains("Feature · dashboard"))
+        #expect(written.contains("class=\"dashboard-chart dashboard-status-donut\""))
+        #expect(written.contains("class=\"dashboard-chart dashboard-grouped-bars\""))
+        #expect(written.contains("dashboard-node status-done"))
+        #expect(written.contains("dashboard-node status-runnable"))
+        #expect(!written.contains("<script"))
+        #expect(!written.contains("cdn.jsdelivr"))
+    }
+
     private func writePipeline(at directory: URL, name: String, nodes: [String],
                                edges: [(String, String)]) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

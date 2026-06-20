@@ -1,0 +1,69 @@
+summary: >-
+  Document the project status dashboard command in adopter-facing quickstart
+  guidance and add workflow verification that generates a dashboard HTML file
+  from a small project fixture or the repo factory.
+scope:
+  in:
+    - Document ai-sdd graph .ai-sdd --project --dashboard --out <file> in QUICKSTART.md.
+    - Explain that dashboard status comes from local .ai-sdd/runs state and is not a shared live team view.
+    - State that plant dashboards and team-live dashboards remain out of scope for now.
+    - Add focused Swift Testing or equivalent scripted verification that generates dashboard HTML for a small factory fixture or the repo factory.
+    - Keep verification aligned with existing ProjectDashboardAssembler and GraphRenderer.dashboardPage behavior instead of changing dashboard projection or rendering semantics.
+    - Run the standard Swift build, test, feature validation, and dashboard generation commands.
+  out:
+    - No changes to the Graph command implementation, dashboard assembler, renderer, chart helpers, projection rules, RunStore, RunState, Scheduler, or Reducer.
+    - No support for --plant --dashboard, shared live dashboards, remote fragment manifests, publish adapters, auto-refresh, server mode, databases, authentication, or CDN chart libraries.
+    - No replacement or behavior change for existing Mermaid Markdown, --project, --plant, or --html graph modes.
+    - No architecture decision or ADR edits.
+acceptance:
+  - id: quickstart-command
+    description: QUICKSTART.md documents ai-sdd graph .ai-sdd --project --dashboard --out <file> as the project dashboard command.
+  - id: quickstart-local-state
+    description: QUICKSTART.md explains that dashboard status uses local .ai-sdd/runs state and is not a shared live team dashboard.
+  - id: quickstart-plant-live-out-of-scope
+    description: QUICKSTART.md states that plant dashboards and team-live dashboards are out of scope for the current dashboard workflow.
+  - id: generated-dashboard-verification
+    description: Tests or scripted verification generate a dashboard HTML file for a small fixture or the repo factory and assert the output is a self-contained dashboard document.
+  - id: existing-dashboard-behavior-preserved
+    description: The docs-and-verification slice does not require changes to existing dashboard rendering, projection, run matching, or graph command behavior.
+  - id: verification-commands
+    description: swift build, swift test, and swift run ai-sdd validate .ai-sdd/features/project-status-dashboard pass after implementation.
+decisions:
+  - id: docs-target
+    status: closed
+    decision: Update QUICKSTART.md rather than adding a new dashboard-specific documentation file.
+    rationale: The slice acceptance names QUICKSTART.md, and the quickstart already documents the graph workflow for adopters.
+  - id: dashboard-command-doc
+    status: closed
+    decision: Document the supported first-version command as ai-sdd graph .ai-sdd --project --dashboard --out <file>.
+    rationale: The feature requirements and CLI implementation make dashboard mode project-scoped and require --project.
+  - id: local-state-caveat
+    status: closed
+    decision: Describe dashboard status as local-run-state based and distinguish it from shared team-live progress.
+    rationale: Run state currently lives under local .ai-sdd/runs, while shared live status is explicitly deferred behind the shared state plane.
+  - id: plant-dashboard-caveat
+    status: closed
+    decision: Document plant dashboards as out of scope for the current dashboard workflow.
+    rationale: The closed feature decisions reject --plant --dashboard for this version.
+  - id: verification-shape
+    status: closed
+    decision: Add verification that actually writes or generates dashboard HTML, using a small fixture or the repo factory.
+    rationale: The slice acceptance requires end-to-end workflow evidence beyond pure projection and chart unit coverage.
+  - id: test-location
+    status: closed
+    decision: Put automated dashboard workflow verification in Tests/AISDDEngineTests/EngineTests.swift if test coverage is chosen.
+    rationale: Existing dashboard projection, assembler, chart, and page-rendering tests already live in that Swift Testing file.
+  - id: no-source-behavior-change
+    status: closed
+    decision: Keep this slice limited to documentation and verification rather than changing dashboard engine or CLI behavior.
+    rationale: The dependent CLI integration slice already added the command surface and assembler behavior this slice documents and verifies.
+files:
+  - QUICKSTART.md
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/project-status-dashboard
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/ai-sdd-dashboard.html
+  - test -s /tmp/ai-sdd-dashboard.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml
