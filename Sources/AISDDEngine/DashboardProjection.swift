@@ -1,3 +1,4 @@
+import Foundation
 import AISDDModels
 
 public enum DashboardStatus: String, Codable, CaseIterable, Equatable, Sendable {
@@ -63,6 +64,97 @@ public struct DashboardProjectionResult: Codable, Equatable, Sendable {
     public init(rows: [DashboardProjectionRow], summary: DashboardProjectionSummary) {
         self.rows = rows
         self.summary = summary
+    }
+}
+
+public struct ProjectDashboard: Equatable, Sendable {
+    public var title: String
+    public var sections: [GraphRenderer.DashboardSection]
+
+    public init(title: String, sections: [GraphRenderer.DashboardSection]) {
+        self.title = title
+        self.sections = sections
+    }
+}
+
+public enum ProjectDashboardError: Error, Equatable, LocalizedError, Sendable {
+    case noGraphs(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .noGraphs(path):
+            return "no dashboard graphs at '\(path)' — expected a pipeline.yaml and/or a features/ folder"
+        }
+    }
+}
+
+public enum ProjectDashboardAssembler {
+    public static func assemble(factoryDir: URL, runStore: RunStore,
+                                fileManager: FileManager = .default) throws -> ProjectDashboard {
+        let homeURL = factoryDir.standardizedFileURL
+        var sections: [GraphRenderer.DashboardSection] = []
+        var title = homeURL.lastPathComponent
+        let loader = SpecLoader()
+
+        if let env = try? loader.loadPipeline(atDirectory: homeURL) {
+            title = env.metadata.name
+            sections.append(.init(
+                heading: "Build pattern · \(env.metadata.name)",
+                projection: DashboardProjection.project(
+                    pipeline: env.spec,
+                    metadata: env.metadata,
+                    state: matchedState(for: homeURL, in: runStore))))
+        }
+
+        let featuresDir = homeURL.appendingPathComponent("features", isDirectory: true)
+        let entries = ((try? fileManager.contentsOfDirectory(
+            at: featuresDir, includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        for entry in entries {
+            let name = entry.lastPathComponent
+            if let env = try? loader.loadPipeline(atDirectory: entry) {
+                sections.append(.init(
+                    heading: "Feature · \(name)",
+                    projection: DashboardProjection.project(
+                        pipeline: env.spec,
+                        metadata: env.metadata,
+                        state: matchedState(for: entry, in: runStore))))
+            } else {
+                sections.append(.init(heading: "Feature · \(name)", projection: emptyProjection()))
+            }
+        }
+
+        guard !sections.isEmpty else {
+            throw ProjectDashboardError.noGraphs(factoryDir.path)
+        }
+        return ProjectDashboard(title: title, sections: sections)
+    }
+
+    private static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> RunState? {
+        let expected = pipelineDir.standardizedFileURL.path
+        for runId in (try? runStore.runIds()) ?? [] {
+            guard let meta = try? runStore.meta(of: runId),
+                  standardizedPath(meta.pipelineDir) == expected
+            else { continue }
+            return try? runStore.state(of: runId)
+        }
+        return nil
+    }
+
+    private static func standardizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+    }
+
+    private static func emptyProjection() -> DashboardProjectionResult {
+        DashboardProjectionResult(
+            rows: [],
+            summary: DashboardProjectionSummary(
+                totalFeatureCount: 0,
+                totalNodeCount: 0,
+                doneCount: 0,
+                statusTotals: Dictionary(uniqueKeysWithValues: DashboardStatus.allCases.map { ($0, 0) })))
     }
 }
 

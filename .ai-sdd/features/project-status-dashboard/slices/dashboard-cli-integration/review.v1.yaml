@@ -1,0 +1,47 @@
+items:
+  - id: dashboard-flag
+    verdict: pass
+    notes: The Graph command now declares a --dashboard flag.
+  - id: project-dashboard-output
+    verdict: pass
+    notes: Project dashboard mode assembles sections and writes self-contained dashboard HTML to --out.
+  - id: stdout-dashboard-output
+    verdict: pass
+    notes: When --out is omitted, dashboard mode prints the dashboard HTML to stdout.
+  - id: project-required
+    verdict: pass
+    notes: Dashboard mode without --project fails with a clear validation error.
+  - id: plant-rejected
+    verdict: pass
+    notes: --plant --dashboard is rejected before normal plant rendering with a clear validation error.
+  - id: html-combination-rejected
+    verdict: pass
+    notes: --dashboard --html is rejected because dashboard mode already emits final HTML.
+  - id: build-pattern-section
+    verdict: pass
+    notes: A loadable factory-root pipeline.yaml becomes a Build pattern dashboard section projected from that pipeline.
+  - id: feature-sections
+    verdict: pass
+    notes: Feature directories under features/ are enumerated as directories and sorted by directory name before section assembly.
+  - id: load-failure-graceful
+    verdict: pass
+    notes: An unloadable feature directory becomes an empty dashboard section instead of aborting project dashboard generation.
+  - id: no-features-graceful
+    verdict: pass
+    notes: A factory with only a build-pattern pipeline renders a valid one-section dashboard.
+  - id: no-runs-static-status
+    verdict: pass
+    notes: When no RunStore state matches a pipeline directory, the assembler passes nil state and existing projection fallback marks roots runnable and dependents pending.
+  - id: run-match-by-pipeline-dir
+    verdict: pass
+    notes: Run matching compares standardized RunMeta.pipelineDir values to standardized pipeline directory paths, independent of run id or feature slug.
+  - id: run-state-reflected
+    verdict: pass
+    notes: Matched RunState values are passed into DashboardProjection.project, preserving existing done, in-progress, runnable, rework, and escalated status rules.
+  - id: existing-graph-modes-preserved
+    verdict: pass
+    notes: Non-dashboard single graph, project graph, html graph wrapping, and plant code paths remain unchanged; CLI spot checks passed except for an existing stale checked-in plant fixture unrelated to this changeset.
+  - id: verification-commands
+    verdict: pass
+    notes: swift build, swift test, swift run ai-sdd validate .ai-sdd/features/project-status-dashboard, and dashboard CLI output checks passed.
+verdict: approve

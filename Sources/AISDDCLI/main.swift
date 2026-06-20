@@ -333,10 +333,14 @@ struct Graph: ParsableCommand {
     var project = false
     @Flag(name: .long, help: "Wrap the output in a self-contained HTML page (renders Mermaid in a browser).")
     var html = false
+    @Flag(name: .long, help: "Render a self-contained project status dashboard.")
+    var dashboard = false
 
     func run() throws {
         var doc: String
-        if let plant {
+        if dashboard {
+            doc = try dashboardDoc()
+        } else if let plant {
             doc = try plantDoc(plant)
         } else if let dir {
             doc = project ? try projectDoc(dir) : try singleDoc(dir)
@@ -356,6 +360,26 @@ struct Graph: ParsableCommand {
         } else {
             print(doc)
         }
+    }
+
+    private func dashboardDoc() throws -> String {
+        guard !html else {
+            throw ValidationError("--dashboard cannot be combined with --html; dashboard mode already renders self-contained HTML")
+        }
+        guard plant == nil else {
+            throw ValidationError("--plant --dashboard is not supported; dashboard mode requires --project over a factory directory")
+        }
+        guard project else {
+            throw ValidationError("--dashboard requires --project")
+        }
+        guard let dir else {
+            throw ValidationError("pass a repo factory dir with --project --dashboard")
+        }
+
+        let dashboard = try ProjectDashboardAssembler.assemble(
+            factoryDir: URL(fileURLWithPath: dir, isDirectory: true),
+            runStore: runStore())
+        return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
     }
 
     /// One pipeline → one graph (a feature graph or the build pattern). Decode-only — a graph

@@ -1,0 +1,108 @@
+summary: >-
+  Wire the existing dashboard projection and HTML renderer into ai-sdd graph as a
+  project-scoped --dashboard mode that loads the build pattern and feature graphs,
+  matches local runs by RunMeta.pipelineDir, and writes self-contained dashboard HTML.
+scope:
+  in:
+    - Add a --dashboard flag to the existing Graph command.
+    - Require dashboard mode to be used with project mode in the first version.
+    - Support ai-sdd graph .ai-sdd --project --dashboard --out <file> and stdout output when --out is omitted.
+    - Reject unsupported dashboard combinations such as --plant --dashboard, single-pipeline dashboard rendering, and --dashboard --html with clear validation errors.
+    - Reuse existing project discovery for the build pattern at <dir>/pipeline.yaml and feature graphs under <dir>/features/*.
+    - Build GraphRenderer.DashboardSection values by applying DashboardProjection.project to each successfully loaded build-pattern or feature pipeline.
+    - Scan the local RunStore and match a run to a loaded pipeline by comparing standardized RunMeta.pipelineDir values to that pipeline directory.
+    - Pass matched folded RunState values to the dashboard projection, and pass nil state when no matching run exists so static runnable/pending statuses are used.
+    - Preserve existing graph modes for single graph, --project, --plant, and --html.
+    - Add focused tests for project dashboard section assembly and run matching, plus command-level coverage where practical.
+  out:
+    - No changes to dashboard HTML layout, chart geometry, status colors, HTML escaping, or GraphRenderer.dashboardPage.
+    - No changes to DashboardProjection status precedence, owner fallback semantics, RunState, RunStore persistence format, Scheduler, or Reducer.
+    - No support for --plant --dashboard, shared live dashboards, remote fragment manifests, publish adapters, auto-refresh, server mode, databases, authentication, or CDN chart libraries.
+    - No replacement or behavior change for the existing Markdown/Mermaid --html graph mode.
+    - No new architecture decision or ADR edit.
+acceptance:
+  - id: dashboard-flag
+    description: The Graph command exposes a --dashboard flag.
+  - id: project-dashboard-output
+    description: Running ai-sdd graph .ai-sdd --project --dashboard --out <path> writes a self-contained dashboard HTML document to the requested path.
+  - id: stdout-dashboard-output
+    description: Running dashboard mode without --out prints the dashboard HTML to stdout.
+  - id: project-required
+    description: Dashboard mode without --project fails with a clear validation error.
+  - id: plant-rejected
+    description: --plant --dashboard fails with a clear validation error because plant dashboards are out of scope.
+  - id: html-combination-rejected
+    description: --dashboard --html fails with a clear validation error instead of wrapping dashboard HTML in the existing Mermaid HTML mode.
+  - id: build-pattern-section
+    description: When <dir>/pipeline.yaml loads, the dashboard includes a build-pattern section projected from that pipeline.
+  - id: feature-sections
+    description: The dashboard includes one section for every loadable feature directory under <dir>/features/*, sorted deterministically by feature directory name.
+  - id: load-failure-graceful
+    description: A feature that cannot be loaded does not crash project dashboard generation and is represented by an empty or explanatory section rather than preventing other sections from rendering.
+  - id: no-features-graceful
+    description: A project with a build-pattern pipeline and no features still renders a valid dashboard.
+  - id: no-runs-static-status
+    description: A project with no matching local runs renders static graph-derived statuses with root nodes runnable and dependent nodes pending.
+  - id: run-match-by-pipeline-dir
+    description: A local run whose id differs from a feature slug still drives that feature's dashboard statuses when its RunMeta.pipelineDir matches the standardized feature pipeline directory.
+  - id: run-state-reflected
+    description: Matched run state is reflected in dashboard statuses for done, in-progress, runnable, rework, and escalated nodes according to existing DashboardProjection rules.
+  - id: existing-graph-modes-preserved
+    description: Existing ai-sdd graph <dir>, ai-sdd graph <dir> --project, ai-sdd graph --plant <plant.yaml>, and existing --html behavior continue to work.
+  - id: verification-commands
+    description: swift build, swift test, and swift run ai-sdd validate .ai-sdd/features/project-status-dashboard pass after implementation.
+decisions:
+  - id: command-surface
+    status: closed
+    decision: Implement dashboard mode as --dashboard on the existing graph subcommand.
+    rationale: The feature requirements explicitly choose the existing graph command instead of a new top-level command.
+  - id: project-only
+    status: closed
+    decision: Require --project whenever --dashboard is used.
+    rationale: The first dashboard version is scoped to a project view over the build pattern and feature graphs.
+  - id: dashboard-output-mode
+    status: closed
+    decision: Render dashboard mode by calling GraphRenderer.dashboardPage directly and writing that HTML to --out or stdout.
+    rationale: Dashboard HTML is already self-contained and should not be passed through the existing Markdown/Mermaid --html wrapper.
+  - id: reject-html-combination
+    status: closed
+    decision: Treat --dashboard --html as an invalid option combination.
+    rationale: The existing --html flag wraps Markdown graph output for Mermaid rendering, while dashboard mode already returns final HTML.
+  - id: reject-plant-dashboard
+    status: closed
+    decision: Reject --plant --dashboard.
+    rationale: Plant dashboards are explicitly out of scope for this feature slice.
+  - id: section-source
+    status: closed
+    decision: "Use the existing project graph discovery shape: optional build-pattern pipeline at the project root plus feature directories under features/."
+    rationale: Preserving discovery behavior keeps existing project graph modes stable and makes dashboard mode an alternate projection of the same committed specs.
+  - id: run-matching
+    status: closed
+    decision: Match local runs to dashboard sections by standardized RunMeta.pipelineDir, not by run id or feature directory name.
+    rationale: The requirements call out robust run matching when run ids do not equal feature slugs.
+  - id: no-run-policy
+    status: closed
+    decision: Pass no state to DashboardProjection.project when no local run matches a pipeline.
+    rationale: Existing projection behavior already implements the required runnable-root and pending-dependent static fallback.
+  - id: load-failure-policy
+    status: closed
+    decision: Keep dashboard project generation tolerant of individual feature load failures.
+    rationale: Existing project graph generation degrades per feature, and the slice acceptance requires graceful handling.
+  - id: test-shape
+    status: closed
+    decision: Cover reusable project dashboard assembly and run matching with Swift Testing, and add CLI option behavior coverage where the current executable target shape makes it practical.
+    rationale: The test target depends on AISDDEngine rather than the executable target, so pure assembly logic should be isolated enough to test without overhauling package structure.
+  - id: source-scope
+    status: closed
+    decision: Limit implementation to the Graph command plus a narrow engine helper only if needed for testable project dashboard assembly.
+    rationale: Renderer, chart, projection, run store, and scheduler behavior already exist and should not be changed for CLI integration.
+files:
+  - Sources/AISDDCLI/main.swift
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/project-status-dashboard
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/ai-sdd-dashboard.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

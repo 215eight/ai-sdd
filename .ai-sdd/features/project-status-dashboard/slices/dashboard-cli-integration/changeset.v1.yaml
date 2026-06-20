@@ -1,0 +1,21 @@
+summary: >-
+  Added project-scoped graph dashboard CLI integration, including --dashboard flag
+  validation, dashboard HTML output routing, project section assembly, local run
+  matching by standardized RunMeta.pipelineDir, and focused engine tests for
+  dashboard section assembly.
+satisfies:
+  - dashboard-flag
+  - project-dashboard-output
+  - stdout-dashboard-output
+  - project-required
+  - plant-rejected
+  - html-combination-rejected
+  - build-pattern-section
+  - feature-sections
+  - load-failure-graceful
+  - no-features-graceful
+  - no-runs-static-status
+  - run-match-by-pipeline-dir
+  - run-state-reflected
+  - existing-graph-modes-preserved
+  - verification-commands

@@ -1073,6 +1073,88 @@ struct EngineTests {
         #expect(result.summary.statusTotals[.pending] == 1)
     }
 
+    @Test func projectDashboardAssemblerBuildsSectionsAndMatchesRunsByPipelineDir() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try writePipeline(at: tmp, name: "factory", nodes: ["build"], edges: [])
+        let features = tmp.appendingPathComponent("features", isDirectory: true)
+        let alpha = features.appendingPathComponent("alpha", isDirectory: true)
+        let beta = features.appendingPathComponent("beta", isDirectory: true)
+        let broken = features.appendingPathComponent("zeta-broken", isDirectory: true)
+        try writePipeline(at: alpha, name: "alpha", nodes: ["plan", "implement"],
+                          edges: [("plan", "implement")])
+        try writePipeline(at: beta, name: "beta", nodes: ["start", "finish"],
+                          edges: [("start", "finish")])
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        try "not: a pipeline".write(
+            to: broken.appendingPathComponent("pipeline.yaml"),
+            atomically: true,
+            encoding: .utf8)
+
+        let store = RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true))
+        try store.create(runId: "local-run-42", pipelineDir: alpha.standardizedFileURL.path)
+        try store.append(.nodeCompleted(node: "plan", producedArtifacts: []), to: "local-run-42")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: tmp, runStore: store)
+
+        #expect(dashboard.title == "factory")
+        #expect(dashboard.sections.map(\.heading) == [
+            "Build pattern · factory",
+            "Feature · alpha",
+            "Feature · beta",
+            "Feature · zeta-broken"
+        ])
+
+        let alphaRows = try #require(dashboard.sections.first { $0.heading == "Feature · alpha" }?.projection.rows)
+        #expect(Dictionary(uniqueKeysWithValues: alphaRows.map { ($0.node, $0.status) }) == [
+            "plan": .done,
+            "implement": .runnable
+        ])
+
+        let betaRows = try #require(dashboard.sections.first { $0.heading == "Feature · beta" }?.projection.rows)
+        #expect(betaRows.map(\.status) == [.runnable, .pending])
+
+        let brokenSection = try #require(dashboard.sections.first { $0.heading == "Feature · zeta-broken" })
+        #expect(brokenSection.projection.rows.isEmpty)
+        #expect(brokenSection.projection.summary.totalNodeCount == 0)
+    }
+
+    @Test func projectDashboardAssemblerRendersBuildPatternWithoutFeatures() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try writePipeline(at: tmp, name: "factory", nodes: ["build"], edges: [])
+
+        let dashboard = try ProjectDashboardAssembler.assemble(
+            factoryDir: tmp,
+            runStore: RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true)))
+
+        #expect(dashboard.title == "factory")
+        #expect(dashboard.sections.map(\.heading) == ["Build pattern · factory"])
+        #expect(dashboard.sections[0].projection.rows.map(\.status) == [.runnable])
+    }
+
+    private func writePipeline(at directory: URL, name: String, nodes: [String],
+                               edges: [(String, String)]) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let nodeLines = nodes.map { "    - { id: \($0) }" }.joined(separator: "\n")
+        let edgeLines = edges.map { "    - { from: \($0.0), to: \($0.1) }" }.joined(separator: "\n")
+        let edgesBlock = edgeLines.isEmpty ? "  edges: []" : "  edges:\n\(edgeLines)"
+        let yaml = """
+        apiVersion: ai-sdd/v1
+        kind: Pipeline
+        metadata: { name: \(name), version: 1 }
+        spec:
+          nodes:
+        \(nodeLines)
+        \(edgesBlock)
+        """
+        try yaml.write(to: directory.appendingPathComponent("pipeline.yaml"), atomically: true, encoding: .utf8)
+    }
+
     @Test func dashboardStatusDonutRendersSegmentsCountsAndColors() {
         let summary = DashboardProjectionSummary(
             totalFeatureCount: 1,
