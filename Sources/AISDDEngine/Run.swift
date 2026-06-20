@@ -1,4 +1,4 @@
-import FactoryModels
+import AISDDModels
 
 /// The state of a Run — a projection of the RunEvent log (architecture.md §6). Minimal for
 /// this slice: which Schemas are ready, and which nodes have completed.

@@ -22,10 +22,10 @@ public struct RunStore: Sendable {
 
     public init(root: URL) { self.root = root }
 
-    /// The conventional local store at `<base>/.factory/runs`.
+    /// The conventional local store at `<base>/.ai-sdd/runs`.
     public static func local(under base: URL) -> RunStore {
         RunStore(root: base
-            .appendingPathComponent(Layout.factoryDir, isDirectory: true)
+            .appendingPathComponent(Layout.homeDir, isDirectory: true)
             .appendingPathComponent(Layout.runsDir, isDirectory: true))
     }
 

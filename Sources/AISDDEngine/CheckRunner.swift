@@ -1,5 +1,5 @@
 import Foundation
-import FactoryModels
+import AISDDModels
 
 /// The verdict of one Check (architecture.md §8).
 public struct CheckResult: Codable, Equatable, Sendable {

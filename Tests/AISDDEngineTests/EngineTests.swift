@@ -1,7 +1,7 @@
 import Testing
 import Foundation
-import FactoryModels
-@testable import FactoryEngine
+import AISDDModels
+@testable import AISDDEngine
 
 struct EngineTests {
     let loader = SpecLoader()
@@ -9,7 +9,7 @@ struct EngineTests {
     // A small diamond DAG:  architect ──plan.v1──▶ {migrate, config};  migrate ──sql-migration.v1──▶ api
     let pipelineJSON = """
     {
-      "apiVersion": "factory/v1", "kind": "Pipeline",
+      "apiVersion": "ai-sdd/v1", "kind": "Pipeline",
       "metadata": { "name": "demo", "version": 1 },
       "spec": {
         "semantics": "enabler",
@@ -29,10 +29,10 @@ struct EngineTests {
     """
 
     let workerJSON: [String] = [
-        #"{ "apiVersion":"factory/v1","kind":"Worker","metadata":{"name":"architect"},"spec":{"workerKind":"transform","produces":[{"schema":"plan.v1"}]}}"#,
-        #"{ "apiVersion":"factory/v1","kind":"Worker","metadata":{"name":"migrate"},"spec":{"workerKind":"transform","consumes":[{"schema":"plan.v1","required":true}],"produces":[{"schema":"sql-migration.v1"}]}}"#,
-        #"{ "apiVersion":"factory/v1","kind":"Worker","metadata":{"name":"config"},"spec":{"workerKind":"transform","consumes":[{"schema":"plan.v1","required":true}],"produces":[{"schema":"config.v1"}]}}"#,
-        #"{ "apiVersion":"factory/v1","kind":"Worker","metadata":{"name":"api"},"spec":{"workerKind":"transform","consumes":[{"schema":"sql-migration.v1","required":true}],"produces":[{"schema":"openapi.v1"}]}}"#
+        #"{ "apiVersion":"ai-sdd/v1","kind":"Worker","metadata":{"name":"architect"},"spec":{"workerKind":"transform","produces":[{"schema":"plan.v1"}]}}"#,
+        #"{ "apiVersion":"ai-sdd/v1","kind":"Worker","metadata":{"name":"migrate"},"spec":{"workerKind":"transform","consumes":[{"schema":"plan.v1","required":true}],"produces":[{"schema":"sql-migration.v1"}]}}"#,
+        #"{ "apiVersion":"ai-sdd/v1","kind":"Worker","metadata":{"name":"config"},"spec":{"workerKind":"transform","consumes":[{"schema":"plan.v1","required":true}],"produces":[{"schema":"config.v1"}]}}"#,
+        #"{ "apiVersion":"ai-sdd/v1","kind":"Worker","metadata":{"name":"api"},"spec":{"workerKind":"transform","consumes":[{"schema":"sql-migration.v1","required":true}],"produces":[{"schema":"openapi.v1"}]}}"#
     ]
 
     private func loadWorkers() throws -> [String: WorkerSpec] {
@@ -94,7 +94,7 @@ struct EngineTests {
 
     // Malformed YAML (unterminated flow mapping) → SpecLoadError.syntax (decode IS validation, ADR-0020).
     @Test func malformedYAMLThrows() throws {
-        let badYAML = "apiVersion: factory/v1\nkind: Pipeline\nmetadata: { name: x"  // missing closing brace
+        let badYAML = "apiVersion: ai-sdd/v1\nkind: Pipeline\nmetadata: { name: x"  // missing closing brace
         let error = try #require(throws: SpecLoadError.self) { try loader.loadPipelineYAML(badYAML) }
         #expect(error.isSyntax)
     }
@@ -102,7 +102,7 @@ struct EngineTests {
     // A missing required field (metadata.name) → SpecLoadError.schema.
     @Test func missingRequiredFieldThrows() throws {
         let noName = """
-        apiVersion: factory/v1
+        apiVersion: ai-sdd/v1
         kind: Worker
         metadata: { version: 1 }
         spec: { workerKind: transform }
@@ -114,7 +114,7 @@ struct EngineTests {
     // A port without a `schema` → SpecLoadError.schema.
     @Test func portWithoutSchemaThrows() throws {
         let noSchema = """
-        apiVersion: factory/v1
+        apiVersion: ai-sdd/v1
         kind: Worker
         metadata: { name: broken }
         spec: { consumes: [{ required: true }] }
@@ -127,7 +127,7 @@ struct EngineTests {
     @Test func edgeTypeMismatchIsCaught() throws {
         let badPipeline = """
         {
-          "apiVersion": "factory/v1", "kind": "Pipeline", "metadata": { "name": "bad" },
+          "apiVersion": "ai-sdd/v1", "kind": "Pipeline", "metadata": { "name": "bad" },
           "spec": {
             "nodes": [ { "id": "migrate", "worker": "migrate" }, { "id": "api", "worker": "api" } ],
             "edges": [ { "from": "migrate", "to": "api", "artifact": "wrong.v1" } ]
@@ -152,7 +152,7 @@ struct EngineTests {
     @Test func unknownNodeEdgeIsCaught() throws {
         let badPipeline = """
         {
-          "apiVersion": "factory/v1", "kind": "Pipeline", "metadata": { "name": "bad" },
+          "apiVersion": "ai-sdd/v1", "kind": "Pipeline", "metadata": { "name": "bad" },
           "spec": {
             "nodes": [ { "id": "architect", "worker": "architect" } ],
             "edges": [ { "from": "architect", "to": "ghost", "artifact": "plan.v1" } ]
@@ -338,7 +338,7 @@ struct EngineTests {
     @Test func unknownCheckIsCaught() throws {
         let pipeline = try loader.loadPipeline(Data("""
         {
-          "apiVersion": "factory/v1", "kind": "Pipeline", "metadata": { "name": "c" },
+          "apiVersion": "ai-sdd/v1", "kind": "Pipeline", "metadata": { "name": "c" },
           "spec": { "nodes": [ { "id": "architect", "worker": "architect" } ], "edges": [] }
         }
         """.utf8)).spec
@@ -357,7 +357,7 @@ struct EngineTests {
     // A Check spec decodes into the strict type.
     @Test func loadsCheckSpec() throws {
         let env = try loader.loadCheck(Data(
-            #"{ "apiVersion":"factory/v1","kind":"Check","metadata":{"name":"unit"},"spec":{"checkKind":"deterministic","command":"swift test"}}"#.utf8))
+            #"{ "apiVersion":"ai-sdd/v1","kind":"Check","metadata":{"name":"unit"},"spec":{"checkKind":"deterministic","command":"swift test"}}"#.utf8))
         #expect(env.metadata.name == "unit")
         #expect(env.spec == CheckSpec(checkKind: "deterministic", command: "swift test"))
     }
@@ -431,7 +431,7 @@ struct EngineTests {
     @Test func subPipelineCompletionIsDetectable() throws {
         let sub = try loader.loadPipeline(Data("""
         {
-          "apiVersion": "factory/v1", "kind": "Pipeline", "metadata": { "name": "cy" },
+          "apiVersion": "ai-sdd/v1", "kind": "Pipeline", "metadata": { "name": "cy" },
           "spec": { "nodes": [ { "id": "architect", "worker": "a" }, { "id": "coder", "worker": "c" } ],
                     "edges": [ { "from": "architect", "to": "coder", "artifact": "plan.v1" } ] }
         }
@@ -460,7 +460,7 @@ struct EngineTests {
 
     private let planSchemaJSON = """
     {
-      "apiVersion": "factory/v1", "kind": "Schema", "metadata": { "name": "feature-plan", "version": 1 },
+      "apiVersion": "ai-sdd/v1", "kind": "Schema", "metadata": { "name": "feature-plan", "version": 1 },
       "spec": { "fields": {
         "decisions": { "type": "list", "required": true,
           "invariants": [ { "nonEmpty": true }, { "all": { "field": "status", "eq": "closed" } } ] },
@@ -507,7 +507,7 @@ struct EngineTests {
     // The review Schema: per-item verdicts must all be `pass`, and the overall verdict `approve`.
     private let reviewSchemaJSON = """
     {
-      "apiVersion": "factory/v1", "kind": "Schema", "metadata": { "name": "review", "version": 1 },
+      "apiVersion": "ai-sdd/v1", "kind": "Schema", "metadata": { "name": "review", "version": 1 },
       "spec": { "fields": {
         "items": { "type": "list", "required": true, "invariants": [
           { "nonEmpty": true },
@@ -809,7 +809,7 @@ struct EngineTests {
     @Test func fragmentHeaderRendersTagsOrNil() {
         let tagged = SpecMetadata(name: "loan-origination", correlation: "bnpl/loan-origination",
             factory: "code", owner: ["alice"],
-            origin: Origin(repo: "acme/ledger-svc", tag: "v2.1.0", hash: "def4567890", path: ".factory/features/loan"))
+            origin: Origin(repo: "acme/ledger-svc", tag: "v2.1.0", hash: "def4567890", path: ".ai-sdd/features/loan"))
         let header = GraphRenderer.fragmentHeader(tagged)
         #expect(header?.contains("**lane** code") == true)
         #expect(header?.contains("**owner** alice") == true)
@@ -821,14 +821,14 @@ struct EngineTests {
     // The new metadata + node owner decode from YAML (additive, optional).
     @Test func fragmentTagsDecodeFromYAML() throws {
         let yaml = """
-        apiVersion: factory/v1
+        apiVersion: ai-sdd/v1
         kind: Pipeline
         metadata:
           name: loan-origination
           correlation: bnpl/loan-origination
           factory: code
           owner: [alice]
-          origin: { repo: acme/ledger-svc, tag: v2.1.0, hash: def456, path: .factory/features/loan }
+          origin: { repo: acme/ledger-svc, tag: v2.1.0, hash: def456, path: .ai-sdd/features/loan }
         spec:
           nodes: [ { id: models, kind: pipeline, pipeline: ../.., stack: swift, owner: [bob] } ]
           edges: []
@@ -837,7 +837,7 @@ struct EngineTests {
         #expect(env.metadata.correlation == "bnpl/loan-origination")
         #expect(env.metadata.factory == "code")
         #expect(env.metadata.owner == ["alice"])
-        #expect(env.metadata.origin == Origin(repo: "acme/ledger-svc", tag: "v2.1.0", hash: "def456", path: ".factory/features/loan"))
+        #expect(env.metadata.origin == Origin(repo: "acme/ledger-svc", tag: "v2.1.0", hash: "def456", path: ".ai-sdd/features/loan"))
         #expect(env.spec.nodes[0].owner == ["bob"])
     }
 
@@ -852,7 +852,7 @@ struct EngineTests {
         let md = "# demo\n\n```mermaid\nflowchart TD\n  a --> b\n```\n"
         let page = GraphRenderer.htmlPage(title: "demo", markdown: md)
         #expect(page.hasPrefix("<!doctype html>"))
-        #expect(page.contains("<title>demo — factory graph</title>"))
+        #expect(page.contains("<title>demo — ai-sdd graph</title>"))
         #expect(page.contains("flowchart TD"))                     // the markdown is embedded
         #expect(page.contains("mermaid.esm.min.mjs"))              // mermaid is loaded
         #expect(page.contains("marked.parse"))                     // markdown is rendered
@@ -911,17 +911,17 @@ struct EngineTests {
     // A Plant spec decodes its fragment list from YAML.
     @Test func plantSpecDecodes() throws {
         let env = try loader.loadPlantYAML("""
-        apiVersion: factory/v1
+        apiVersion: ai-sdd/v1
         kind: Plant
         metadata: { name: bnpl, version: 1 }
         spec:
           fragments:
-            - { path: ../ledger-svc/.factory/features/loan-origination }
-            - { path: ../gql-gateway/.factory/features/loan-origination }
+            - { path: ../ledger-svc/.ai-sdd/features/loan-origination }
+            - { path: ../gql-gateway/.ai-sdd/features/loan-origination }
         """)
         #expect(env.metadata.name == "bnpl")
         #expect(env.spec.fragments.count == 2)
-        #expect(env.spec.fragments[0].path == "../ledger-svc/.factory/features/loan-origination")
+        #expect(env.spec.fragments[0].path == "../ledger-svc/.ai-sdd/features/loan-origination")
     }
 
     // A join edge with the `*` wildcard renders an unlabelled arrow per source.
@@ -940,7 +940,7 @@ struct EngineTests {
     // The store is append-only; state is always a pure projection of the replayed event log.
     @Test func runStorePersistsAndReplays() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("factory-test-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("ai-sdd-test-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let store = RunStore(root: tmp)

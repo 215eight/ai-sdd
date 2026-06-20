@@ -1,5 +1,5 @@
 import Foundation
-import FactoryModels
+import AISDDModels
 
 /// Cross-references the `provides`/`requires` contracts declared across fragments and decides
 /// version compatibility (ADR-0027). Git-native semver: a producer's `tag` (e.g. `v2.1.0`) versus a

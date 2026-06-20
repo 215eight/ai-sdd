@@ -1,9 +1,9 @@
 import Foundation
 
-/// The factory's on-disk names, defined in exactly one place so no path literal is repeated.
+/// The tool's on-disk names, defined in exactly one place so no path literal is repeated.
 /// The `*Layout` structs below turn these into concrete `URL`s.
 enum Layout {
-    static let factoryDir = ".factory"
+    static let homeDir = ".ai-sdd"
     static let runsDir = "runs"
     static let artifactsDir = "artifacts"
 
@@ -40,15 +40,15 @@ struct RunLayout {
     }
 }
 
-/// Where produced artifacts live under a workspace (interim convention, see factory-compile-schema):
-/// `<workspace>/.factory/artifacts/<schema>.<ext>`. The gates read from here; the engine reads a
+/// Where produced artifacts live under a workspace (interim convention, see ai-sdd-compile-schema):
+/// `<workspace>/.ai-sdd/artifacts/<schema>.<ext>`. The gates read from here; the engine reads a
 /// failed verdict artifact from here to route rework (§9).
 public struct ArtifactLayout {
     public let workspace: URL
     public init(workspace: URL) { self.workspace = workspace }
 
     public var dir: URL {
-        workspace.appendingPathComponent(Layout.factoryDir, isDirectory: true)
+        workspace.appendingPathComponent(Layout.homeDir, isDirectory: true)
             .appendingPathComponent(Layout.artifactsDir, isDirectory: true)
     }
     public func file(schema: String, ext: String) -> URL {

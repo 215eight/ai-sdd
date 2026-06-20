@@ -1,4 +1,4 @@
-import FactoryModels
+import AISDDModels
 
 /// A static (load-time) validation finding.
 public struct ValidationIssue: Equatable, Sendable {

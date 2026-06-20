@@ -1,6 +1,6 @@
 import Foundation
 import Yams
-import FactoryModels
+import AISDDModels
 
 /// A structural violation of a Schema's fields/invariants.
 public struct SchemaViolation: Equatable, Sendable {
@@ -11,7 +11,7 @@ public struct SchemaViolation: Equatable, Sendable {
 
 /// The deterministic Tier-1 executor: checks a structured artifact against a Schema's
 /// `fields` + `invariants` and returns the violations (empty == valid). A compiled Tier-1
-/// check invokes this (via `factory check`); the engine then gates on its exit status.
+/// check invokes this (via `ai-sdd check`); the engine then gates on its exit status.
 public enum SchemaValidator {
     public static func validate(_ schema: SchemaSpec, artifactYAML: String) throws -> [SchemaViolation] {
         let object = (try Yams.load(yaml: artifactYAML)) as? [String: Any] ?? [:]

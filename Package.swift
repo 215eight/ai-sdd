@@ -2,17 +2,17 @@
 
 import PackageDescription
 
-// The new spec-driven Factory engine. The old phase-based engine is preserved under
-// legacy/ for reference.
+// The new spec-driven ai-sdd engine (modeled internally on a software-factory analogy). The old
+// phase-based engine is preserved under legacy/ for reference.
 let package = Package(
-    name: "factory",
+    name: "ai-sdd",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .library(name: "FactoryModels", targets: ["FactoryModels"]),
-        .library(name: "FactoryEngine", targets: ["FactoryEngine"]),
-        .executable(name: "factory", targets: ["FactoryCLI"])
+        .library(name: "AISDDModels", targets: ["AISDDModels"]),
+        .library(name: "AISDDEngine", targets: ["AISDDEngine"]),
+        .executable(name: "ai-sdd", targets: ["AISDDCLI"])
     ],
     dependencies: [
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
@@ -20,21 +20,21 @@ let package = Package(
     ],
     targets: [
         // Declarative spec types (Codable) + runtime types. No dependencies.
-        .target(name: "FactoryModels"),
+        .target(name: "AISDDModels"),
         // The deterministic engine: spec loader (JSON + YAML), validator, Scheduler, Reducer.
         .target(
-            name: "FactoryEngine",
-            dependencies: ["FactoryModels", .product(name: "Yams", package: "Yams")]
+            name: "AISDDEngine",
+            dependencies: ["AISDDModels", .product(name: "Yams", package: "Yams")]
         ),
         // The CLI the agent drives (Mode B): validate / start / next / submit.
         .executableTarget(
-            name: "FactoryCLI",
+            name: "AISDDCLI",
             dependencies: [
-                "FactoryEngine",
-                "FactoryModels",
+                "AISDDEngine",
+                "AISDDModels",
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
         ),
-        .testTarget(name: "FactoryEngineTests", dependencies: ["FactoryEngine", "FactoryModels"])
+        .testTarget(name: "AISDDEngineTests", dependencies: ["AISDDEngine", "AISDDModels"])
     ]
 )

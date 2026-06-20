@@ -1,4 +1,4 @@
-import FactoryModels
+import AISDDModels
 
 /// The pure planner (architecture.md §6). Readiness is computed over the Pipeline's central
 /// edge list — the Scheduler never polls Workers or auto-discovers connections.

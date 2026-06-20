@@ -1,6 +1,6 @@
 import Foundation
 import Yams
-import FactoryModels
+import AISDDModels
 
 /// A typed error from loading a spec, so callers (and tests) get the *exact* failure rather than
 /// a raw `DecodingError` / Yams error. (ADR-0020: decode == structural validation.)
@@ -37,7 +37,7 @@ public struct SpecLoader: Sendable {
     /// Load just the pipeline spec from a workspace dir (its `pipeline.yaml`, path via
     /// `WorkspaceLayout`) — decode only, no referential validation or worker/check loading. For
     /// tools that need only the topology, e.g. graph rendering: a graph should render regardless of
-    /// whether the gates are fully wired (that's `factory validate`'s job, not the renderer's).
+    /// whether the gates are fully wired (that's `ai-sdd validate`'s job, not the renderer's).
     public func loadPipeline(atDirectory directory: URL) throws -> SpecEnvelope<PipelineSpec> {
         try loadPipelineYAML(String(contentsOf: WorkspaceLayout(dir: directory).pipeline, encoding: .utf8))
     }
