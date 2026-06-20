@@ -1,6 +1,6 @@
 ---
-name: factory-compile-schema
-description: Compile a factory Schema (.factory/schemas/*.schema.yaml) into the deterministic CheckSpecs the engine runs, and wire them onto the worker that produces that schema. Bootstrap-time authoring — the output is committed and frozen, not regenerated per run. Use when a schema is added or changed, or while bootstrapping a repo's factory.
+name: ai-sdd-compile-schema
+description: Compile a factory Schema (.ai-sdd/schemas/*.schema.yaml) into the deterministic CheckSpecs the engine runs, and wire them onto the worker that produces that schema. Bootstrap-time authoring — the output is committed and frozen, not regenerated per run. Use when a schema is added or changed, or while bootstrapping a repo's factory.
 ---
 
 # Compiling a Schema into gates
@@ -10,8 +10,8 @@ The principle: **you author the checks once, at bootstrap; the engine executes t
 on every run.** Generated checks are committed and reviewed — never regenerated mid-run (that would
 break reproducibility).
 
-Input:  `.factory/schemas/<name>.schema.yaml`
-Output: `.factory/checks/<name>.<id>.check.yaml` (one per gate) + the ids added to the worker that
+Input:  `.ai-sdd/schemas/<name>.schema.yaml`
+Output: `.ai-sdd/checks/<name>.<id>.check.yaml` (one per gate) + the ids added to the worker that
         `produces: <name>.vN`.
 
 ## Artifact-location convention (interim)
@@ -19,11 +19,11 @@ Output: `.factory/checks/<name>.<id>.check.yaml` (one per gate) + the ids added 
 Until a real artifact store exists, a produced artifact lives at a stable, gitignored path:
 
 ```
-.factory/artifacts/<name>.v<version>.<format>     # e.g. .factory/artifacts/feature-plan.v1.yaml
+.ai-sdd/artifacts/<name>.v<version>.<format>     # e.g. .ai-sdd/artifacts/feature-plan.v1.yaml
 ```
 
-The producing worker's skill writes there; compiled checks read from there. (`.factory/artifacts/`
-and `.factory/runs/` are gitignored; the rest of `.factory/` is committed.)
+The producing worker's skill writes there; compiled checks read from there. (`.ai-sdd/artifacts/`
+and `.ai-sdd/runs/` are gitignored; the rest of `.ai-sdd/` is committed.)
 
 ## Compile each tier
 
@@ -35,13 +35,13 @@ If the schema has any `fields`, emit exactly one check that runs the validator. 
 template — no judgement:
 
 ```yaml
-# .factory/checks/<name>.structure.check.yaml
-apiVersion: factory/v1
+# .ai-sdd/checks/<name>.structure.check.yaml
+apiVersion: ai-sdd/v1
 kind: Check
 metadata: { name: <name>.structure }
 spec:
   checkKind: deterministic
-  command: "factory check .factory/schemas/<name>.schema.yaml .factory/artifacts/<name>.v<version>.<format>"
+  command: "ai-sdd check .ai-sdd/schemas/<name>.schema.yaml .ai-sdd/artifacts/<name>.v<version>.<format>"
   required: true
 ```
 
@@ -55,15 +55,15 @@ the judge, and its verdict is captured structurally and enforced deterministical
 ### Tier 2 — `rules` → one deterministic command check each
 
 A rule's check is `required: true` when its command is **trusted by construction**, and advisory
-until eval'd only when you **hand-authored** a bespoke command. Trusted means: an `factory` engine
-subcommand (`factory check` / `factory scope` / `factory cover`), verified by the engine's own
+until eval'd only when you **hand-authored** a bespoke command. Trusted means: an `ai-sdd` engine
+subcommand (`ai-sdd check` / `ai-sdd scope` / `ai-sdd cover`), verified by the engine's own
 tests — not something to re-prove per repo. For each rule:
 
 - **explicit `command`** → copy it verbatim; `required: <rule.severity == blocking>` (mechanical).
 - **intent mapped to a trusted executor** → emit the mapped command **`required: true` immediately**
   (no eval gate — the executor is already verified). Known mappings:
-  - `intent: "changed files ⊆ <plan>.files"` → `factory scope --plan .factory/artifacts/<plan>.v<ver>.<fmt> --repo .`
-  - `intent: "review items ⊇ <plan>.acceptance"` → `factory cover --plan .factory/artifacts/<plan>.v<ver>.<fmt> --review .factory/artifacts/<name>.v<ver>.<fmt>`
+  - `intent: "changed files ⊆ <plan>.files"` → `ai-sdd scope --plan .ai-sdd/artifacts/<plan>.v<ver>.<fmt> --repo .`
+  - `intent: "review items ⊇ <plan>.acceptance"` → `ai-sdd cover --plan .ai-sdd/artifacts/<plan>.v<ver>.<fmt> --review .ai-sdd/artifacts/<name>.v<ver>.<fmt>`
 - **intent with no trusted executor** (you hand-write a script) → emit it **`required: false`** and
   **eval-gate it** (below); promote to `required: true` only once it clears its eval. Write the
   smallest deterministic command that decides the rule, reading only the fields in `over:`.
@@ -81,7 +81,7 @@ spec:
 
 ## Wire to the producer
 
-Find the worker that `produces: <name>.vN` (read `.factory/pipeline.yaml` + `.factory/workers/`).
+Find the worker that `produces: <name>.vN` (read `.ai-sdd/pipeline.yaml` + `.ai-sdd/workers/`).
 Append every generated check id to that worker's `checks: [...]`. Deterministic structural + Tier-2
 checks attach as blocking; judge checks attach (advisory until eval'd).
 
@@ -89,15 +89,15 @@ checks attach as blocking; judge checks attach (advisory until eval'd).
 
 Two things are **trusted by construction** and ship `required: true` with no eval: the mechanical
 checks (Tier-1 structural template, explicit-command rules) and any intent that maps to a **trusted
-`factory` executor** (`factory check` / `factory scope` / `factory cover`) — those executors are
+`ai-sdd` executor** (`ai-sdd check` / `ai-sdd scope` / `ai-sdd cover`) — those executors are
 verified by the engine's own tests, so re-proving them per repo is redundant. What must prove itself
 is anything you **hand-authored** — a bespoke (non-executor) Tier-2 command, or a Tier-3 judge:
 
-- Keep fixtures under `.factory/evals/<check-id>/` with known-good and known-bad cases.
+- Keep fixtures under `.ai-sdd/evals/<check-id>/` with known-good and known-bad cases.
 - The check must pass the good and fail the bad (for a judge: agree with the human labels above its
   `threshold`).
 - Until such a gate clears its eval, leave it `required: false` (advisory). Promote it only when it
-  does. (A trusted-executor intent like `factory scope` is **not** in this set — it is blocking now.)
+  does. (A trusted-executor intent like `ai-sdd scope` is **not** in this set — it is blocking now.)
 
 ## Freeze + regenerate intentionally
 
@@ -108,20 +108,20 @@ regenerate during a run.
 ## Worked example
 
 `feature-plan.schema.yaml` (fields + a `plan-sound` judge) compiles to:
-- `feature-plan.structure.check.yaml` — deterministic (`factory check …`), blocking.
+- `feature-plan.structure.check.yaml` — deterministic (`ai-sdd check …`), blocking.
 - `feature-plan.plan-sound.check.yaml` — judge, advisory until eval'd.
 …both wired onto the `architect` worker (it `produces: feature-plan.v1`).
 
 `changeset.schema.yaml` (fields: summary, satisfies; rules: build, unit, diff-in-scope) compiles to:
-- `changeset.structure.check.yaml` — deterministic (`factory check …`), blocking.
+- `changeset.structure.check.yaml` — deterministic (`ai-sdd check …`), blocking.
 - `changeset.build.check.yaml` / `changeset.unit.check.yaml` — explicit commands, blocking.
-- `changeset.diff-in-scope.check.yaml` — `factory scope --plan …feature-plan.v1.yaml --repo .`,
+- `changeset.diff-in-scope.check.yaml` — `ai-sdd scope --plan …feature-plan.v1.yaml --repo .`,
   **blocking** (trusted executor — no eval gate; this was the bug: scope was being left advisory).
 …wired onto the `implementer` worker.
 
 `review.schema.yaml` (fields encode the verdict; rule: coverage) compiles to:
-- `review.structure.check.yaml` — deterministic (`factory check …`) — **this is the verdict gate**,
+- `review.structure.check.yaml` — deterministic (`ai-sdd check …`) — **this is the verdict gate**,
   blocking (a reject or any failed item fails it → rework).
-- `review.coverage.check.yaml` — `factory cover --plan …feature-plan.v1.yaml --review …review.v1.yaml`,
+- `review.coverage.check.yaml` — `ai-sdd cover --plan …feature-plan.v1.yaml --review …review.v1.yaml`,
   blocking (trusted executor): the review must judge every acceptance item.
 …wired onto the `reviewer` worker. The reviewer is a real gate, not advisory notes.

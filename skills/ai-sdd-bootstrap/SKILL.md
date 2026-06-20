@@ -1,12 +1,12 @@
 ---
-name: factory-bootstrap
-description: Stand up (or refresh) an ai-sdd factory for a repository so any coding agent — claude-code, codex, … — can drive it. Discovers the repo's conventions, scaffolds the .factory/ home, authors worker skills + schemas, compiles the deterministic gates, and wires provider-neutral skill surfacing (AGENTS.md + per-agent symlinks). Use when onboarding a repo to ai-sdd or re-bootstrapping after the codebase/conventions drift.
+name: ai-sdd-bootstrap
+description: Stand up (or refresh) an ai-sdd factory for a repository so any coding agent — claude-code, codex, … — can drive it. Discovers the repo's conventions, scaffolds the .ai-sdd/ home, authors worker skills + schemas, compiles the deterministic gates, and wires provider-neutral skill surfacing (AGENTS.md + per-agent symlinks). Use when onboarding a repo to ai-sdd or re-bootstrapping after the codebase/conventions drift.
 ---
 
 # Bootstrapping a repo's factory
 
 Stand up everything a repo needs to be built by ai-sdd, **provider-neutrally**. The output is a
-committed `.factory/` home plus per-agent pointers — one source of truth, many agent front-ends.
+committed `.ai-sdd/` home plus per-agent pointers — one source of truth, many agent front-ends.
 Repeatable: re-running refreshes conventions/schemas and regenerates gates intentionally.
 
 ## 1. Discover the repo — evidence first, flag the rest
@@ -35,13 +35,13 @@ manifest + any existing local packages) · naming + layering · CI/release.
 Record, per change-type: the **evidence**, the **convention**, and whether it was **confirmed** or
 left an **open gap**. That record seeds the discovery eval set (see *Discovery quality* below).
 
-## 2. Scaffold the `.factory/` home
+## 2. Scaffold the `.ai-sdd/` home
 
 ```
-.factory/
+.ai-sdd/
   pipeline.yaml          the build pattern (e.g. architect → implementer → reviewer)
   workers/               role specs (signature + task.skill + stack); no inline prompts
-  schemas/               per-artifact schema-metadata (fields/rules/judge) — see factory-compile-schema
+  schemas/               per-artifact schema-metadata (fields/rules/judge) — see ai-sdd-compile-schema
   conventions/<stack>.md the house style, bootstrapped FROM the codebase (not hand-invented)
   skills/                worker skills + the copied framework skills (below)
   stacks/ traits/ resources/   design-only specs (engine ignores today) if modeling the full factory
@@ -50,9 +50,9 @@ left an **open gap**. That record seeds the discovery eval set (see *Discovery q
 
 ## 3. Author worker skills + schemas
 
-- Write the per-role **worker skills** into `.factory/skills/` (e.g. `plan-feature`,
+- Write the per-role **worker skills** into `.ai-sdd/skills/` (e.g. `plan-feature`,
   `implement-feature`, `review-feature`), specialized to the repo's conventions.
-- Write a **schema** per produced artifact in `.factory/schemas/` — its structure, `rules`, and
+- Write a **schema** per produced artifact in `.ai-sdd/schemas/` — its structure, `rules`, and
   `judge` (the schema-metadata vocabulary). This is what makes gates deterministic.
 
 **Thread an acceptance checklist through the three roles** — this is what turns the reviewer into a
@@ -69,18 +69,18 @@ real gate instead of advisory notes:
   defect, the planner for a plan/contract defect.
 
 The review schema's invariants (all items `pass`, overall `verdict == approve`) make this verdict a
-**deterministic, blocking gate** — see [factory-compile-schema](../factory-compile-schema/SKILL.md);
+**deterministic, blocking gate** — see [ai-sdd-compile-schema](../ai-sdd-compile-schema/SKILL.md);
 the reviewer *is* the judge, captured and enforced structurally, no judge-runner required.
 
 ## 4. Copy the framework skills (provider-neutral source)
 
-Copy the framework skills from the ai-sdd install's `skills/` into `.factory/skills/`:
-`factory-plan` (the planner), `factory-run` (the driver), and `factory-compile-schema` (the gate
+Copy the framework skills from the ai-sdd install's `skills/` into `.ai-sdd/skills/`:
+`ai-sdd-plan` (the planner), `ai-sdd-run` (the driver), and `ai-sdd-compile-schema` (the gate
 compiler). They live alongside the worker skills — one neutral home.
 
 ## 5. Compile the gates
 
-For each schema, run **factory-compile-schema**: it emits `.factory/checks/*.check.yaml` and wires
+For each schema, run **ai-sdd-compile-schema**: it emits `.ai-sdd/checks/*.check.yaml` and wires
 the ids onto the worker that produces that schema. Eval-gate any authored (intent/judge) checks
 before promoting them to blocking.
 
@@ -88,33 +88,33 @@ before promoting them to blocking.
 
 The factory must be drivable by any agent, so skills are surfaced, not duplicated:
 
-- **`AGENTS.md`** (repo root) — point at `.factory/skills/` and how to drive (the `factory-run`
+- **`AGENTS.md`** (repo root) — point at `.ai-sdd/skills/` and how to drive (the `ai-sdd-run`
   loop). This is the **cross-agent surface**; Codex reads it natively, and so do others.
   **Never overwrite an existing AGENTS.md.** Wrap the factory section in idempotent markers and
   **upsert** it — replace the existing managed block in place, or append it if absent — so a repo's
   own guidelines are preserved and a re-bootstrap doesn't duplicate the section:
 
   ```md
-  <!-- factory:begin — managed by factory-bootstrap; edits between these markers are overwritten on re-bootstrap -->
-  ## AI Software Factory (`.factory/`)
-  …pointer to .factory/skills/ + the factory-run loop…
-  <!-- factory:end -->
+  <!-- ai-sdd:begin — managed by ai-sdd-bootstrap; edits between these markers are overwritten on re-bootstrap -->
+  ## AI Software Factory (`.ai-sdd/`)
+  …pointer to .ai-sdd/skills/ + the ai-sdd-run loop…
+  <!-- ai-sdd:end -->
   ```
 
   Upsert algorithm (same for any marker-managed file): if both markers exist, replace everything
   between them; else append the marked block (to a new file if none exists). The content between
   markers is regenerated each run, so it must be self-contained — never put hand-edited prose there.
-- **Per-agent symlinks** for the *framework* skills a human/agent invokes (`factory-plan`,
-  `factory-run`, `factory-compile-schema`, `factory-bootstrap`):
-  - Claude Code: `.claude/skills/<name>` → `../../.factory/skills/<name>`
+- **Per-agent symlinks** for the *framework* skills a human/agent invokes (`ai-sdd-plan`,
+  `ai-sdd-run`, `ai-sdd-compile-schema`, `ai-sdd-bootstrap`):
+  - Claude Code: `.claude/skills/<name>` → `../../.ai-sdd/skills/<name>`
   - add other agents' folders the same way as they're supported (e.g. `.codex/`).
   - These folders are **local, not committed** — they're gitignored (§7) and recreated by
     re-bootstrap. `AGENTS.md` is the committed cross-agent surface; the symlinks are just local
     convenience, so cloning the repo + re-running bootstrap restores them.
 - **Worker skills** (`plan-feature`, …) need *no* agent-folder symlink — the driver resolves them
-  by path (`task.skill: X` → `.factory/skills/X.md`).
+  by path (`task.skill: X` → `.ai-sdd/skills/X.md`).
 
-The engine itself is already neutral: `factory` is a CLI any agent calls over a shell.
+The engine itself is already neutral: `ai-sdd` is a CLI any agent calls over a shell.
 
 ## 7. Ignore runtime + per-agent surfacing, then validate
 
@@ -123,21 +123,21 @@ The `.gitignore` is the **one place** that declares what stays out of git — so
 folders (the symlinks from §6 are local conveniences, recreated by re-bootstrap — never committed):
 
 ```gitignore
-# factory:begin — managed by factory-bootstrap; edits between these markers are overwritten on re-bootstrap
-# Software factory runtime (the rest of .factory/ is committed)
-.factory/runs/
-.factory/artifacts/
+# ai-sdd:begin — managed by ai-sdd-bootstrap; edits between these markers are overwritten on re-bootstrap
+# Software factory runtime (the rest of .ai-sdd/ is committed)
+.ai-sdd/runs/
+.ai-sdd/artifacts/
 # Per-agent skill surfacing — local symlinks, recreated by re-bootstrap; never committed
 .claude/
 .codex/
-# factory:end
+# ai-sdd:end
 ```
 
-- Write this with the **same marker upsert** as AGENTS.md (`# factory:begin` / `# factory:end`,
+- Write this with the **same marker upsert** as AGENTS.md (`# ai-sdd:begin` / `# ai-sdd:end`,
   `#` comments) so an existing `.gitignore` is extended, not clobbered, and a re-run doesn't
-  duplicate the block. The committed set is therefore exactly `.factory/` (minus runtime) + `AGENTS.md`
+  duplicate the block. The committed set is therefore exactly `.ai-sdd/` (minus runtime) + `AGENTS.md`
   + `.gitignore` + any tool config a gate needs — decided by `.gitignore`, not by prompting per commit.
-- Run `factory validate .factory` — referential + edge-type + acyclicity must pass before any run.
+- Run `ai-sdd validate .ai-sdd` — referential + edge-type + acyclicity must pass before any run.
 
 ## Discovery quality — evals + observability
 
@@ -160,8 +160,8 @@ contract (deterministic evidence → AI synthesis → grounded-or-flagged) is th
   re-bootstrap; clean on macOS/Linux, Windows needs `core.symlinks=true`.
 - **Re-bootstrap** is how conventions stay fresh (architecture §8): re-run to refresh
   `conventions/` + `schemas/` from the evolved codebase, then recompile gates. Mechanical output is
-  stable, so a no-change re-run produces no diff — this holds for the generated `.factory/` specs
+  stable, so a no-change re-run produces no diff — this holds for the generated `.ai-sdd/` specs
   **and** for the marker-managed edits to shared files (`AGENTS.md`, `.gitignore`), because they are
-  upserted between `factory:begin`/`factory:end` rather than appended. Files outside those markers
+  upserted between `ai-sdd:begin`/`ai-sdd:end` rather than appended. Files outside those markers
   are never touched.
 - **Don't commit secrets**; surface required env/secrets in the repo's docs, not git.

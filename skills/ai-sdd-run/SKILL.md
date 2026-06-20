@@ -1,11 +1,11 @@
 ---
-name: factory-run
-description: Drive a software-factory run by dispatching a sub-agent per worker — the deterministic `factory` engine plans (next), a fresh sub-agent does each worker's work via its skill, the engine gates and advances (submit), and each completed slice is committed. Agent-agnostic (claude-code or codex). Use when asked to run, drive, continue, or advance a factory run / pipeline / orchestration, or when the user mentions `factory next` / `factory submit`.
+name: ai-sdd-run
+description: Drive a software-factory run by dispatching a sub-agent per worker — the deterministic `ai-sdd` engine plans (next), a fresh sub-agent does each worker's work via its skill, the engine gates and advances (submit), and each completed slice is committed. Agent-agnostic (claude-code or codex). Use when asked to run, drive, continue, or advance a factory run / pipeline / orchestration, or when the user mentions `ai-sdd next` / `ai-sdd submit`.
 ---
 
 # Driving a factory run
 
-The `factory` engine is a **deterministic planner**: it decides what's runnable, runs the gates,
+The `ai-sdd` engine is a **deterministic planner**: it decides what's runnable, runs the gates,
 and advances state. You **orchestrate** the loop and **dispatch a sub-agent to do each worker's
 work** — you never decide control flow and never do the work inline. The contract:
 
@@ -28,8 +28,8 @@ it everything explicitly (below). State flows through **artifacts + the run stor
 ## Setup
 
 ```sh
-swift build                                          # → .build/debug/factory (call directly for clean --json)
-.build/debug/factory start <workspace> --id <slug>   # if no run yet
+swift build                                          # → .build/debug/ai-sdd (call directly for clean --json)
+.build/debug/ai-sdd start <workspace> --id <slug>   # if no run yet
 ```
 
 **Start from a clean working tree** (everything committed). This is required — see *Scope
@@ -39,7 +39,7 @@ discipline*.
 
 ### 1. Ask the engine what's next
 ```sh
-.build/debug/factory next <slug> --json
+.build/debug/ai-sdd next <slug> --json
 ```
 `{"status":"done"}` → stop, report. `{"status":"idle"}` → stop, report what it waits on. Otherwise a
 Worker instruction: `slice`, `node`, `task.skill`, `consumes`, `produces`, `checks`, `rework`.
@@ -51,8 +51,8 @@ Spawn **one** sub-agent for this worker. Its **input** is everything it needs, e
 - its skill — `task.skill: X` → `<workspace>/skills/X.md` (or the repo skill of that name);
 - its scope — it may write only the files this slice declares.
 
-The sub-agent does the work and **writes each produced artifact to `.factory/artifacts/<schema>.<fmt>`**
-(e.g. `feature-plan.v1` → `.factory/artifacts/feature-plan.v1.yaml` — the path the gates read).
+The sub-agent does the work and **writes each produced artifact to `.ai-sdd/artifacts/<schema>.<fmt>`**
+(e.g. `feature-plan.v1` → `.ai-sdd/artifacts/feature-plan.v1.yaml` — the path the gates read).
 
 It then returns a **brief structured summary** — enough for you to know what happened and carry the
 run forward, *not* a transcript and *not* a yes/no. The shape (a handful of lines; omit a section
@@ -90,11 +90,11 @@ Caveats:   <none | stubs / assumptions / out-of-scope work discovered>
 
 Keep it scannable — a reader skims the banners to follow the run, and drops into a block's INPUT/
 OUTPUT only when they want detail. If a **Caveat** flags out-of-scope work, note it for a plan
-amendment (a new slice via `factory-plan`) — don't act on it now.
+amendment (a new slice via `ai-sdd-plan`) — don't act on it now.
 
 ### 4. Submit
 ```sh
-.build/debug/factory submit <slug> --json
+.build/debug/ai-sdd submit <slug> --json
 ```
 - `advanced: true` → continue.
 - `advanced: false` → a required gate failed (`failed` + `checks[].output`). Loop: the next `next`
@@ -106,20 +106,20 @@ amendment (a new slice via `factory-plan`) — don't act on it now.
 When `submit` reports `sliceCompleted: true`, first **snapshot the slice's produced artifacts** into
 a committed per-slice directory, then **commit the slice's work** before starting the next.
 
-The working artifacts live at `.factory/artifacts/<schema>.<fmt>` — a single fixed path the gates
+The working artifacts live at `.ai-sdd/artifacts/<schema>.<fmt>` — a single fixed path the gates
 read, **overwritten by the next slice**. So copy this slice's artifacts into a durable, browsable
-per-slice home (under `.factory/features/<slug>/`, which is committed — only `runs/` and `artifacts/`
+per-slice home (under `.ai-sdd/features/<slug>/`, which is committed — only `runs/` and `artifacts/`
 are gitignored):
 
 ```sh
-DEST=.factory/features/<slug>/slices/<slice>
+DEST=.ai-sdd/features/<slug>/slices/<slice>
 mkdir -p "$DEST"
-cp .factory/artifacts/plan.v1.yaml   "$DEST"/      # each artifact this slice produced …
-cp .factory/artifacts/review.v1.yaml "$DEST"/      # … (plan, review, changeset, …)
+cp .ai-sdd/artifacts/plan.v1.yaml   "$DEST"/      # each artifact this slice produced …
+cp .ai-sdd/artifacts/review.v1.yaml "$DEST"/      # … (plan, review, changeset, …)
 git add -A && git commit -m "[<slug>] <slice>: <one-line summary>"   # or the repo's commit convention
 ```
 
-The gates still read the working path (`.factory/artifacts/`); the per-slice copy is the **durable
+The gates still read the working path (`.ai-sdd/artifacts/`); the per-slice copy is the **durable
 record** — every slice's plan and review stay inspectable in the tree, committed with the slice,
 without git archaeology. One commit per slice — reviewable history, **and** it resets the baseline
 (next section).
@@ -137,12 +137,12 @@ scope when each slice starts from a **clean tree**:
   slice begins (a prior slice wasn't committed), **STOP and report it** — in that state the scope
   gate is blind and changes leak across slices. (This is the failure to avoid: no commits → dirty
   tree → scope never enforced.)
-- `.factory/runs/` and `.factory/artifacts/` are gitignored, so the architect's plan artifact never
+- `.ai-sdd/runs/` and `.ai-sdd/artifacts/` are gitignored, so the architect's plan artifact never
   dirties the tracked tree — only real code changes do.
 
 ## Reporting
 
 At `done`, summarize per slice from the logged input/output: what each worker produced, which gates
 needed rework (and whether any escalated to a human), and the commit made. Each slice's plan and
-review are browsable at `.factory/features/<slug>/slices/<slice>/`. `.build/debug/factory status
+review are browsable at `.ai-sdd/features/<slug>/slices/<slice>/`. `.build/debug/ai-sdd status
 <slug>` shows the nested state any time.
