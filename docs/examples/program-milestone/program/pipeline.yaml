@@ -1,0 +1,15 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: program-milestone, version: 1 }
+spec:
+  # A program with a MILESTONE between two features (ADR-0028). featA → m1-integration → featB:
+  # featB unlocks only after the milestone validation node passes. The milestone is a plain worker
+  # node (manual `milestone-gate` here); owners are recorded per node.
+  semantics: enabler
+  nodes:
+    - { id: featA, kind: pipeline, pipeline: ../feature, stack: core, owner: [alice] }
+    - { id: m1-integration, worker: milestone-gate, owner: [bob] }
+    - { id: featB, kind: pipeline, pipeline: ../feature, stack: core, owner: [carol] }
+  edges:
+    - { from: featA, to: m1-integration }
+    - { from: m1-integration, to: featB }

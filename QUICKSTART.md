@@ -146,6 +146,46 @@ store resolve against your codebase. As it goes:
 
 ---
 
+## Step 5 — Plan a program (multiple features + milestones)
+
+When the work is bigger than one feature — several sub-features, a few people, checkpoints between
+stages — plan a **program**: a master graph whose nodes are whole features, sequenced by **milestone**
+gates, with **owners**. The same engine runs it: it descends `program → feature → slice → worker` through
+the very same `next`/`submit` loop, so a milestone blocks downstream features the way a gate blocks
+downstream slices (ADR-0028). This is **not** a separate orchestrator — it is the self-similar model.
+
+**Plan the program** — `/ai-sdd-plan-program` takes a *program brief* (sub-features + milestones +
+owners + sequencing; see [docs/examples/program-brief.md](docs/examples/program-brief.md)), gets your
+approval, and emits the master graph at `.ai-sdd/programs/<slug>/`:
+
+```
+/ai-sdd-plan-program "<your program brief>"
+```
+
+**Plan each sub-feature** — with `/ai-sdd-plan` as usual (each lands in `.ai-sdd/features/<feature>/`).
+
+**Run the whole program** — point the run at the program dir; the engine drives every feature and gates
+each milestone in between:
+
+```
+ai-sdd start .ai-sdd/programs/<slug> --id <slug>
+/ai-sdd-run <slug>
+ai-sdd graph .ai-sdd/programs/<slug>          # see the master graph (features, milestones, owners)
+```
+
+**Milestones** are validation nodes — a flow with inputs and outputs, *manual or automated*:
+
+- **Manual:** a person validates (e.g. connects a client to the running system) and records the verdict.
+- **Automated:** a deterministic check brings the system up and runs the client, e.g.
+  `docker compose -f tests/integration/compose.yaml up --abort-on-container-exit`, gated on exit code.
+
+Maturing manual → automated swaps only the node's kind/checks — inputs and outputs are unchanged. A
+milestone with a `fail` verdict blocks its downstream features until re-validated. Full guide:
+[docs/milestones.md](docs/milestones.md). You can also phase a *single feature's* slices with the
+optional `## Milestones` section of `/ai-sdd-plan`.
+
+---
+
 ## Visualize the work (for you and your team)
 
 The dependency graph is the *one* place the flow lives — and `ai-sdd graph` renders it as **Mermaid**
@@ -207,7 +247,8 @@ small and honest.
 | `ai-sdd graph <dir>` | render the dependency graph as Mermaid (`--project`, `--plant`, `--html`) |
 
 Skills (agent-run): **`ai-sdd-bootstrap`** (stand up a factory), **`ai-sdd-compile-schema`**
-(schema → gates), **`ai-sdd-run`** (drive the loop).
+(schema → gates), **`ai-sdd-plan`** (a feature), **`ai-sdd-plan-program`** (a multi-feature program
+with milestones + owners), **`ai-sdd-run`** (drive the loop).
 
 ---
 
@@ -216,8 +257,8 @@ Skills (agent-run): **`ai-sdd-bootstrap`** (stand up a factory), **`ai-sdd-compi
 This is an early, from-source tool. What's solid: the engine loop (validate/start/next/submit/
 status), the deterministic gates (structure + the reviewer **verdict gate**, scope, coverage,
 build/test), **§9 bounded rework routing** (a reject re-runs the producer, then escalates), the
-orchestration graph (slices), `ai-sdd graph` visualization, and provider-neutral surfacing.
-Known rough edges:
+orchestration graph (slices), **recursive program-tier execution + milestone gates** (ADR-0028),
+`ai-sdd graph` visualization, and provider-neutral surfacing. Known rough edges:
 
 - **Run from the target repo root** — the engine doesn't yet separate workspace / target / run-store
   (all keyed off the current directory).
@@ -227,6 +268,9 @@ Known rough edges:
   it blocks today.
 - **Run state is local** (`.ai-sdd/runs/`, gitignored) — no shared state plane yet, so a *live*
   team graph overlay is a future expansion; the *structure* graph works for everyone today.
+- **Program tier** runs today (recursive execution + milestone gates), but a failed milestone
+  **self-reworks** (re-validate) rather than routing rework into the specific upstream feature, and the
+  milestone worker/check are **copied into each program/feature dir by convention** (no shared library yet).
 - **Traits / resources / permissions** specs are authored but not yet enforced by the engine.
 - **No MCP server** yet — drive via the CLI.
 - **Symlinks** assume macOS/Linux (Windows needs `git config core.symlinks true`).

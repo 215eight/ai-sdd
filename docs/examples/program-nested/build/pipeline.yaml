@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: build, version: 1 }
+spec:
+  # A trivial build pattern: one check-free worker, so `submit` auto-advances (this fixture
+  # exercises recursive descent + the completion cascade, not the gates).
+  semantics: enabler
+  nodes:
+    - { id: w, worker: w }
+  edges: []

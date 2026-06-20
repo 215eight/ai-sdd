@@ -19,6 +19,7 @@ public struct RenderedInput: Codable, Equatable, Sendable {
 public struct WorkerInstruction: Codable, Equatable, Sendable {
     public var runId: String?
     public var slice: String?          // the orchestration slice this work belongs to, if any
+    public var scopePath: [String]?    // full ancestor slice chain (program › feature › slice), if nested
     public var stack: String?          // the slice's stack
     public var node: String
     public var worker: String
@@ -32,13 +33,14 @@ public struct WorkerInstruction: Codable, Equatable, Sendable {
     public var checks: [String]
     public var rework: [String]        // gates a prior attempt failed; empty on a first attempt
 
-    public init(runId: String? = nil, slice: String? = nil, stack: String? = nil,
-                node: String, worker: String, workerKind: String? = nil,
+    public init(runId: String? = nil, slice: String? = nil, scopePath: [String]? = nil,
+                stack: String? = nil, node: String, worker: String, workerKind: String? = nil,
                 task: WorkerTask? = nil, model: String? = nil, reasoning: String? = nil,
                 requiredGate: Bool = false, consumes: [RenderedInput] = [],
                 produces: [String] = [], checks: [String] = [], rework: [String] = []) {
         self.runId = runId
         self.slice = slice
+        self.scopePath = scopePath
         self.stack = stack
         self.node = node
         self.worker = worker
@@ -59,7 +61,8 @@ public enum Renderer {
     /// Build the structured instruction for `node` (executed by `worker`) given current state.
     /// `slice`/`stack` set the orchestration context when the node runs inside a slice.
     public static func instruction(node: PipelineNode, worker: WorkerSpec, state: RunState,
-                                   slice: String? = nil, stack: String? = nil) -> WorkerInstruction {
+                                   slice: String? = nil, stack: String? = nil,
+                                   scopePath: [String]? = nil) -> WorkerInstruction {
         let consumes = (worker.consumes ?? []).map { port in
             RenderedInput(schema: port.schema,
                           required: port.required ?? false,
@@ -67,6 +70,7 @@ public enum Renderer {
         }
         return WorkerInstruction(
             slice: slice,
+            scopePath: scopePath,
             stack: stack,
             node: node.id,
             worker: node.worker ?? node.id,
@@ -88,6 +92,9 @@ public enum Renderer {
         lines.append("# Worker `\(instruction.worker)`  ·  node `\(instruction.node)`")
         if let slice = instruction.slice {
             lines.append("slice `\(slice)`\(instruction.stack.map { "  ·  stack `\($0)`" } ?? "")")
+        }
+        if let path = instruction.scopePath, path.count > 1 {
+            lines.append("path `\(path.joined(separator: " › "))`")
         }
 
         var meta: [String] = []

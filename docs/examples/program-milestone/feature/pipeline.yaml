@@ -1,0 +1,8 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: feature, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: slice1, kind: pipeline, pipeline: ../build, stack: core }
+  edges: []

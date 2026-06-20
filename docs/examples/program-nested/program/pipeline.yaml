@@ -1,0 +1,13 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: program-nested, version: 1 }
+spec:
+  # A PROGRAM graph: the nodes are whole features (each its own sub-pipeline), the edges are
+  # `depends_on` sequencing. The engine descends recursively — program → feature → build → worker —
+  # the self-similar model made executable (ADR-0028). featB unlocks once featA fully completes.
+  semantics: enabler
+  nodes:
+    - { id: featA, kind: pipeline, pipeline: ../feature, stack: core }
+    - { id: featB, kind: pipeline, pipeline: ../feature, stack: core }
+  edges:
+    - { from: featA, to: featB }

@@ -1,0 +1,11 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: milestone-gate }
+spec:
+  # Manual milestone (mirrors .ai-sdd/workers/milestone-gate.worker.yaml). A human validates the work
+  # and records validation-result.v1; the structural check enforces `outcome == pass`. See
+  # docs/milestones.md for the automated variant (swap kind + add a docker integration check).
+  workerKind: human
+  produces: [{ schema: validation-result.v1 }]
+  task: { skill: validate-milestone }
+  checks: [validation-result.structure]

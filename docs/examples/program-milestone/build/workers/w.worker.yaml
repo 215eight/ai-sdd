@@ -1,0 +1,6 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: w }
+spec:
+  workerKind: transform
+  task: { command: "true" }    # a trivial, check-free feature worker (the focus is the milestone gate)

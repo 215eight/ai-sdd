@@ -37,6 +37,7 @@ Brief template (what "complete" means):
 ## In scope / Out of scope — explicit lists.
 ## Acceptance — the verifiable bar (each item testable).
 ## Constraints — stack/conventions/non-negotiables.
+## Milestones (optional) — phase the slices into checkpoints: each an id, what it validates, manual | automated, owner.
 ## Open questions — anything unresolved (closed WITH the user in Step 2).
 ```
 
@@ -86,6 +87,38 @@ spec:
 
 `pipeline: ../..` resolves from `.ai-sdd/features/<slug>/` back to `.ai-sdd/` — the
 architect → implementer → reviewer pattern with its workers, checks, and skills.
+
+## 4b. Optional: milestones (slice phases)
+
+If the brief has a `## Milestones` section, phase the slices into validation checkpoints. A milestone is
+a validation node (manual or automated) that depends on all the slices in its phase; the next phase's
+slices depend on the milestone — so a phase can't proceed until its checkpoint passes. This is the same
+milestone primitive the program tier uses (ADR-0028), one level down.
+
+For each milestone:
+- assign the phase's slices to it;
+- add a node `{ id: <milestone>, worker: milestone-gate, owner: [<owner>] }`;
+- add edges from every slice in the phase → the milestone, and from the milestone → each slice of the
+  next phase.
+
+Because the feature graph now has a worker node, the feature dir needs the milestone convention loaded
+relative to it — copy in `workers/milestone-gate.worker.yaml` (← `.ai-sdd/workers/…`) and
+`checks/validation-result.structure.check.yaml` (← `.ai-sdd/checks/…`). For an **automated** milestone,
+add the `transform` worker variant + a per-milestone deterministic check (e.g. `docker compose up …`)
+per [docs/milestones.md](../../docs/milestones.md); manual ↔ automated swaps only the node's kind/checks.
+
+```yaml
+  nodes:
+    - { id: schema, kind: pipeline, pipeline: ../.., stack: core }
+    - { id: api,    kind: pipeline, pipeline: ../.., stack: api-go }
+    - { id: m1-integration, worker: milestone-gate, owner: [bob] }   # phase-1 checkpoint
+    - { id: ui,     kind: pipeline, pipeline: ../.., stack: web }
+  edges:
+    - { from: schema, to: api }
+    - { from: schema, to: m1-integration }
+    - { from: api,    to: m1-integration }
+    - { from: m1-integration, to: ui }   # phase-2 slice waits on the checkpoint
+```
 
 ## 5. Validate
 

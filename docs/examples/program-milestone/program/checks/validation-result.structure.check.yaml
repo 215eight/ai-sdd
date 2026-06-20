@@ -1,0 +1,9 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: validation-result.structure }
+spec:
+  # Same gate as the factory's validation-result.structure: reads the produced milestone artifact and
+  # enforces `outcome == pass` + every criterion pass. A `fail` fails the gate → the milestone re-validates.
+  checkKind: deterministic
+  command: "swift run ai-sdd check .ai-sdd/schemas/validation-result.schema.yaml .ai-sdd/artifacts/validation-result.v1.yaml"
+  required: true

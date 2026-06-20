@@ -1,0 +1,9 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: feature, version: 1 }
+spec:
+  # A FEATURE graph: its node is a slice that descends into the build pattern next door.
+  semantics: enabler
+  nodes:
+    - { id: slice1, kind: pipeline, pipeline: ../build, stack: core }
+  edges: []

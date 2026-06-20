@@ -1,0 +1,33 @@
+apiVersion: ai-sdd/v1
+kind: Schema
+metadata: { name: validation-result, version: 1 }
+spec:
+  # A milestone's verdict, captured structurally so the Tier-1 check IS the gate (ADR-0028).
+  # A milestone node (manual or automated) produces this; downstream features depend on it.
+  # The field is `outcome` (not `verdict`) deliberately: a verdict/rework-shaped artifact triggers
+  # §9 upstream rework routing, but a milestone has no single indictable input — a failed checkpoint
+  # should re-validate (self-rework), so the team fixes the work and the gate re-runs.
+  handle: file
+  format: yaml
+  scope: internal
+  fields:
+    milestone:
+      type: string
+      required: true
+      invariants: [{ nonEmpty: true }]
+    outcome:
+      type: string
+      required: true
+      invariants:
+        - { matches: "^(pass|fail)$" }
+        - { eq: pass }                      # a `fail` fails the gate → re-validate
+    criteria:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { field: id, nonEmpty: true } }
+        - { all: { field: status, matches: "^(pass|fail)$" } }
+        - { all: { field: status, eq: pass } }   # every acceptance criterion must pass
+    evidence:
+      type: string                          # optional: link/notes (CI run, sign-off, client session)

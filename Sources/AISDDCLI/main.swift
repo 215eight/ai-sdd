@@ -11,7 +11,7 @@ struct AISDD: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
-        version: "ai-sdd 0.1.0",
+        version: "ai-sdd 0.2.0",
         subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self]
     )
 }
@@ -551,47 +551,52 @@ struct Next: ParsableCommand {
             return
         }
 
-        if isSlice(pickNode) {
-            try dispenseSlice(store: store, orchestrationDir: meta.pipelineDir, slice: pickNode, topState: state)
-        } else {
-            try dispenseWorker(store: store, node: pickNode,
-                               worker: pickNode.worker.flatMap { workers[$0] } ?? WorkerSpec(),
-                               state: state, slice: nil, stack: nil, scope: { $0 })
-        }
+        try dispense(store: store, dir: meta.pipelineDir, node: pickNode,
+                     workers: workers, state: state, pathIds: [], stack: nil, scope: { $0 })
     }
 
-    /// Descend into a slice: mark it in progress at the top level, then dispense the runnable
-    /// Worker of its sub-pipeline (scoping that node's events under the slice).
-    private func dispenseSlice(store: RunStore, orchestrationDir: String,
-                               slice: PipelineNode, topState: RunState) throws {
-        if !topState.inProgressNodes.contains(slice.id) {
-            try store.append(.nodeStarted(node: slice.id), to: runId)
+    /// Descend from a runnable node to its leaf Worker, dispensing it. A node that is itself a
+    /// slice (kind: pipeline) is marked in progress, then we recurse into its sub-pipeline,
+    /// composing `scope` so the leaf's events nest under every ancestor slice. Works to arbitrary
+    /// depth (program → feature → slice → worker) — the self-similar model made executable (ADR-0028).
+    private func dispense(store: RunStore, dir: String, node: PipelineNode,
+                          workers: [String: WorkerSpec], state: RunState,
+                          pathIds: [String], stack: String?,
+                          scope: (RunEvent) -> RunEvent) throws {
+        guard isSlice(node) else {
+            try dispenseWorker(store: store, node: node,
+                               worker: node.worker.flatMap { workers[$0] } ?? WorkerSpec(),
+                               state: state, path: pathIds, stack: stack, scope: scope)
+            return
         }
-        let dir = sliceDir(orchestrationDir: orchestrationDir, node: slice)
-        let (subEnv, subWorkers, _) = try loadValidated(dir)
-        let subState = topState.slices[slice.id] ?? RunState()
-
+        if !state.inProgressNodes.contains(node.id) {
+            try store.append(scope(.nodeStarted(node: node.id)), to: runId)
+        }
+        let subDir = sliceDir(orchestrationDir: dir, node: node)
+        let (subEnv, subWorkers, _) = try loadValidated(subDir)
+        let subState = state.slices[node.id] ?? RunState()
         guard let subPick = Scheduler.pick(subState, subEnv.spec),
               let subNode = subEnv.spec.nodes.first(where: { $0.id == subPick }) else {
             try emitIdle(state: subState, pipeline: subEnv.spec)
             return
         }
-        try dispenseWorker(store: store, node: subNode,
-                           worker: subNode.worker.flatMap { subWorkers[$0] } ?? WorkerSpec(),
-                           state: subState, slice: slice.id, stack: slice.stack,
-                           scope: { .scoped(slice: slice.id, event: $0) })
+        try dispense(store: store, dir: subDir, node: subNode,
+                     workers: subWorkers, state: subState,
+                     pathIds: pathIds + [node.id], stack: node.stack ?? stack,
+                     scope: { scope(.scoped(slice: node.id, event: $0)) })
     }
 
     /// Render a Worker node and mark it in progress. Idempotent — re-running `next` before
-    /// `submit` re-renders the same node and appends no duplicate event.
+    /// `submit` re-renders the same node and appends no duplicate event. `path` is the chain of
+    /// ancestor slice ids (empty at the top level); the innermost is the worker's direct slice.
     private func dispenseWorker(store: RunStore, node: PipelineNode, worker: WorkerSpec,
-                                state: RunState, slice: String?, stack: String?,
+                                state: RunState, path: [String], stack: String?,
                                 scope: (RunEvent) -> RunEvent) throws {
         if !state.inProgressNodes.contains(node.id) {
             try store.append(scope(.nodeStarted(node: node.id)), to: runId)
         }
         var instruction = Renderer.instruction(node: node, worker: worker, state: state,
-                                               slice: slice, stack: stack)
+                                               slice: path.last, stack: stack, scopePath: path)
         instruction.runId = runId
         print(json ? try encodeJSON(instruction) : Renderer.markdown(instruction))
     }
@@ -648,45 +653,58 @@ struct Submit: ParsableCommand {
         let topTarget = try resolve(node, among: state.inProgressNodes, level: "")
         let topNode = pipeline.nodes.first { $0.id == topTarget }!
 
-        if isSlice(topNode) {
-            try submitSlice(store: store, orchestrationDir: meta.pipelineDir,
-                            slice: topNode, topPipeline: pipeline)
-        } else {
-            let outcome = try advance(node: topTarget, worker: workers[topTarget] ?? WorkerSpec(),
-                                      checks: checks, producedOverride: produced,
-                                      pipeline: pipeline, workers: workers, state: state,
-                                      store: store, runId: runId, scope: { $0 })
-            try report(outcome: outcome, slice: nil, sliceCompleted: false,
-                       topPipeline: pipeline, topState: try store.state(of: runId))
-        }
+        let result = try submitDescend(store: store, dir: meta.pipelineDir, node: topNode,
+                                       workers: workers, checks: checks, pipeline: pipeline,
+                                       state: state, pathIds: [], stack: nil, scope: { $0 })
+        try report(outcome: result.outcome, path: result.path, completedSlices: result.completed,
+                   topPipeline: pipeline, topState: try store.state(of: runId))
     }
 
-    /// Advance the active Worker inside a slice's sub-pipeline; when that finishes the whole
-    /// sub-pipeline, complete the slice at the top level so its dependents unlock.
-    private func submitSlice(store: RunStore, orchestrationDir: String,
-                             slice: PipelineNode, topPipeline: PipelineSpec) throws {
-        let dir = sliceDir(orchestrationDir: orchestrationDir, node: slice)
-        let (subEnv, subWorkers, subChecks) = try loadValidated(dir)
-        let subState = (try store.state(of: runId)).slices[slice.id] ?? RunState()
+    /// Walk to the in-progress leaf Worker through any nesting, advance it, then on the unwind
+    /// propagate completion: each ancestor slice whose sub-pipeline is now complete is itself
+    /// completed — at *its parent's* scope — cascading up to the program root so dependents at
+    /// every level unlock (ADR-0028). Returns the leaf outcome, the leaf's ancestor path, and the
+    /// slice ids that completed (innermost first).
+    private func submitDescend(store: RunStore, dir: String, node: PipelineNode,
+                               workers: [String: WorkerSpec], checks: [String: CheckSpec],
+                               pipeline: PipelineSpec, state: RunState,
+                               pathIds: [String], stack: String?,
+                               scope: (RunEvent) -> RunEvent)
+        throws -> (outcome: AdvanceOutcome, path: [String], completed: [String]) {
+        guard isSlice(node) else {
+            // Look up the worker by its name (node.worker), not the node id — they differ whenever a
+            // node reuses a worker (e.g. a milestone node `m1` running the `milestone-gate` worker).
+            let worker = node.worker.flatMap { workers[$0] } ?? WorkerSpec()
+            let outcome = try advance(node: node.id, worker: worker,
+                                      checks: checks, producedOverride: produced,
+                                      pipeline: pipeline, workers: workers, state: state,
+                                      store: store, runId: runId, scope: scope)
+            return (outcome, pathIds, [])
+        }
+        let subDir = sliceDir(orchestrationDir: dir, node: node)
+        let (subEnv, subWorkers, subChecks) = try loadValidated(subDir)
+        let subState = state.slices[node.id] ?? RunState()
         guard !subState.inProgressNodes.isEmpty else {
-            throw ValidationError("slice '\(slice.id)': no node in progress — run `ai-sdd next \(runId)`")
+            throw ValidationError("slice '\(node.id)': no node in progress — run `ai-sdd next \(runId)`")
         }
-        let subTarget = try resolve(node, among: subState.inProgressNodes, level: "slice '\(slice.id)': ")
+        // Exactly one node is in progress per active level (`next` dispenses a single leaf path).
+        let subTarget = try resolve(nil, among: subState.inProgressNodes, level: "slice '\(node.id)': ")
+        let subNode = subEnv.spec.nodes.first { $0.id == subTarget }!
 
-        let outcome = try advance(node: subTarget, worker: subWorkers[subTarget] ?? WorkerSpec(),
-                                  checks: subChecks, producedOverride: produced,
-                                  pipeline: subEnv.spec, workers: subWorkers, state: subState,
-                                  store: store, runId: runId, scope: { .scoped(slice: slice.id, event: $0) })
+        var result = try submitDescend(store: store, dir: subDir, node: subNode,
+                                       workers: subWorkers, checks: subChecks,
+                                       pipeline: subEnv.spec, state: subState,
+                                       pathIds: pathIds + [node.id], stack: node.stack ?? stack,
+                                       scope: { scope(.scoped(slice: node.id, event: $0)) })
 
-        // If the sub-pipeline is now fully complete, the slice node completes at the top level.
-        var sliceCompleted = false
-        let afterSub = (try store.state(of: runId)).slices[slice.id] ?? RunState()
-        if outcome.advanced && Scheduler.isComplete(afterSub, subEnv.spec) {
-            try store.append(.nodeCompleted(node: slice.id, producedArtifacts: []), to: runId)
-            sliceCompleted = true
+        // Unwind: re-read state, descend to this slice's freshly-folded sub-state, and if its
+        // whole sub-pipeline is complete, complete this slice node at our parent's scope.
+        let afterSub = (try store.state(of: runId)).slice(at: pathIds + [node.id]) ?? RunState()
+        if result.outcome.advanced && Scheduler.isComplete(afterSub, subEnv.spec) {
+            try store.append(scope(.nodeCompleted(node: node.id, producedArtifacts: [])), to: runId)
+            result.completed.append(node.id)
         }
-        try report(outcome: outcome, slice: slice.id, sliceCompleted: sliceCompleted,
-                   topPipeline: topPipeline, topState: try store.state(of: runId))
+        return (result.outcome, result.path, result.completed)
     }
 
     /// Pick the target among in-progress nodes: an explicit --node (must be in progress), the
@@ -704,18 +722,18 @@ struct Submit: ParsableCommand {
             + "(\(inProgress.sorted().joined(separator: ", ")))")
     }
 
-    private func report(outcome: AdvanceOutcome, slice: String?, sliceCompleted: Bool,
+    private func report(outcome: AdvanceOutcome, path: [String], completedSlices: [String],
                         topPipeline: PipelineSpec, topState: RunState) throws {
-        let label = slice.map { "\($0)/\(outcome.node)" } ?? outcome.node
+        let label = (path + [outcome.node]).joined(separator: "/")
         let runnable = Scheduler.runnable(topState, topPipeline)
         if json {
             struct Outcome: Encodable {
-                var node: String, slice: String?, advanced: Bool, sliceCompleted: Bool
+                var node: String, path: [String], advanced: Bool, completedSlices: [String]
                 var produced: [String], checks: [CheckResult], failed: [String]
                 var routedTo: [String], invalidated: [String], escalated: Bool, runnable: [String]
             }
-            print(try encodeJSON(Outcome(node: outcome.node, slice: slice, advanced: outcome.advanced,
-                sliceCompleted: sliceCompleted, produced: outcome.advanced ? outcome.produced : [],
+            print(try encodeJSON(Outcome(node: outcome.node, path: path, advanced: outcome.advanced,
+                completedSlices: completedSlices, produced: outcome.advanced ? outcome.produced : [],
                 checks: outcome.results, failed: outcome.blocking.map(\.check),
                 routedTo: outcome.routedTo, invalidated: outcome.invalidated, escalated: outcome.escalated,
                 runnable: runnable)))
@@ -746,14 +764,23 @@ struct Submit: ParsableCommand {
         }
         print("✓ \(label) accepted — produced \(outcome.produced.isEmpty ? "(nothing)" : outcome.produced.joined(separator: ", "))")
         for r in outcome.results where r.status == .deferred { print("  · deferred: \(r.check)") }
-        if sliceCompleted { print("✓ slice '\(slice!)' complete") }
+        for sliceId in completedSlices { print("✓ slice '\(sliceId)' complete") }
 
         if Scheduler.isComplete(topState, topPipeline) {
             print("✓ done — all nodes complete")
-        } else if let slice, !sliceCompleted {
-            print("→ slice '\(slice)' continues  ·  ai-sdd next \(runId)")
+        } else if let inner = path.last, completedSlices.isEmpty {
+            print("→ slice '\(inner)' continues  ·  ai-sdd next \(runId)")
         } else {
             print("→ runnable: \(runnable.isEmpty ? "—" : runnable.joined(separator: ", "))  ·  ai-sdd next \(runId)")
         }
+    }
+}
+
+private extension RunState {
+    /// Walk into nested slice sub-state along a path of slice ids (empty path → self).
+    func slice(at path: [String]) -> RunState? {
+        var current: RunState? = self
+        for id in path { current = current?.slices[id] }
+        return current
     }
 }

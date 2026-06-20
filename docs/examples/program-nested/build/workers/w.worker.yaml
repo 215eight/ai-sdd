@@ -1,0 +1,6 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: w }
+spec:
+  workerKind: transform
+  task: { command: "true" }    # the agent's work; this fixture has no gates, so submit advances

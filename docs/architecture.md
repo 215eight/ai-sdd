@@ -597,7 +597,8 @@ engine is greenfield (`Sources/AISDDModels`, `Sources/AISDDEngine`). The phase e
 **Status — the interactive engine + observability are built.** `AISDDModels` (Codable spec types)
 + `AISDDEngine` drive the full interactive loop (Mode B, ADR-0026): `SpecLoader`/`SpecValidator`
 (referential + edge-type + acyclicity), `Scheduler`/`Reducer` over the DAG (parallel branches,
-slice descent), and a deterministic `CheckRunner` that runs the gates and advances state. Gating is
+**recursive slice descent to arbitrary depth** — program → feature → slice → worker, ADR-0028), and a
+deterministic `CheckRunner` that runs the gates and advances state. Gating is
 real: the `SchemaValidator` (structural/verdict gates incl. the reviewer's approve/reject + per-item
 verdicts), `ScopeChecker` (`ai-sdd scope`), and `CoverageChecker` (`ai-sdd cover`) all block, and
 **§9 bounded rework routing** is implemented (`Rework` — a failing verdict routes to the producer of

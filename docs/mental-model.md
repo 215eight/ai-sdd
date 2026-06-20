@@ -48,6 +48,12 @@ the same way every time. The agent never decides the flow, and the engine never 
 The same engine runs both: a node is runnable when its dependencies are complete; gates enforce
 quality at each step.
 
+Because the model is self-similar (ADR-0002), this composes upward: a **program graph** can sequence
+whole features (each its own orchestration graph) with milestones and owners, and the engine descends
+into it recursively — program → feature → slice → build pattern — through the same `next`/`submit` loop
+(ADR-0028). Execution to arbitrary depth ships today; the program-tier *planning* front-ends are
+in progress.
+
 ## How to think about using it
 
 Three layers, each with one job — **stand it up once, then plan and run per feature**:
@@ -56,8 +62,9 @@ Three layers, each with one job — **stand it up once, then plan and run per fe
 |---|---|---|---|
 | **Toolkit** | the engine + the skills | once per machine | `ai-sdd --version` |
 | **Repo factory** (`.ai-sdd/`) | build pattern, roles, conventions, schemas, gates | once per repo | `/ai-sdd-bootstrap` |
-| **Feature plan** (`.ai-sdd/features/<slug>/`) | requirements + the orchestration graph | per feature | `/ai-sdd-plan "<brief>"` |
-| **Execution** | run the graph to done | per feature | `/ai-sdd-run <slug>` |
+| **Program plan** (`.ai-sdd/programs/<slug>/`) | *(optional, multi-feature)* a master graph of sub-features + milestone gates + owners | per program | `/ai-sdd-plan-program "<brief>"` |
+| **Feature plan** (`.ai-sdd/features/<slug>/`) | requirements + the orchestration graph (slices may be phased by milestones) | per feature | `/ai-sdd-plan "<brief>"` |
+| **Execution** | run the graph to done | per feature or program | `/ai-sdd-run <slug>` |
 
 ## What a run feels like
 

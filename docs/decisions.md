@@ -668,6 +668,101 @@ Pending (designed above, **not yet built** — start here on resumption):
 
 ---
 
+## ADR-0028 — Program-tier coordination: recursive pipeline execution + milestones-as-validation
+**Status:** Accepted · 2026-06-20
+
+**Context.** A team planning a multi-person project needs a **master plan** that sequences several
+sub-features with **milestones and owners**, with validation/integration checkpoints between stages —
+not a single feature whose tests all run at the end. The model already promises this: it is self-similar
+(ADR-0002), a node with `kind: pipeline` is a sub-pipeline, `PipelineNode.owner` exists, and the run
+**state** layer is already recursive (`RunState.slices` is a nested dict, `RunEvent.scoped` nests, the
+`Reducer.scoped` fold recurses). But execution only descended **one level** (feature → build pattern):
+`dispenseSlice`/`submitSlice` handled a single slice tier and then dispatched to a worker without
+recursing. There was also no first-class **milestone** and no **program-tier planning**. The temptation
+was to reach for the Conductor (ADR-0013/0019) — but that is a cross-*domain* saga
+(requirements→design→code→deploy with async signals), much heavier than, and orthogonal to, recursive
+*Pipeline* composition. This is **not** the Conductor.
+
+**Decision.**
+
+- **Reuse `Pipeline` for the program tier — no new top-level kind.** A "program" is a Pipeline whose
+  nodes are feature Pipelines (which themselves contain slice Pipelines). One `Scheduler`/`Reducer`/
+  `CheckRunner` at every level — the self-similarity is the point; a parallel `Program` primitive would
+  fork the engine.
+
+- **Recursive descent to arbitrary depth, via nested `.scoped` events.** `next` (`dispense`) and `submit`
+  (`submitDescend`) recurse through `kind: pipeline` nodes to the leaf worker, composing a `scope`
+  closure so a leaf's event nests as `.scoped(program, .scoped(feature, …))`. The Reducer already
+  *consumes* nested `.scoped`, so no state/Reducer/Scheduler change was needed — only the CLI dispatch.
+  A flat path-list event was rejected: it would duplicate a representation the Reducer already folds.
+
+- **Completion cascades on the unwind.** When a sub-pipeline becomes `isComplete`, the engine emits
+  `nodeCompleted(sliceNode)` **at the parent's scope**, post-order, cascading to the program root so
+  dependents unlock at every level. Emitting at the wrong scope is the one subtle failure mode (it would
+  fold completion into the wrong `slices` bucket and break resume), so it is guarded by depth-2 tests.
+
+- **A milestone is a validation worker node, not an empty gate.** It consumes upstream output and produces
+  a validation-result, reusing existing primitives: **manual** = `workerKind: human` gated by the
+  structural `verdict == approve` check (the reviewer pattern); **automated** = an attached deterministic
+  check running e.g. `docker compose up && <integration-client>`, gated on exit code. Maturing
+  manual→automated swaps only the `workerKind`/checks on the *same* node — inputs/outputs are unchanged.
+
+- **Program-tier planning has two front-ends emitting the same master pipeline.** An interactive
+  *program mode* (sub-features + milestones + owners, same draft-then-approve gate as `ai-sdd-plan`) and
+  *milestones-in-brief* (the planner groups generated slices into milestones + inter-milestone validation
+  gates). Both produce one master `pipeline.yaml`; `owner` is already a `PipelineNode` field. *(Phases 2–3;
+  this ADR's shipped scope is the recursive-execution keystone.)*
+
+**Consequences.** The "multiple levels of coordination" the self-similar model promised is now executable
+through the same `next`/`submit` loop — a program runs end-to-end with the engine enforcing cross-feature
+sequencing and per-stage gates. The change was confined to `Sources/AISDDCLI/main.swift` (`dispense`,
+`submitDescend`, `report`) plus an additive `WorkerInstruction.scopePath`; no engine-core change. Resume
+stays sound because every nested event replays through the unchanged Reducer. New work (Phases 2–3): the
+milestone validation schema/check/worker convention, and the two program-planning front-ends.
+
+**Alternatives rejected.** A new `Program`/`MasterFeature` primitive (forks the engine; defeats
+self-similarity). A flat `pathIds` event representation (parallel to the nested `.scoped` the Reducer
+already folds; needs migration, strictly worse). Building on the Conductor (cross-domain saga, unbuilt,
+orthogonal to recursive composition — explicitly out of scope). Milestone as an empty check-only gate
+node (the team's framing is a validation *flow* with inputs/outputs; a validation worker fits the pipeline
+concept and reuses the human/deterministic check duality with no new node kind).
+
+**Implementation status (2026-06-20).** Phase 1 (keystone) built and committed:
+
+- ✅ Recursive `next`/`submit`/`report` in the CLI; arbitrary-depth descent + completion cascade.
+- ✅ Additive `WorkerInstruction.scopePath` (full lineage `program › feature › slice`).
+- ✅ Depth-2 tests (nested `.scoped` fold; completion cascade unlocks a dependent) + a worked
+  `docs/examples/program-nested/` fixture driven to `✓ done`.
+
+Phase 2 (milestone-as-validation-node) built and committed:
+
+- ✅ `validation-result` schema + `validation-result.structure` gate (the milestone verdict gate;
+  `outcome == pass`, every criterion pass). Field is `outcome`, not `verdict`, so a failed checkpoint
+  **self-reworks** (re-validate) rather than triggering §9 upstream routing.
+- ✅ Manual `milestone-gate` worker (`workerKind: human`) + the convention doc
+  [docs/milestones.md](milestones.md) (manual ↔ automated swap; maturity transition; wiring).
+- ✅ Worked `docs/examples/program-milestone/` (featA → milestone → featB) driven through a failing
+  verdict (gate blocks, featB held) and a passing one (featB unlocks → `✓ done`).
+- 🐞 Fixed a latent bug surfaced by milestones: `submit` looked up the leaf worker by **node id**, but
+  the worker map is keyed by **worker name** — equal in every prior example (`{id: x, worker: x}`), so a
+  milestone node (`{id: m1, worker: milestone-gate}`) ran with an empty worker (no checks). Now looks up
+  by `node.worker`.
+
+Phase 3 (program-tier planning) built and committed:
+
+- ✅ `ai-sdd-plan-program` skill (program mode): program brief template, draft+approve gate, emits the
+  master graph (`.ai-sdd/programs/<slug>/` — feature nodes `kind: pipeline` → `../../features/<feat>` +
+  milestone nodes + per-node `owner`), then plans each sub-feature with `ai-sdd-plan`.
+- ✅ `ai-sdd-plan` extended with an optional `## Milestones` front-end: phase a feature's slices into
+  checkpoints, inserting milestone gate nodes + inter-phase edges (the same primitive, one tier down).
+- ✅ Both surfaced in `skills/` + `.ai-sdd/skills/` + `.agents/skills/` (Codex symlink); convention doc
+  [docs/milestones.md](milestones.md); worked program brief [docs/examples/program-brief.md](examples/program-brief.md).
+- ✅ Verified the prescribed `.ai-sdd/programs/<slug>/` layout (feature nodes → `../../features/<feat>`)
+  validates, renders with owners, and runs end-to-end (program → feature → build → worker, milestone
+  gating between features).
+
+---
+
 ## Open decisions
 
 _None — all decisions above are resolved. New questions will be appended here as they arise._

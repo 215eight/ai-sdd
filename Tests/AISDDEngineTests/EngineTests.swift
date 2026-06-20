@@ -443,6 +443,68 @@ struct EngineTests {
         #expect(Scheduler.isComplete(state, sub))
     }
 
+    // A doubly-nested scoped event folds two levels down (feature → build → worker), leaving the
+    // intermediate level's own completion set untouched (recursive descent, ADR-0028).
+    @Test func nestedScopedEventsRouteToDepth2() {
+        var state = RunState()
+        state = Reducer.reduce(state, .scoped(slice: "feature",
+            event: .scoped(slice: "build",
+                event: .nodeCompleted(node: "architect", producedArtifacts: ["plan.v1"]))))
+        #expect(state.completedNodes.isEmpty, "top level untouched")
+        let feature = state.slices["feature"]
+        #expect(feature?.completedNodes.isEmpty == true, "feature level untouched")
+        let build = feature?.slices["build"]
+        #expect(build?.completedNodes == ["architect"])
+        #expect(build?.readyArtifacts == ["plan.v1"])
+    }
+
+    // Depth-2 completion cascades up: a leaf worker completing finishes its build sub-pipeline,
+    // which finishes its feature, which unlocks the dependent feature at the program root. This is
+    // the exact event shape + cascade condition `submitDescend` produces (ADR-0028).
+    @Test func depth2CompletionCascadesAndUnlocksDependent() {
+        // program: A ──▶ B  (each a feature sub-pipeline)
+        let program = PipelineSpec(
+            nodes: [PipelineNode(id: "A", kind: "pipeline", pipeline: "a"),
+                    PipelineNode(id: "B", kind: "pipeline", pipeline: "b")],
+            edges: [PipelineEdge(from: OneOrMany(["A"]), to: "B")])
+        let feature = PipelineSpec(nodes: [PipelineNode(id: "s", kind: "pipeline", pipeline: "p")], edges: [])
+        let build = PipelineSpec(nodes: [PipelineNode(id: "w", worker: "w")], edges: [])
+
+        var state = RunState()
+        #expect(Scheduler.runnable(state, program) == ["A"], "only A is runnable")
+
+        // Drive the leaf worker w (inside A › s) to completion via nested scoped events.
+        for event: RunEvent in [.nodeStarted(node: "A"),
+                                .scoped(slice: "A", event: .nodeStarted(node: "s")),
+                                .scoped(slice: "A", event: .scoped(slice: "s", event: .nodeStarted(node: "w"))),
+                                .scoped(slice: "A", event: .scoped(slice: "s",
+                                    event: .nodeCompleted(node: "w", producedArtifacts: [])))] {
+            state = Reducer.reduce(state, event)
+        }
+        // The build sub-pipeline is complete → cascade completes the slice node `s` under A.
+        #expect(Scheduler.isComplete(state.slices["A"]?.slices["s"] ?? RunState(), build))
+        state = Reducer.reduce(state, .scoped(slice: "A", event: .nodeCompleted(node: "s", producedArtifacts: [])))
+
+        // Feature A's sub-pipeline is now complete → cascade completes A at the program root.
+        #expect(Scheduler.isComplete(state.slices["A"] ?? RunState(), feature))
+        state = Reducer.reduce(state, .nodeCompleted(node: "A", producedArtifacts: []))
+
+        // A done at the top unlocks B; the program is not yet complete.
+        #expect(state.completedNodes == ["A"])
+        #expect(Scheduler.runnable(state, program) == ["B"])
+        #expect(!Scheduler.isComplete(state, program))
+    }
+
+    // A worker rendered deep in the nesting carries the full scope-path lineage (ADR-0028).
+    @Test func rendererCarriesScopePath() {
+        let node = PipelineNode(id: "architect", worker: "architect")
+        let worker = WorkerSpec(produces: [PortSpec(schema: "plan.v1")], task: WorkerTask(skill: "plan-change"))
+        let instruction = Renderer.instruction(node: node, worker: worker, state: RunState(),
+                                               slice: "build", stack: "core", scopePath: ["checkout", "build"])
+        #expect(instruction.scopePath == ["checkout", "build"])
+        #expect(Renderer.markdown(instruction).contains("path `checkout › build`"))
+    }
+
     // A worker rendered inside a slice carries the slice + stack context.
     @Test func rendererCarriesSliceContext() {
         let node = PipelineNode(id: "architect", worker: "architect")
