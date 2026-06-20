@@ -147,7 +147,7 @@ into a different composition without change.
 
 The single most important structural rule, to keep the flow readable and not scattered:
 
-- **Topology lives in the Pipeline.** The Pipeline spec lists nodes and edges. It is the *one* place you read to understand the flow, and it renders 1:1 to the DAG diagram — literally: `factory graph` emits that diagram (Mermaid) deterministically from the spec, per feature and across repos (ADR-0027).
+- **Topology lives in the Pipeline.** The Pipeline spec lists nodes and edges. It is the *one* place you read to understand the flow, and it renders 1:1 to the DAG diagram — literally: `ai-sdd graph` emits that diagram (Mermaid) deterministically from the spec, per feature and across repos (ADR-0027).
 - **A Worker declares only its typed signature** (`consumes`/`produces` Schemas) — *not* which other Workers it connects to. Like a function declaring its parameter types but not its callers.
 - **Edges are authored, not inferred.** We do **not** auto-wire by matching types (that would scatter the flow). At load, each Edge is **type-checked** against the two Workers' signatures; a mis-wired edge fails to load.
 
@@ -478,8 +478,8 @@ trigger is whatever is convenient — the engine is simply **re-invoked** to fol
 and advance:
 
 - a **CLI hook** the external step calls on completion (CI's last step runs
-  `factory ingest --run <id> --event ci-completed`; a git post-merge hook does the same);
-- a **poll** (`factory resume`, optionally on cron) that checks external status and ingests any
+  `ai-sdd ingest --run <id> --event ci-completed`; a git post-merge hook does the same);
+- a **poll** (`ai-sdd resume`, optionally on cron) that checks external status and ingests any
   change — best when there is no public webhook URL;
 - a lightweight **local watcher/daemon** (poll, or a webhook via a tunnel).
 
@@ -512,7 +512,7 @@ flowchart LR
 - The `✓` on each Edge is a **boundary Check** = the APPROVAL gate / the inter-factory contract.
 - **Contracts are versioned** (ADR-0017): each carries a `MAJOR.MINOR` (the `.vN` is the major). Minors are **additive-only** (back- *and* forward-compatible); breaking changes go to a new major via **dual-publish / expand-contract**. Producers declare `provides`, consumers a caret `requires` range, and the load-time validator enforces *producer-satisfies-consumer* — incompatible Factories fail to load.
 - A single **correlation Run id** threads through all Factories for end-to-end tracing.
-- **Observability — the Plant's first realization (ADR-0027).** Even before the execution Conductor exists, the Plant level is realized read-only by `factory graph --plant`: it aggregates per-repo/per-feature graph **fragments** (self-describing with `origin`/`correlation`/`factory`/`owner` tags) into one program view, grouped by milestone (`correlation`) — with a contract-version overlay that flags cross-repo semver skew (the `provides`/`requires` above). A live run-state overlay is a planned expansion behind the shared state plane (§6, ADR-0025).
+- **Observability — the Plant's first realization (ADR-0027).** Even before the execution Conductor exists, the Plant level is realized read-only by `ai-sdd graph --plant`: it aggregates per-repo/per-feature graph **fragments** (self-describing with `origin`/`correlation`/`factory`/`owner` tags) into one program view, grouped by milestone (`correlation`) — with a contract-version overlay that flags cross-repo semver skew (the `provides`/`requires` above). A live run-state overlay is a planned expansion behind the shared state plane (§6, ADR-0025).
 
 ## 12. The spec hierarchy & the engine boundary
 
@@ -599,10 +599,10 @@ engine is greenfield (`Sources/FactoryModels`, `Sources/FactoryEngine`). The pha
 (referential + edge-type + acyclicity), `Scheduler`/`Reducer` over the DAG (parallel branches,
 slice descent), and a deterministic `CheckRunner` that runs the gates and advances state. Gating is
 real: the `SchemaValidator` (structural/verdict gates incl. the reviewer's approve/reject + per-item
-verdicts), `ScopeChecker` (`factory scope`), and `CoverageChecker` (`factory cover`) all block, and
+verdicts), `ScopeChecker` (`ai-sdd scope`), and `CoverageChecker` (`ai-sdd cover`) all block, and
 **§9 bounded rework routing** is implemented (`Rework` — a failing verdict routes to the producer of
 the indicted input, scope-invalidates the subtree, bounds the rounds, then escalates). The
-`GraphRenderer` realizes the "renders 1:1 to the DAG diagram" principle as `factory graph` — Mermaid
+`GraphRenderer` realizes the "renders 1:1 to the DAG diagram" principle as `ai-sdd graph` — Mermaid
 per feature, a repo index (`--project`), multi-repo aggregation (`--plant`), a contract-version
 overlay, and a static HTML site (ADR-0027). Specs load from YAML via Yams (ADR-0020); the CLI is
 `validate / start / status / next / submit / check / scope / cover / graph`. Not yet built: the

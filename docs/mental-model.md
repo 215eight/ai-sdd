@@ -9,7 +9,7 @@
 A system that turns a feature brief into a **verifiable change you review rather than rewrite**. A
 deterministic **engine** plans the work and enforces the quality gates; your coding agent does the
 work via **skills**. The flow, roles, conventions, and gates aren't hardcoded — they're **data** in
-your repo's `.factory/` folder. (Specs are data; the engine is the only code.)
+your repo's `.ai-sdd/` folder. (Specs are data; the engine is the only code.)
 
 ## The core idea: separate *deciding* from *doing*
 
@@ -54,15 +54,15 @@ Three layers, each with one job — **stand it up once, then plan and run per fe
 
 | Layer | What it is | When | Command |
 |---|---|---|---|
-| **Toolkit** | the engine + the skills | once per machine | `factory --version` |
-| **Repo factory** (`.factory/`) | build pattern, roles, conventions, schemas, gates | once per repo | `/factory-bootstrap` |
-| **Feature plan** (`.factory/features/<slug>/`) | requirements + the orchestration graph | per feature | `/factory-plan "<brief>"` |
-| **Execution** | run the graph to done | per feature | `/factory-run <slug>` |
+| **Toolkit** | the engine + the skills | once per machine | `ai-sdd --version` |
+| **Repo factory** (`.ai-sdd/`) | build pattern, roles, conventions, schemas, gates | once per repo | `/ai-sdd-bootstrap` |
+| **Feature plan** (`.ai-sdd/features/<slug>/`) | requirements + the orchestration graph | per feature | `/ai-sdd-plan "<brief>"` |
+| **Execution** | run the graph to done | per feature | `/ai-sdd-run <slug>` |
 
 ## What a run feels like
 
-`factory next` hands you the next runnable worker — its role, the skill to run, the inputs it
-consumes, and the gates its output must pass. You do that work via the skill. `factory submit` runs
+`ai-sdd next` hands you the next runnable worker — its role, the skill to run, the inputs it
+consumes, and the gates its output must pass. You do that work via the skill. `ai-sdd submit` runs
 the gates: **pass → advance**, **fail → rework**. Rework routes by *what failed* (architecture §9):
 
 - a worker whose **own output** is wrong (a failing build/test) re-runs **itself** with the failure
@@ -79,7 +79,7 @@ change that has already cleared its gates.
 
 ## Seeing the work
 
-The graph is the *one* place the flow lives, so the engine can **render** it — `factory graph` emits
+The graph is the *one* place the flow lives, so the engine can **render** it — `ai-sdd graph` emits
 it as **Mermaid** (shows in any Markdown viewer), per feature or for the whole repo (`--project`),
 and across repos (`--plant`, grouped by milestone, flagging contract-version skew). It's a
 deterministic render of your committed specs, so the whole team reads the same plan from one place
@@ -88,16 +88,11 @@ needs shared run state, which is still local today.
 
 ## Where things live
 
-- `.factory/` — your repo's factory (committed).
-- `.factory/features/<slug>/` — a feature's requirements + orchestration graph.
-- `.factory/graph/` — generated dependency graphs (`factory graph … --out`), browsable in the tree.
-- `.factory/runs/`, `.factory/artifacts/` — runtime state (gitignored).
-- The skills — `factory-bootstrap`, `factory-plan`, `factory-compile-schema`, `factory-run`.
-
-- `.factory/` — your repo's factory (committed).
-- `.factory/features/<slug>/` — a feature's requirements + orchestration graph.
-- `.factory/runs/`, `.factory/artifacts/` — runtime state (gitignored).
-- The skills — `factory-bootstrap`, `factory-plan`, `factory-compile-schema`, `factory-run`.
+- `.ai-sdd/` — your repo's factory (committed).
+- `.ai-sdd/features/<slug>/` — a feature's requirements + orchestration graph.
+- `.ai-sdd/graph/` — generated dependency graphs (`ai-sdd graph … --out`), browsable in the tree.
+- `.ai-sdd/runs/`, `.ai-sdd/artifacts/` — runtime state (gitignored).
+- The skills — `ai-sdd-bootstrap`, `ai-sdd-plan`, `ai-sdd-compile-schema`, `ai-sdd-run`.
 
 ## Current limits (first iteration)
 
@@ -105,5 +100,5 @@ Free-form *judge* checks are advisory (the LLM gate-runner isn't wired yet) — 
 verdict is **not** a judge check: it's a structured artifact gated deterministically, so it blocks
 today. A slice's brief is passed to its
 architect by convention rather than as a typed artifact; requirements are markdown today; you run
-`factory` from the repo root; there's no MCP server yet (drive via the CLI). These are unbuilt
+`ai-sdd` from the repo root; there's no MCP server yet (drive via the CLI). These are unbuilt
 pieces, not different intentions — the flow above is the model.

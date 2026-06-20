@@ -253,7 +253,7 @@ Validate in three layers:
 2. **Constraints / schema** — a **JSON Schema** per spec kind, for in-editor feedback
    (`yaml-language-server`: autocomplete + inline errors) and CI. Kept in sync with the
    Swift types (generated from them, or round-trip-tested against the example specs).
-3. **Referential / graph** — a custom **`factory validate`** pass over the decoded model:
+3. **Referential / graph** — a custom **`ai-sdd validate`** pass over the decoded model:
    worker/check id resolution, Edge-vs-Worker signature type-compatibility, DAG
    acyclicity, and contract coverage.
 
@@ -263,7 +263,7 @@ the `RunEvent` log, not for specs.
 
 **Consequences.** Type safety is re-imposed at load time rather than compile time
 (inherent to spec-as-data). Implementation needs: a Yams dependency, a JSON Schema set
-plus a sync/test mechanism, and the `factory validate` command.
+plus a sync/test mechanism, and the `ai-sdd validate` command.
 
 **Escape hatch.** If authoring-time type safety proves necessary, adopt **Pkl** (Apple's
 typed configuration language — renders YAML/JSON, has `pkl-swift`, generates Swift types)
@@ -567,7 +567,7 @@ eval quality, a different axis).
 
 **Decision.**
 
-- **A deterministic `factory graph` renderer over committed specs.** Rendering a DAG is a pure transform
+- **A deterministic `ai-sdd graph` renderer over committed specs.** Rendering a DAG is a pure transform
   of spec data (no LLM) — *specs are data; the engine is the only code* — so it is an engine subcommand
   beside `validate`/`status`. It emits **portable static artifacts**: Mermaid-in-`.md` for in-repo/IDE
   viewing and a self-contained static site (HTML + inline SVG/Mermaid, no server) for an
@@ -596,7 +596,7 @@ eval quality, a different axis).
   distributed-monolith trap, ADR-0012). At ~24 repos, fragments are **push-published** (each repo's CI
   renders its fragment + a small machine-readable manifest to the shared location) rather than
   central-fetched (which would need read creds to every repo + clone-at-render cost). Output lives in
-  its own namespace (`.factory/graph/`, `plant.yaml`) — never under `features/`, `runs/`, or `artifacts/`.
+  its own namespace (`.ai-sdd/graph/`, `plant.yaml`) — never under `features/`, `runs/`, or `artifacts/`.
 
 - **Contracts generalized and git-versioned.** Any model-defining artifact (a gRPC contract, an iOS
   models/API package, a shared schema package, an OpenAPI doc) is a versioned cross-repo edge, identified
@@ -607,7 +607,7 @@ eval quality, a different axis).
   ADR-0017's `contract-compat` check — the view is fully useful without it.
 
 - **Upstream (PM/Design) is an adoption path, gated only on git.** A non-code workspace is just a **git
-  repo with a `.factory/`** — durability comes from git (ADR-0025), so no bespoke storage is needed. If
+  repo with a `.ai-sdd/`** — durability comes from git (ADR-0025), so no bespoke storage is needed. If
   the PM/Designer adopt ai-sdd (in a terminal or via an agent) their phases become **real fragments**
   reusing the existing schemas; if they don't, the phase renders as a **placeholder external/human node**
   (a typed handle + a human gate, ADR-0009/§10) so the milestone's correlation chain never breaks.
@@ -627,7 +627,7 @@ eval quality, a different axis).
 before the execution Conductor exists (§14/§19) — read-only aggregation needs only the Plant index +
 published fragments. Adopters keep their Mermaid-in-markdown workflow, now generated from live specs and
 shared. Specs stay next to their code (ADR-0012); the thin Plant repo owns only program-level/non-code
-concerns + state + site. New work: the `factory graph` renderer; the additive fragment metadata + manifest
+concerns + state + site. New work: the `ai-sdd graph` renderer; the additive fragment metadata + manifest
 format; a `plant.yaml` aggregator; and (later) the live-state overlay + a shared-state backend at scale.
 
 **Alternatives rejected.** Coupling to GitHub Pages (one git host of many; the renderer must stay
@@ -639,9 +639,9 @@ LLM-rendered graphs (rendering is a deterministic transform; an LLM there adds n
 capability — the ADR-0026 reasoning).
 
 **Implementation status (2026-06-19).** Built and committed — the `GraphRenderer`/`Contracts` engine
-+ the `factory graph` CLI (Swift Testing coverage):
++ the `ai-sdd graph` CLI (Swift Testing coverage):
 
-- ✅ **Slice 1** — `factory graph <dir>`: a Pipeline → Mermaid (both DAG kinds).
+- ✅ **Slice 1** — `ai-sdd graph <dir>`: a Pipeline → Mermaid (both DAG kinds).
 - ✅ **Slice 2** — `--project`: a repo index (build pattern + every feature, one file + TOC).
 - ✅ **Slice 3** — the four-tag fragment metadata (`origin`/`correlation`/`factory`/`owner`) + per-node
   `owner` (inherits the feature lead), surfaced in headers + node labels.
@@ -655,7 +655,7 @@ capability — the ADR-0026 reasoning).
 Pending (designed above, **not yet built** — start here on resumption):
 
 - ⬜ **Live progress overlay** — color nodes by run state (`done`/`in-progress`/`runnable`/`rework`/
-  `escalated`). Blocked on the **shared state plane** (ADR-0025); local runs (`.factory/runs/`,
+  `escalated`). Blocked on the **shared state plane** (ADR-0025); local runs (`.ai-sdd/runs/`,
   gitignored) aren't visible cross-machine, so a team-live view needs the service backend at scale.
 - ⬜ **Remote / push-published fragments** — today `FragmentRef` is `{ path }` (local). The ADR's
   push model needs (a) a machine-readable **fragment manifest** (nodes/edges/status as JSON) each
