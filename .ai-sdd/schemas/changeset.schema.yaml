@@ -1,0 +1,18 @@
+apiVersion: ai-sdd/v1
+kind: Schema
+metadata: { name: changeset, version: 1 }
+spec:
+  handle: files
+  format: yaml
+  scope: internal
+  fields:
+    summary:
+      type: string
+      required: true
+      invariants: [{ nonEmpty: true }]
+    satisfies:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { nonEmpty: true } }

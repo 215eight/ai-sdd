@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: planner }
+spec:
+  workerKind: transform
+  produces: [{ schema: feature-plan.v1 }]
+  task: { skill: plan-feature }
+  model: deep-reasoning
+  reasoning: high
+  checks: [feature-plan.structure]

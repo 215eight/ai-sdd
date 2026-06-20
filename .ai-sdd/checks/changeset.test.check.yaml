@@ -1,0 +1,7 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: changeset.test }
+spec:
+  checkKind: deterministic
+  command: "swift test"
+  required: true

@@ -1,0 +1,21 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata:
+  name: project-status-dashboard
+  version: 1
+  correlation: ai-sdd/project-status-dashboard
+  factory: code
+spec:
+  semantics: enabler
+  nodes:
+    - { id: status-projection, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: inline-svg-charts, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: dashboard-html-renderer, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: dashboard-cli-integration, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: dashboard-docs-and-verification, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: status-projection, to: inline-svg-charts }
+    - { from: status-projection, to: dashboard-html-renderer }
+    - { from: inline-svg-charts, to: dashboard-html-renderer }
+    - { from: dashboard-html-renderer, to: dashboard-cli-integration }
+    - { from: dashboard-cli-integration, to: dashboard-docs-and-verification }

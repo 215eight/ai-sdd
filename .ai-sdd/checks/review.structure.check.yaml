@@ -1,0 +1,7 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: review.structure }
+spec:
+  checkKind: deterministic
+  command: "swift run ai-sdd check .ai-sdd/schemas/review.schema.yaml .ai-sdd/artifacts/review.v1.yaml"
+  required: true

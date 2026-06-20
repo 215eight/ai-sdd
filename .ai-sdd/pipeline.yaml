@@ -1,0 +1,13 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: ai-sdd-feature, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: planner, worker: planner }
+    - { id: implementer, worker: implementer }
+    - { id: reviewer, worker: reviewer, required: true }
+  edges:
+    - { from: planner, to: implementer, artifact: feature-plan.v1 }
+    - { from: planner, to: reviewer, artifact: feature-plan.v1 }
+    - { from: implementer, to: reviewer, artifact: changeset.v1 }

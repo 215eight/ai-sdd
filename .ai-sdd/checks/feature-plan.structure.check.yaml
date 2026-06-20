@@ -1,0 +1,7 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: feature-plan.structure }
+spec:
+  checkKind: deterministic
+  command: "swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml"
+  required: true

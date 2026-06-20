@@ -73,4 +73,32 @@ provider-neutral — `ai-sdd` is a CLI any agent calls over a shell.
 - No design-doc jargon in code comments (no "Mode B", no ADR numbers); that vocabulary lives in
   `docs/` and commit messages.
 - Work in reviewable pieces; build + test each; commit per piece. Don't push unless asked.
-- `.ai-sdd/` (local run store) is gitignored.
+- `.ai-sdd/runs/` and `.ai-sdd/artifacts/` are gitignored runtime state; the rest of `.ai-sdd/`
+  is committed factory configuration.
+
+<!-- ai-sdd:begin — managed by ai-sdd-bootstrap; edits between these markers are overwritten on re-bootstrap -->
+## AI Software Factory (`.ai-sdd/`)
+
+This repo is bootstrapped as an ai-sdd factory. The committed factory home is `.ai-sdd/`:
+
+- `.ai-sdd/pipeline.yaml` is the runnable plan → implement → review pattern for repo changes.
+- `.ai-sdd/workers/` holds Worker specs; each Worker references a skill by name instead of inline prompts.
+- `.ai-sdd/schemas/` defines produced artifact shapes; `.ai-sdd/checks/` holds the deterministic gates compiled from them.
+- `.ai-sdd/conventions/swift.md` records evidence-backed repo conventions and open gaps.
+- `.ai-sdd/skills/` is the provider-neutral source for framework and worker skills.
+
+Drive the loop with the CLI from the repo root:
+
+```sh
+swift run ai-sdd validate .ai-sdd
+swift run ai-sdd start .ai-sdd <run-id>
+swift run ai-sdd next <run-id>
+# agent performs the rendered worker skill and writes the required artifact
+swift run ai-sdd submit <run-id>
+```
+
+Skill discovery is surfaced through each agent's native skill directory. Codex uses the committed
+`.agents/skills/<name>` symlinks, and Claude Code uses local `.claude/skills/<name>` symlinks. Those
+symlinks point at `.ai-sdd/skills/<name>`; worker skills are resolved by the engine from the factory
+workspace and do not need per-agent symlinks.
+<!-- ai-sdd:end -->

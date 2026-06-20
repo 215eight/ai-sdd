@@ -1,0 +1,24 @@
+apiVersion: ai-sdd/v1
+kind: Schema
+metadata: { name: review, version: 1 }
+spec:
+  handle: file
+  format: yaml
+  scope: internal
+  fields:
+    items:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { field: id, nonEmpty: true } }
+        - { all: { field: verdict, matches: "^(pass|fail)$" } }
+        - { all: { field: verdict, eq: pass } }
+    verdict:
+      type: string
+      required: true
+      invariants:
+        - { matches: "^(approve|reject)$" }
+        - { eq: approve }
+    rework:
+      type: list

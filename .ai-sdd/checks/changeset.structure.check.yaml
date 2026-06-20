@@ -1,0 +1,7 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: changeset.structure }
+spec:
+  checkKind: deterministic
+  command: "swift run ai-sdd check .ai-sdd/schemas/changeset.schema.yaml .ai-sdd/artifacts/changeset.v1.yaml"
+  required: true

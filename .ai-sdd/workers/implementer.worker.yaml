@@ -1,0 +1,11 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: implementer }
+spec:
+  workerKind: transform
+  consumes: [{ schema: feature-plan.v1, required: true }]
+  produces: [{ schema: changeset.v1 }]
+  task: { skill: implement-feature }
+  model: deep-reasoning
+  reasoning: high
+  checks: [changeset.structure, changeset.build, changeset.test, changeset.diff-in-scope]

@@ -1,0 +1,7 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: review.coverage }
+spec:
+  checkKind: deterministic
+  command: "swift run ai-sdd cover --plan .ai-sdd/artifacts/feature-plan.v1.yaml --review .ai-sdd/artifacts/review.v1.yaml"
+  required: true

@@ -63,11 +63,14 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
-# Local run store (Piece 2; the shared state plane of ADR-0025 lands later)
+# Local run store (legacy pre-.ai-sdd name)
 .factory/
 
-# Agent-local folders — local settings/state, not surfacing. (Claude Code's skill symlinks live
-# under .claude/ and are recreated by ai-sdd-bootstrap.) The committed, repo-level skill surface is
-# .agents/skills/ (Codex's native mechanism — symlinks into skills/, tracked, not ignored).
+# ai-sdd:begin — managed by ai-sdd-bootstrap; edits between these markers are overwritten on re-bootstrap
+# Software factory runtime (the rest of .ai-sdd/ is committed)
+.ai-sdd/runs/
+.ai-sdd/artifacts/
+# Agent-local state (NOT .agents/skills/ — that's the committed Codex repo-level skill surface)
 .claude/
 .codex/
+# ai-sdd:end

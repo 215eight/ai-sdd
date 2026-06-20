@@ -1,0 +1,7 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: changeset.diff-in-scope }
+spec:
+  checkKind: deterministic
+  command: "swift run ai-sdd scope --plan .ai-sdd/artifacts/feature-plan.v1.yaml --repo ."
+  required: true

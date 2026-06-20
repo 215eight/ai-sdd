@@ -1,0 +1,41 @@
+apiVersion: ai-sdd/v1
+kind: Schema
+metadata: { name: feature-plan, version: 1 }
+spec:
+  handle: file
+  format: yaml
+  scope: internal
+  fields:
+    summary:
+      type: string
+      required: true
+      invariants: [{ nonEmpty: true }]
+    scope:
+      type: object
+      required: true
+      invariants: [{ nonEmpty: true }]
+    acceptance:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { field: id, nonEmpty: true } }
+        - { all: { field: description, nonEmpty: true } }
+    decisions:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { field: status, eq: closed } }
+    files:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { matches: "^(Sources|Tests|docs|skills|\\.ai-sdd|\\.agents|\\.github|AGENTS\\.md|README\\.md|QUICKSTART\\.md|Package\\.swift|Package\\.resolved|\\.gitignore)(/|$)" } }
+    tests:
+      type: list
+      required: true
+      invariants:
+        - { nonEmpty: true }
+        - { all: { nonEmpty: true } }
