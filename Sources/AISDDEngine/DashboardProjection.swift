@@ -96,14 +96,18 @@ public enum ProjectDashboardAssembler {
         var title = homeURL.lastPathComponent
         let loader = SpecLoader()
 
+        var buildPattern: GraphRenderer.DashboardSection?
         if let env = try? loader.loadPipeline(atDirectory: homeURL) {
             title = env.metadata.name
-            sections.append(.init(
+            let projection = DashboardProjection.project(
+                pipeline: env.spec,
+                metadata: env.metadata,
+                state: matchedState(for: homeURL, in: runStore))
+            buildPattern = .init(
                 heading: "Build pattern · \(env.metadata.name)",
-                projection: DashboardProjection.project(
-                    pipeline: env.spec,
-                    metadata: env.metadata,
-                    state: matchedState(for: homeURL, in: runStore))))
+                projection: projection,
+                mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
+                                                        inheritedOwner: env.metadata.owner ?? []))
         }
 
         let featuresDir = homeURL.appendingPathComponent("features", isDirectory: true)
@@ -115,15 +119,22 @@ public enum ProjectDashboardAssembler {
         for entry in entries {
             let name = entry.lastPathComponent
             if let env = try? loader.loadPipeline(atDirectory: entry) {
+                let projection = DashboardProjection.project(
+                    pipeline: env.spec,
+                    metadata: env.metadata,
+                    state: matchedState(for: entry, in: runStore))
                 sections.append(.init(
                     heading: "Feature · \(name)",
-                    projection: DashboardProjection.project(
-                        pipeline: env.spec,
-                        metadata: env.metadata,
-                        state: matchedState(for: entry, in: runStore))))
+                    projection: projection,
+                    mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
+                                                            inheritedOwner: env.metadata.owner ?? [])))
             } else {
                 sections.append(.init(heading: "Feature · \(name)", projection: emptyProjection()))
             }
+        }
+
+        if sections.isEmpty, let buildPattern {
+            sections.append(buildPattern)
         }
 
         guard !sections.isEmpty else {

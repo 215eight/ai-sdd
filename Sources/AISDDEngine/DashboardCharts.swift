@@ -53,22 +53,24 @@ public enum DashboardCharts {
         let maxTotal = max(groups.map(\.total).max() ?? 0, 1)
         let rowHeight = 36
         let top = 32
-        let chartWidth = 180
+        let chartX = 220
+        let chartWidth = 240
+        let totalX = chartX + chartWidth + 16
         let height = max(110, top + groups.count * rowHeight + 28)
         let label = "Status by owner: " + groups
             .map { "\($0.label) \($0.total)" }
             .joined(separator: ", ")
 
         var lines = [
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 420 \(height)\" role=\"img\" aria-label=\"\(escape(label))\" class=\"dashboard-chart dashboard-grouped-bars\">",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 540 \(height)\" role=\"img\" aria-label=\"\(escape(label))\" class=\"dashboard-chart dashboard-grouped-bars\">",
             "  <g class=\"bar-groups\">"
         ]
         for (index, group) in groups.enumerated() {
             let y = top + index * rowHeight
             lines.append("    <g class=\"bar-group\" data-group=\"\(escape(group.label))\" data-total=\"\(group.total)\">")
             lines.append("      <text x=\"0\" y=\"\(y + 13)\" class=\"group-label\">\(escape(group.label))</text>")
-            lines.append("      <rect x=\"150\" y=\"\(y)\" width=\"\(chartWidth)\" height=\"16\" fill=\"#eceff1\"/>")
-            var x = 150
+            lines.append("      <rect x=\"\(chartX)\" y=\"\(y)\" width=\"\(chartWidth)\" height=\"16\" fill=\"#eceff1\"/>")
+            var x = chartX
             var allocated = 0
             for status in DashboardStatus.allCases {
                 let count = group.counts[status, default: 0]
@@ -82,7 +84,7 @@ public enum DashboardCharts {
                 lines.append("      <rect class=\"status-bar status-\(escape(status.rawValue))\" data-status=\"\(escape(status.rawValue))\" data-count=\"\(count)\" x=\"\(x)\" y=\"\(y)\" width=\"\(width)\" height=\"16\" fill=\"\(escape(color(for: status, colors: colors)))\"><title>\(escape(group.label)) \(escape(status.rawValue)): \(count)</title></rect>")
                 x += width
             }
-            lines.append("      <text x=\"342\" y=\"\(y + 13)\" class=\"group-total\">\(group.total)</text>")
+            lines.append("      <text x=\"\(totalX)\" y=\"\(y + 13)\" class=\"group-total\">\(group.total)</text>")
             lines.append("    </g>")
         }
         if groups.isEmpty {

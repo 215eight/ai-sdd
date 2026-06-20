@@ -1101,7 +1101,6 @@ struct EngineTests {
 
         #expect(dashboard.title == "factory")
         #expect(dashboard.sections.map(\.heading) == [
-            "Build pattern · factory",
             "Feature · alpha",
             "Feature · beta",
             "Feature · zeta-broken"
@@ -1115,6 +1114,7 @@ struct EngineTests {
 
         let betaRows = try #require(dashboard.sections.first { $0.heading == "Feature · beta" }?.projection.rows)
         #expect(betaRows.map(\.status) == [.runnable, .pending])
+        #expect(dashboard.sections.first { $0.heading == "Feature · alpha" }?.mermaid?.contains("plan --> implement") == true)
 
         let brokenSection = try #require(dashboard.sections.first { $0.heading == "Feature · zeta-broken" })
         #expect(brokenSection.projection.rows.isEmpty)
@@ -1164,12 +1164,12 @@ struct EngineTests {
         #expect(written.contains("<title>factory — ai-sdd dashboard</title>"))
         #expect(written.contains("<style>"))
         #expect(written.contains("Feature · dashboard"))
+        #expect(!written.contains("Build pattern · factory"))
+        #expect(written.contains("class=\"mermaid dashboard-mermaid\""))
+        #expect(written.contains("plan --&gt; implement"))
         #expect(written.contains("class=\"dashboard-chart dashboard-status-donut\""))
         #expect(written.contains("class=\"dashboard-chart dashboard-grouped-bars\""))
-        #expect(written.contains("dashboard-node status-done"))
-        #expect(written.contains("dashboard-node status-runnable"))
-        #expect(!written.contains("<script"))
-        #expect(!written.contains("cdn.jsdelivr"))
+        #expect(written.contains("mermaid.esm.min.mjs"))
     }
 
     private func writePipeline(at directory: URL, name: String, nodes: [String],
@@ -1283,8 +1283,7 @@ struct EngineTests {
         #expect(page.hasPrefix("<!doctype html>"))
         #expect(page.contains("<title>Project Status — ai-sdd dashboard</title>"))
         #expect(page.contains("<style>"))
-        #expect(!page.contains("cdn.jsdelivr"))
-        #expect(!page.contains("<script"))
+        #expect(page.contains("mermaid.esm.min.mjs"))
         #expect(page.contains("<span class=\"summary-value\">1</span><span class=\"summary-label\">features</span>"))
         #expect(page.contains("<span class=\"summary-value\">2</span><span class=\"summary-label\">slices</span>"))
         #expect(page.contains("<span class=\"summary-value\">1/2</span><span class=\"summary-label\">done</span>"))
@@ -1318,14 +1317,14 @@ struct EngineTests {
                                    nextActionHint: .fixFailedChecks)
         ]
         let page = GraphRenderer.dashboardPage(title: "Project", sections: [
-            .init(heading: "Build pattern · project", projection: .init(rows: rows, summary: summary))
+            .init(heading: "Feature · project", projection: .init(rows: rows, summary: summary),
+                  mermaid: "flowchart TD\n    plan:::status_done\n    plan --> implement\n    implement --> review")
         ])
 
-        #expect(page.contains("<h2>Build pattern · project</h2>"))
-        #expect(page.contains("dashboard-node status-done"))
-        #expect(page.contains("dashboard-node status-in-progress"))
-        #expect(page.contains("dashboard-node status-rework"))
-        #expect(page.contains("<span>plan</span><span aria-hidden=\"true\">→</span><span>implement</span>"))
+        #expect(page.contains("<h2>Feature · project</h2>"))
+        #expect(page.contains("class=\"mermaid dashboard-mermaid\""))
+        #expect(page.contains("flowchart TD"))
+        #expect(page.contains("plan --&gt; implement"))
         #expect(page.contains("<td>implement</td>"))
         #expect(page.contains("<td>in-progress</td>"))
         #expect(page.contains("<td>bob</td>"))
@@ -1362,7 +1361,6 @@ struct EngineTests {
         #expect(page.contains("swift&lt;&amp;&gt;"))
         #expect(page.contains("lane&lt;&amp;&gt;"))
         #expect(page.contains("mile&lt;&amp;&gt;"))
-        #expect(!page.contains("<script>"))
         #expect(!page.contains("\"x\""))
         #expect(page.contains("aria-valuenow=\"100\""))
         #expect(page.contains("style=\"width: 100.0%\""))

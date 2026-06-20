@@ -127,11 +127,36 @@ public enum GraphRenderer {
     public struct DashboardSection: Equatable, Sendable {
         public var heading: String
         public var projection: DashboardProjectionResult
+        public var mermaid: String?
 
-        public init(heading: String, projection: DashboardProjectionResult) {
+        public init(heading: String, projection: DashboardProjectionResult, mermaid: String? = nil) {
             self.heading = heading
             self.projection = projection
+            self.mermaid = mermaid
         }
+    }
+
+    public static func dashboardMermaid(_ pipeline: PipelineSpec, rows: [DashboardProjectionRow],
+                                        direction: String = "TD",
+                                        inheritedOwner: [String] = []) -> String {
+        let statuses = Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.status) })
+        var lines = ["flowchart \(direction)"]
+        for node in pipeline.nodes {
+            let status = statuses[node.id] ?? .pending
+            lines.append("    \(safeID(node.id))\(dashboardLabel(node, status: status, inheritedOwner: inheritedOwner)):::\(mermaidClass(status))")
+        }
+        for edge in pipeline.edges {
+            let schema = edge.artifact.flatMap { $0 == "*" ? nil : $0 }
+            let arrow = schema.map { "-->|\(escapeMermaidLabel($0))|" } ?? "-->"
+            for from in edge.from.values {
+                lines.append("    \(safeID(from)) \(arrow) \(safeID(edge.to))")
+            }
+        }
+        for status in DashboardStatus.allCases {
+            let color = DashboardCharts.defaultColors[status] ?? "#9e9e9e"
+            lines.append("    classDef \(mermaidClass(status)) fill:#ffffff,stroke:\(color),stroke-width:3px,color:#1f2328")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Render a self-contained dashboard page from prepared dashboard sections.
@@ -170,7 +195,8 @@ public enum GraphRenderer {
             "    <section class=\"dashboard-charts\" aria-label=\"Dashboard charts\">",
             "      \(DashboardCharts.statusDonut(summary))",
             "      \(DashboardCharts.groupedBarChart(rows))",
-            "    </section>"
+            "    </section>",
+            mermaidScript()
         ]
         for section in sections {
             parts.append(sectionHTML(section))
@@ -300,15 +326,32 @@ public enum GraphRenderer {
     }
 
     private static func sectionHTML(_ section: DashboardSection) -> String {
-        [
+        var parts = [
             "    <section class=\"dashboard-section\">",
             "      <header>",
             "        <h2>\(escapeHTML(section.heading))</h2>",
             "        <p>\(section.projection.summary.doneCount)/\(section.projection.summary.totalNodeCount) done</p>",
-            "      </header>",
-            graphHTML(rows: section.projection.rows),
+            "      </header>"
+        ]
+        if let mermaid = section.mermaid {
+            parts.append(mermaidHTML(mermaid))
+        } else {
+            parts.append(graphHTML(rows: section.projection.rows))
+        }
+        parts += [
             tableHTML(rows: section.projection.rows),
             "    </section>"
+        ]
+        return parts.joined(separator: "\n")
+    }
+
+    private static func mermaidHTML(_ mermaid: String) -> String {
+        [
+            "      <div class=\"dashboard-mermaid-wrap\" aria-label=\"Dependency graph\">",
+            "        <pre class=\"mermaid dashboard-mermaid\">",
+            escapeHTML(mermaid),
+            "        </pre>",
+            "      </div>"
         ].joined(separator: "\n")
     }
 
@@ -412,6 +455,8 @@ public enum GraphRenderer {
         .dashboard-section { border-top: 1px solid var(--line); padding: 26px 0; }
         .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
         .dashboard-section > header p { color: var(--muted); margin: 0; }
+        .dashboard-mermaid-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 18px; overflow-x: auto; padding: 16px; }
+        .dashboard-mermaid { margin: 0; min-width: 640px; text-align: center; }
         .dashboard-graph { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr); margin-bottom: 18px; }
         .dashboard-nodes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); list-style: none; margin: 0; padding: 0; }
         .dashboard-node { border: 1px solid var(--line); border-left: 5px solid currentColor; border-radius: 8px; color: var(--muted); min-height: 70px; padding: 12px; }
@@ -440,6 +485,39 @@ public enum GraphRenderer {
         }
         </style>
         """
+    }
+
+    private static func mermaidScript() -> String {
+        [
+            "    <script type=\"module\">",
+            "      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';",
+            "      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });",
+            "      await mermaid.run({ querySelector: '.dashboard-mermaid' });",
+            "    </script>"
+        ].joined(separator: "\n")
+    }
+
+    private static func dashboardLabel(_ node: PipelineNode, status: DashboardStatus,
+                                       inheritedOwner: [String]) -> String {
+        var detail = [status.rawValue]
+        if let worker = node.worker, worker != node.id { detail.append(worker) }
+        if node.pipeline != nil { detail.append("slice") }
+        if let stack = node.stack { detail.append("[\(stack)]") }
+        let owner = node.owner ?? (inheritedOwner.isEmpty ? nil : inheritedOwner)
+        if let owner, !owner.isEmpty { detail.append("@\(owner.joined(separator: ","))") }
+        return "[\"\(escapeMermaidLabel(node.id))<br/>\(escapeMermaidLabel(detail.joined(separator: " ")))\"]"
+    }
+
+    private static func mermaidClass(_ status: DashboardStatus) -> String {
+        "status_\(status.rawValue.replacingOccurrences(of: "-", with: "_"))"
+    }
+
+    private static func escapeMermaidLabel(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     private static func escapeHTML(_ value: String) -> String {
