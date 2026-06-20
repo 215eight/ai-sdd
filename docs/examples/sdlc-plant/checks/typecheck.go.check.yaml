@@ -1,4 +1,4 @@
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Check
 metadata:
   name: typecheck.go
@@ -24,7 +24,7 @@ spec:
   onFail: route-to-producer
 ---
 # A judge Check, for contrast — note compliance is NEVER a judge Check.
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Check
 metadata:
   name: judge.api-conventions

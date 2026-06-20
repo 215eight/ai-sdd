@@ -1,4 +1,4 @@
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: ModelCatalog
 metadata:
   name: claude-shop          # one catalog per AI company; the workspace selects the active one

@@ -1,4 +1,4 @@
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Stack
 metadata:
   name: ios-mac-app

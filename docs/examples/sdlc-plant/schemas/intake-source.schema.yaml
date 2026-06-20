@@ -1,4 +1,4 @@
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Schema
 metadata:
   name: intake-bundle
@@ -18,7 +18,7 @@ spec:
           locator:    { type: string, required: true }                                      # docId / path / url
           intakeType: { type: enum, values: [idea, prd, hiring-challenge], required: false } # what it means (else inferred)
 ---
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Schema
 metadata:
   name: intake-source

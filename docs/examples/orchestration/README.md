@@ -18,13 +18,13 @@ slices.
 ## Walk it
 
 ```sh
-factory validate docs/examples/orchestration          # referential + acyclicity check
-factory start    docs/examples/orchestration --id app
-factory next     app        # → descends into slice `foundation`, renders its architect
-factory submit   app        # advance the slice's sub-pipeline; repeat next/submit…
+ai-sdd validate docs/examples/orchestration          # referential + acyclicity check
+ai-sdd start    docs/examples/orchestration --id app
+ai-sdd next     app        # → descends into slice `foundation`, renders its architect
+ai-sdd submit   app        # advance the slice's sub-pipeline; repeat next/submit…
                             # when foundation's sub-pipeline finishes, the slice completes
                             # and `api` + `ui` become runnable.
-factory status   app        # shows top-level slices and the active slice's sub-progress
+ai-sdd status   app        # shows top-level slices and the active slice's sub-progress
 ```
 
 The engine owns control flow (which slice is runnable, did the gate pass, advance); the agent does

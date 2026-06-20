@@ -2,14 +2,14 @@
 # Each Trait contributes conventions (injected), checks (enforced), and optionally
 # resources. `requires` pulls in dependencies transitively, so a Stack lists only the
 # leaves it cares about.
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Trait
 metadata: { name: apple }
 spec:
   conventions: ["conventions/apple.md"]
   checks: [lint.swift]
 ---
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Trait
 metadata: { name: ios }
 spec:
@@ -17,7 +17,7 @@ spec:
   conventions: ["conventions/ios.md"]
   checks: [build.ios]
 ---
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Trait
 metadata: { name: macos }
 spec:
@@ -25,21 +25,21 @@ spec:
   conventions: ["conventions/macos.md"]
   checks: [build.macos]
 ---
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Trait
 metadata: { name: combine }
 spec:
   requires: [apple]
   conventions: ["conventions/combine.md"]
 ---
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Trait
 metadata: { name: swiftui }
 spec:
   requires: [apple]
   conventions: ["conventions/swiftui.md"]
 ---
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Trait
 metadata: { name: acme-ui }          # conventions for a specific UI package
 spec:

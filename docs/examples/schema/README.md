@@ -13,25 +13,25 @@ reject **routes rework to the producer of the input it indicts** (architecture �
 | `changeset.v1` | [changeset.schema.yaml](changeset.schema.yaml) | `satisfies` — the acceptance ids the change addresses |
 | `review.v1` | [review.schema.yaml](review.schema.yaml) | per-item `items[].verdict` + overall `verdict` + `rework` routing |
 
-The gates are all **deterministic** — the schema invariants compile to a `factory check`, so no
+The gates are all **deterministic** — the schema invariants compile to a `ai-sdd check`, so no
 judge-runner is needed; the reviewer *is* the judge, captured structurally.
 
 ## Walk the thread
 
 ```sh
 # 1. The plan declares an acceptance checklist (and is decision-closed, in-scope).
-factory check feature-plan.schema.yaml plan-good.yaml      # ✓
-factory check feature-plan.schema.yaml plan-bad.yaml       # ✗ incl. acceptance[0].id empty
+ai-sdd check feature-plan.schema.yaml plan-good.yaml      # ✓
+ai-sdd check feature-plan.schema.yaml plan-bad.yaml       # ✗ incl. acceptance[0].id empty
 
 # 2. The changeset records which acceptance ids it satisfies.
-factory check changeset.schema.yaml changeset-good.yaml    # ✓ satisfies: [parse-fixture, persist-result]
+ai-sdd check changeset.schema.yaml changeset-good.yaml    # ✓ satisfies: [parse-fixture, persist-result]
 
 # 3. The reviewer returns a verdict per item + overall. This IS the gate:
-factory check review.schema.yaml review-approve.yaml       # ✓ every item passes, verdict approve
-factory check review.schema.yaml review-reject.yaml        # ✗ a failed item + a reject — BLOCKS the slice
+ai-sdd check review.schema.yaml review-approve.yaml       # ✓ every item passes, verdict approve
+ai-sdd check review.schema.yaml review-reject.yaml        # ✗ a failed item + a reject — BLOCKS the slice
 
 # 4. The review must judge EVERY acceptance item (no silent skips):
-factory cover --plan plan-good.yaml --review review-approve.yaml   # ✓ all items judged
+ai-sdd cover --plan plan-good.yaml --review review-approve.yaml   # ✓ all items judged
 ```
 
 ## The reject routes rework — to the implementer or the planner

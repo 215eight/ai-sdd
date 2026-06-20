@@ -3,7 +3,7 @@
 Review the change against the plan's acceptance checklist and produce a **verdict** (`review.v1`).
 
 Illustrative example skill — in a real repo this is the repo's review skill, specialized by the
-worker's `stack`. The driver invokes it when `factory next` renders the `reviewer` worker (a
+worker's `stack`. The driver invokes it when `ai-sdd next` renders the `reviewer` worker (a
 required-gate node). The reviewer is a **real gate**, not advisory notes: its verdict blocks.
 
 Do:
@@ -21,7 +21,7 @@ Do:
    plan/contract is wrong → routes to the planner). The target must match a schema this reviewer
    consumes (its incoming edges are the routable producers). The engine reads this to route the
    rework; a reject with no resolvable target escalates to a human.
-5. Record `review.v1` and `factory submit`.
+5. Record `review.v1` and `ai-sdd submit`.
 
 ```yaml
 # review.v1 — a reject that routes to the implementer

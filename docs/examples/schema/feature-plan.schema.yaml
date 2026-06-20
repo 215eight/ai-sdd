@@ -1,4 +1,4 @@
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Schema
 metadata: { name: feature-plan, version: 1 }
 spec:

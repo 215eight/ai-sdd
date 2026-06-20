@@ -3,7 +3,7 @@
 Implement the plan into a **change** (`code.v1`), making the worker's gates pass.
 
 Illustrative example skill — in a real repo this is the repo's implementation skill, specialized
-by the worker's `stack`. The driver invokes it when `factory next` renders the `coder` worker.
+by the worker's `stack`. The driver invokes it when `ai-sdd next` renders the `coder` worker.
 
 Do:
 1. Read `plan.v1` (the consumed input) and the `stack`'s conventions.
@@ -12,7 +12,7 @@ Do:
 3. Record which acceptance items the change addresses in `code.v1`'s **`satisfies`** list (the ids
    from the plan's `acceptance`). This threads the checklist forward to the reviewer.
 4. Ensure the declared gates pass locally (`checks`: typecheck, lint, unit, diff-in-scope), then
-   `factory submit`. If submit reports rework, the next render lists the failed gates under `rework`
+   `ai-sdd submit`. If submit reports rework, the next render lists the failed gates under `rework`
    — fix exactly those and resubmit.
 
 ```yaml

@@ -3,7 +3,7 @@
 Produce an implementation **plan** (`plan.v1`) for the slice/requirement.
 
 Illustrative example skill — in a real repo this is the repo's planning skill, specialized by
-the worker's `stack`. The driver invokes it when `factory next` renders the `architect` worker.
+the worker's `stack`. The driver invokes it when `ai-sdd next` renders the `architect` worker.
 
 Do:
 1. Read the slice's intent (its `stack`, and any provided requirement context).
@@ -12,7 +12,7 @@ Do:
    stable `id` and a `description`. This is the thread the whole slice is held to: the implementer
    addresses each item and the reviewer returns a verdict per item. Keep ids short and stable.
 4. Record the plan as the run's `plan.v1` artifact (write it where the workspace expects, e.g.
-   `.factory/artifacts/plan.v1.yaml`), then `factory submit` — the engine records `plan.v1` as ready.
+   `.ai-sdd/artifacts/plan.v1.yaml`), then `ai-sdd submit` — the engine records `plan.v1` as ready.
 
 ```yaml
 # plan.v1 (excerpt)

@@ -1,4 +1,4 @@
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Worker
 metadata:
   name: await-ci
@@ -18,7 +18,7 @@ spec:
     timeout: 30m                                           # then escalate (BlockerRecord)
 
   # Delivery is either PUSH or POLL — both append an idempotent RunEvent that resumes the Run:
-  #   push:  CI's last step calls `factory ingest --run <id> --event ci.completed ...`
+  #   push:  CI's last step calls `ai-sdd ingest --run <id> --event ci.completed ...`
   #          (or a webhook hits the ingest boundary)
-  #   poll:  `factory resume` (e.g. cron) checks status via the github resource and ingests
+  #   poll:  `ai-sdd resume` (e.g. cron) checks status via the github resource and ingests
   resources: [{ name: github, access: read-only }]

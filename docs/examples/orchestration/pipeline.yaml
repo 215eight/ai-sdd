@@ -1,4 +1,4 @@
-apiVersion: factory/v1
+apiVersion: ai-sdd/v1
 kind: Pipeline
 metadata: { name: build-app, version: 1 }
 spec:
