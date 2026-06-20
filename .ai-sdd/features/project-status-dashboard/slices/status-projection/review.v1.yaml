@@ -1,0 +1,26 @@
+items:
+  - id: status-values
+    verdict: pass
+    notes: DashboardStatus exposes stable Codable raw values for done, in-progress, rework, escalated, runnable, and pending, with test coverage for ordering and spelling.
+  - id: no-run-static-statuses
+    verdict: pass
+    notes: Nil RunState projects through an empty scheduler state, marking source nodes runnable and dependency-bound nodes pending.
+  - id: run-backed-statuses
+    verdict: pass
+    notes: RunState-backed projection maps completed, in-progress, failed-check, escalated, scheduler-runnable, and remaining nodes to the requested statuses.
+  - id: status-precedence
+    verdict: pass
+    notes: Classification checks escalated, rework, in-progress, done, runnable, then pending, matching the required deterministic precedence.
+  - id: row-fields
+    verdict: pass
+    notes: Projection rows include node id, stack, owner, lane, milestone, dependency count, status, and next-action hint.
+  - id: owner-fallback
+    verdict: pass
+    notes: Owner labels prefer node owner, then metadata owner, then feature name, then stack; focused tests cover each fallback.
+  - id: summary-counts
+    verdict: pass
+    notes: Summary returns total feature count, total node count, done count, and initialized per-status totals.
+  - id: pure-engine-api
+    verdict: pass
+    notes: DashboardProjection is pure engine code using PipelineSpec, SpecMetadata, RunState, and Scheduler only; it performs no RunStore, filesystem, renderer, CLI, or argument work.
+verdict: approve

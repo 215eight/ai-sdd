@@ -1,0 +1,83 @@
+summary: >-
+  Add a pure engine-level dashboard status projection API that classifies pipeline
+  nodes from committed specs plus optional local run state, producing per-node rows
+  and aggregate counts for later dashboard rendering.
+scope:
+  in:
+    - Define dashboard projection data types in AISDDEngine for node status, per-node rows, next-action hints, and summary counts.
+    - Implement a pure projection function over PipelineSpec, SpecMetadata, and optional RunState.
+    - Classify no-run graphs with source nodes runnable and dependent nodes pending.
+    - Classify run-backed graphs from Scheduler.runnable plus RunState completed, in-progress, failed-check, and escalated sets.
+    - Populate row metadata from pipeline nodes and feature metadata, including stack, owner fallback, lane, milestone, dependency count, and next-action hint.
+    - Add focused Swift Testing coverage for status precedence, no-run behavior, run-backed behavior, and owner fallback.
+  out:
+    - No CLI flags or ai-sdd graph command wiring.
+    - No HTML, Mermaid, CSS, chart, or SVG rendering.
+    - No RunStore scanning, run-to-feature matching, or file I/O.
+    - No changes to pipeline, worker, check, or schema spec formats.
+    - No shared state plane or remote dashboard behavior.
+acceptance:
+  - id: status-values
+    description: Projection exposes stable dashboard status values for done, in-progress, rework, escalated, runnable, and pending.
+  - id: no-run-static-statuses
+    description: With no RunState, nodes with no incoming dependencies are marked runnable and nodes with dependencies are marked pending.
+  - id: run-backed-statuses
+    description: With RunState, completedNodes map to done, inProgressNodes map to in-progress, failedChecks map to rework, escalatedNodes map to escalated, Scheduler.runnable nodes map to runnable, and remaining nodes map to pending.
+  - id: status-precedence
+    description: Classification uses deterministic precedence so escalated beats rework, rework beats in-progress, in-progress beats done, done beats runnable, and runnable beats pending.
+  - id: row-fields
+    description: Each projection row includes node id, stack, owner, lane, milestone, dependency count, status, and next-action hint.
+  - id: owner-fallback
+    description: Row owner uses node.owner when present, otherwise inherited metadata.owner, otherwise falls back to the feature name and then stack when an owner label is needed for grouping.
+  - id: summary-counts
+    description: Summary includes total feature count, total slice/node count, done count, and per-status totals.
+  - id: pure-engine-api
+    description: Projection functions are pure and do not read RunStore, inspect the filesystem, render HTML, or depend on CLI arguments.
+decisions:
+  - id: projection-home
+    status: closed
+    decision: Add the projection implementation under Sources/AISDDEngine as engine behavior.
+    rationale: The slice is pure engine status modeling and should be reusable by later CLI and renderer slices without depending on presentation code.
+  - id: projection-file
+    status: closed
+    decision: Introduce Sources/AISDDEngine/DashboardProjection.swift for the projection API.
+    rationale: A new file keeps dashboard-specific projection behavior separate from GraphRenderer, Scheduler, and Run state folding.
+  - id: tests-location
+    status: closed
+    decision: Add focused tests to Tests/AISDDEngineTests/EngineTests.swift.
+    rationale: The repo currently keeps engine behavior tests in this Swift Testing file, including scheduler, graph, metadata, and renderer coverage.
+  - id: public-api-shape
+    status: closed
+    decision: Expose public Sendable and Equatable structs/enums for DashboardStatus, DashboardProjectionRow, DashboardProjectionSummary, and a DashboardProjection namespace with pure static functions.
+    rationale: Existing engine APIs use public value types and enum namespaces, and Equatable keeps tests exact.
+  - id: no-run-state
+    status: closed
+    decision: Accept optional RunState; nil means static committed-spec projection.
+    rationale: This directly supports graceful dashboard degradation before any matching local run exists.
+  - id: runnable-source
+    status: closed
+    decision: Use Scheduler.runnable with an empty RunState for no-run source-node detection.
+    rationale: Reusing the scheduler keeps readiness semantics aligned with the engine's dependency model instead of duplicating dependency rules.
+  - id: run-backed-runnable
+    status: closed
+    decision: Use Scheduler.runnable with the supplied RunState to identify runnable nodes after explicit state classifications are considered.
+    rationale: Runnable is a derived readiness state, while completed, in-progress, rework, and escalated are direct run-state projections.
+  - id: row-dependency-count
+    status: closed
+    decision: Compute dependency count as the number of distinct source node ids across incoming edges for that node.
+    rationale: Incoming edge fan-in is the dependency surface users need to scan in the dashboard.
+  - id: metadata-mapping
+    status: closed
+    decision: Map lane from SpecMetadata.factory and milestone from SpecMetadata.correlation.
+    rationale: These are the existing committed graph metadata fields for lane and milestone.
+  - id: owner-group-label
+    status: closed
+    decision: Provide an owner/group label fallback of explicit node owner, inherited metadata owner, feature metadata name, then node stack.
+    rationale: This implements the confirmed dashboard grouping fallback while preserving owner inheritance semantics.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/project-status-dashboard

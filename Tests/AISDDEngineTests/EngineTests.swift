@@ -937,6 +937,142 @@ struct EngineTests {
         #expect(!md.contains("|*|"))   // the wildcard is not shown as a label
     }
 
+    // MARK: - Dashboard projection (pure status rows for later rendering)
+
+    private func dashboardPipeline() -> PipelineSpec {
+        PipelineSpec(
+            nodes: [
+                PipelineNode(id: "plan", kind: "pipeline", pipeline: "../..", stack: "swift"),
+                PipelineNode(id: "implement", kind: "pipeline", pipeline: "../..", stack: "swift", owner: ["bob"]),
+                PipelineNode(id: "docs", kind: "pipeline", pipeline: "../..", stack: "docs"),
+                PipelineNode(id: "review", kind: "pipeline", pipeline: "../..", stack: "swift"),
+                PipelineNode(id: "qa", kind: "pipeline", pipeline: "../..", stack: "test"),
+                PipelineNode(id: "release", kind: "pipeline", pipeline: "../..", stack: "ops"),
+                PipelineNode(id: "deploy", kind: "pipeline", pipeline: "../..", stack: "ops")
+            ],
+            edges: [
+                PipelineEdge(from: OneOrMany(["plan"]), to: "implement"),
+                PipelineEdge(from: OneOrMany(["plan"]), to: "docs"),
+                PipelineEdge(from: OneOrMany(["implement"]), to: "review"),
+                PipelineEdge(from: OneOrMany(["implement"]), to: "qa"),
+                PipelineEdge(from: OneOrMany(["qa"]), to: "release"),
+                PipelineEdge(from: OneOrMany(["release"]), to: "deploy")
+            ])
+    }
+
+    @Test func dashboardStatusValuesAreStable() {
+        #expect(DashboardStatus.allCases.map(\.rawValue) ==
+            ["done", "in-progress", "rework", "escalated", "runnable", "pending"])
+    }
+
+    @Test func dashboardProjectionClassifiesNoRunGraph() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "root"), PipelineNode(id: "leaf")],
+            edges: [PipelineEdge(from: OneOrMany(["root"]), to: "leaf")])
+        let result = DashboardProjection.project(pipeline: pipeline, metadata: SpecMetadata(name: "feature"))
+
+        #expect(result.rows.map(\.status) == [.runnable, .pending])
+        #expect(result.rows[0].nextActionHint == .startWork)
+        #expect(result.rows[1].nextActionHint == .waitingOnDependencies)
+    }
+
+    @Test func dashboardProjectionClassifiesRunBackedGraphAndRows() throws {
+        let state = RunState(
+            completedNodes: ["plan", "qa"],
+            inProgressNodes: ["implement"],
+            failedChecks: ["review": ["review.structure"]],
+            escalatedNodes: ["release"])
+        let metadata = SpecMetadata(name: "project-status-dashboard", correlation: "m1",
+                                    factory: "code", owner: ["alice"])
+        let result = DashboardProjection.project(pipeline: dashboardPipeline(), metadata: metadata, state: state)
+        let statuses = Dictionary(uniqueKeysWithValues: result.rows.map { ($0.node, $0.status) })
+
+        #expect(statuses["plan"] == .done)
+        #expect(statuses["implement"] == .inProgress)
+        #expect(statuses["review"] == .rework)
+        #expect(statuses["release"] == .escalated)
+        #expect(statuses["docs"] == .runnable)
+        #expect(statuses["deploy"] == .pending)
+
+        let implement = try #require(result.rows.first { $0.node == "implement" })
+        #expect(implement.stack == "swift")
+        #expect(implement.owner == "bob")
+        #expect(implement.lane == "code")
+        #expect(implement.milestone == "m1")
+        #expect(implement.dependencyCount == 1)
+        #expect(implement.nextActionHint == .continueWork)
+
+        let release = try #require(result.rows.first { $0.node == "release" })
+        #expect(release.nextActionHint == .humanIntervention)
+    }
+
+    @Test func dashboardProjectionStatusPrecedenceIsDeterministic() {
+        let pipeline = PipelineSpec(nodes: [PipelineNode(id: "slice")], edges: [])
+        let metadata = SpecMetadata(name: "feature")
+
+        let escalated = RunState(completedNodes: ["slice"], inProgressNodes: ["slice"],
+                                 failedChecks: ["slice": ["unit"]], escalatedNodes: ["slice"])
+        #expect(DashboardProjection.project(pipeline: pipeline, metadata: metadata,
+                                            state: escalated).rows[0].status == .escalated)
+
+        let rework = RunState(completedNodes: ["slice"], inProgressNodes: ["slice"],
+                              failedChecks: ["slice": ["unit"]])
+        #expect(DashboardProjection.project(pipeline: pipeline, metadata: metadata,
+                                            state: rework).rows[0].status == .rework)
+
+        let inProgress = RunState(completedNodes: ["slice"], inProgressNodes: ["slice"])
+        #expect(DashboardProjection.project(pipeline: pipeline, metadata: metadata,
+                                            state: inProgress).rows[0].status == .inProgress)
+
+        let done = RunState(completedNodes: ["slice"])
+        #expect(DashboardProjection.project(pipeline: pipeline, metadata: metadata,
+                                            state: done).rows[0].status == .done)
+
+        #expect(DashboardProjection.project(pipeline: pipeline, metadata: metadata,
+                                            state: RunState()).rows[0].status == .runnable)
+    }
+
+    @Test func dashboardProjectionOwnerFallbacks() {
+        let nodeOwned = PipelineSpec(
+            nodes: [PipelineNode(id: "slice", stack: "swift", owner: ["bob"])], edges: [])
+        #expect(DashboardProjection.project(pipeline: nodeOwned,
+                                            metadata: SpecMetadata(name: "feature", owner: ["alice"]))
+            .rows[0].owner == "bob")
+
+        let metadataOwned = PipelineSpec(nodes: [PipelineNode(id: "slice", stack: "swift")], edges: [])
+        #expect(DashboardProjection.project(pipeline: metadataOwned,
+                                            metadata: SpecMetadata(name: "feature", owner: ["alice"]))
+            .rows[0].owner == "alice")
+
+        #expect(DashboardProjection.project(pipeline: metadataOwned, metadata: SpecMetadata(name: "feature"))
+            .rows[0].owner == "feature")
+
+        #expect(DashboardProjection.project(pipeline: metadataOwned, metadata: SpecMetadata(name: ""))
+            .rows[0].owner == "swift")
+    }
+
+    @Test func dashboardProjectionSummaryCountsStatuses() {
+        let state = RunState(
+            completedNodes: ["plan", "qa"],
+            inProgressNodes: ["implement"],
+            failedChecks: ["review": ["review.structure"]],
+            escalatedNodes: ["release"])
+        let result = DashboardProjection.project(
+            pipeline: dashboardPipeline(),
+            metadata: SpecMetadata(name: "project-status-dashboard"),
+            state: state)
+
+        #expect(result.summary.totalFeatureCount == 1)
+        #expect(result.summary.totalNodeCount == 7)
+        #expect(result.summary.doneCount == 2)
+        #expect(result.summary.statusTotals[.done] == 2)
+        #expect(result.summary.statusTotals[.inProgress] == 1)
+        #expect(result.summary.statusTotals[.rework] == 1)
+        #expect(result.summary.statusTotals[.escalated] == 1)
+        #expect(result.summary.statusTotals[.runnable] == 1)
+        #expect(result.summary.statusTotals[.pending] == 1)
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

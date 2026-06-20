@@ -1,0 +1,14 @@
+summary: >-
+  Added the pure AISDDEngine dashboard projection API with status rows, next-action
+  hints, owner and metadata fallback handling, deterministic summary counts, and
+  focused Swift Testing coverage for no-run, run-backed, precedence, and fallback
+  behavior.
+satisfies:
+  - status-values
+  - no-run-static-statuses
+  - run-backed-statuses
+  - status-precedence
+  - row-fields
+  - owner-fallback
+  - summary-counts
+  - pure-engine-api
