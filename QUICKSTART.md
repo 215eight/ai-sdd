@@ -17,51 +17,45 @@ The engine is provider-neutral: it's a CLI any agent (Claude Code, Codex, …) d
 
 ## Prerequisites
 
-- A recent **Swift toolchain** (the engine builds with `swift build`).
 - **git**, and a **coding agent** — Claude Code or Codex.
 - Your project in a git repo (the "target" the factory builds).
+- A recent **Swift toolchain** — needed **once** to produce the `ai-sdd` binary. After that you copy
+  the binary around; using ai-sdd does not require Swift.
 
 ---
 
-## Step 1 — Install the engine
+## Step 1 — Install the engine (a copyable binary)
 
-Build from source and put the binary on your PATH:
+Build the **release** binary once, then put it on your PATH. The binary is self-contained — copy it to
+any machine or repo; no Swift needed afterward:
 
 ```sh
 git clone <ai-sdd> && cd ai-sdd
-swift build                                   # builds .build/debug/ai-sdd
-export PATH="$PWD/.build/debug:$PATH"         # so `ai-sdd` (and compiled gates) resolve
+swift build -c release                              # produces .build/release/ai-sdd
+cp .build/release/ai-sdd /usr/local/bin/ai-sdd     # or any dir on your PATH
 ```
 
-**Confirm `ai-sdd` is on your PATH** — compiled gates invoke `ai-sdd check` / `ai-sdd scope`, so
-this must succeed from any directory:
+**Confirm `ai-sdd` resolves from any directory** — compiled gates invoke `ai-sdd check` / `ai-sdd
+scope`, so this must succeed anywhere:
 
 ```sh
-ai-sdd --version        # → ai-sdd 0.1.0   (if "command not found", fix your PATH)
+ai-sdd --version        # → ai-sdd 0.2.0   (if "command not found", fix your PATH)
+ai-sdd guide            # the built-in getting-started guide — travels with the binary
 ```
 
-> **Future install (roadmap).** Building from source is the only path today. Planned, in order of
-> convenience: a **precompiled release binary** committed to the repo (copy it onto your PATH, no
-> Swift toolchain needed), and ultimately **Homebrew** (`brew install ai-sdd/tap/ai-sdd`).
-
-Then take the bundled example for a spin (a complete win in ~30s):
-
-```sh
-ai-sdd validate docs/examples/minimal
-ai-sdd start    docs/examples/minimal --id demo
-ai-sdd next     demo        # renders the architect worker
-ai-sdd submit   demo        # runs its gates, advances
-ai-sdd status   demo        # repeat next/submit until "✓ done"
-```
+> Building from source is the only path today; a published binary (GitHub Releases / Homebrew) is a
+> later convenience. `ai-sdd guide` carries the essential steps with the binary, so you don't need this
+> file at hand once installed.
 
 ---
 
 ## Step 2 — Make the framework skills available to your agent (one-time)
 
-The framework skills (`ai-sdd-bootstrap`, `ai-sdd-plan`, `ai-sdd-compile-schema`, `ai-sdd-run`)
-are a **toolkit you point at a repo** — not part of any one project. Seed them into the repo so your
-agent discovers them through **its own native skill mechanism** (not via prose in a docs file). Each
-agent has a skill dir; symlink the four framework skills into it:
+`ai-sdd-bootstrap` is itself a **skill**, so it can't install itself — something must make it
+discoverable first. That's this one-time seed. The framework skills (`ai-sdd-bootstrap`, `ai-sdd-plan`,
+`ai-sdd-plan-program`, `ai-sdd-compile-schema`, `ai-sdd-run`) are a **toolkit you point at a repo** —
+not part of any one project. Seed them so your agent discovers them through **its own native skill
+mechanism** (not via prose in a docs file). Each agent has a skill dir; symlink the framework skills in:
 
 ```sh
 AISDD=/path/to/ai-sdd          # where you cloned ai-sdd (the toolkit source)
@@ -71,7 +65,7 @@ TARGET=/path/to/your-repo      # the repo you want to bootstrap
 mkdir -p "$TARGET/.agents/skills"
 # Claude Code — skills at .claude/skills/ (local):
 mkdir -p "$TARGET/.claude/skills"
-for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-compile-schema ai-sdd-run; do
+for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-plan-program ai-sdd-compile-schema ai-sdd-run; do
   ln -sfn "$AISDD/skills/$s" "$TARGET/.agents/skills/$s"   # Codex: invoke with $s or /skills
   ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"   # Claude Code: /$s
 done
@@ -236,6 +230,7 @@ small and honest.
 
 | Command | What it does |
 |---|---|
+| `ai-sdd guide` | print the built-in getting-started guide (travels with the binary) |
 | `ai-sdd validate <dir>` | load + check a workspace (refs, edge types, acyclicity) |
 | `ai-sdd start <dir> --id <id>` | begin a run |
 | `ai-sdd next <id>` | render the runnable worker (`--json` for drivers) |

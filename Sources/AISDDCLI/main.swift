@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd 0.2.0",
-        subcommands: [Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self]
+        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self]
     )
 }
 
@@ -149,6 +149,57 @@ private func loadValidated(_ dir: String) throws
         throw ExitCode.failure
     }
     return bundle
+}
+
+// MARK: - guide
+
+struct Guide: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Print the built-in getting-started guide (install → bootstrap → plan → run; travels with the binary)."
+    )
+
+    func run() {
+        print("""
+        ai-sdd — getting started
+
+        The loop: `ai-sdd next` renders the next worker (role + its skill + inputs + gates); your agent
+        does that work via the skill; `ai-sdd submit` runs the gates and advances — or routes to rework.
+        Repeat until done. The engine is provider-neutral: any agent drives it over a shell.
+
+        1. INSTALL (one-time) — build the binary and put it on your PATH (no Swift needed afterward):
+             swift build -c release
+             cp .build/release/ai-sdd /usr/local/bin/ai-sdd      # or any dir on your PATH
+             ai-sdd --version
+           Run ai-sdd from your repo root — compiled gates invoke `ai-sdd check`/`ai-sdd scope`.
+
+        2. SEED THE SKILLS — `ai-sdd-bootstrap` is itself a skill, so it can't install itself. Make the
+           framework skills discoverable in your repo (one-time; bootstrap then vendors them in):
+             AISDD=/path/to/ai-sdd ; TARGET=/path/to/your-repo
+             for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-plan-program ai-sdd-compile-schema ai-sdd-run; do
+               ln -sfn "$AISDD/skills/$s" "$TARGET/.agents/skills/$s"     # Codex
+               ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"     # Claude Code
+             done
+
+        3. BOOTSTRAP the repo's factory (from your repo): ask your agent to run /ai-sdd-bootstrap.
+           It discovers your stack, scaffolds .ai-sdd/, compiles the gates, and validates.
+
+        4. A FEATURE:
+             /ai-sdd-plan "<brief>"
+             ai-sdd start .ai-sdd/features/<slug> --id <slug> && /ai-sdd-run <slug>
+
+        5. A PROGRAM (multiple features + milestones + owners):
+             /ai-sdd-plan-program "<program brief>"
+             ai-sdd start .ai-sdd/programs/<slug> --id <slug> && /ai-sdd-run <slug>
+
+        MILESTONES — a validation node that gates downstream work: manual (workerKind: human, a person
+        records the verdict) or automated (a deterministic check, e.g. `docker compose up …`, gated on
+        exit code). Declare them in a feature brief's `## Milestones` section, or as nodes in a program
+        graph. A failed milestone blocks downstream until re-validated.
+
+        COMMANDS: guide · validate · start · next · submit · status · check · scope · cover · graph
+        Run `ai-sdd <command> --help` for any one. Full adopter docs: QUICKSTART.md in the ai-sdd repo.
+        """)
+    }
 }
 
 // MARK: - validate
