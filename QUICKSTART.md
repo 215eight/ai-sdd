@@ -59,29 +59,33 @@ ai-sdd status   demo        # repeat next/submit until "✓ done"
 ## Step 2 — Make the framework skills available to your agent (one-time)
 
 The framework skills (`ai-sdd-bootstrap`, `ai-sdd-plan`, `ai-sdd-compile-schema`, `ai-sdd-run`)
-are a **toolkit you point at a repo** — not part of any one project. Install them so your agent can
-run them in the repo you want to build. Set two paths, then link the skills in (Claude Code reads
-`<repo>/.claude/skills/`):
+are a **toolkit you point at a repo** — not part of any one project. Seed them into the repo so your
+agent discovers them through **its own native skill mechanism** (not via prose in a docs file). Each
+agent has a skill dir; symlink the four framework skills into it:
 
 ```sh
 AISDD=/path/to/ai-sdd          # where you cloned ai-sdd (the toolkit source)
 TARGET=/path/to/your-repo      # the repo you want to bootstrap
 
+# Codex — repo-level skills at .agents/skills/ (committed; symlinks are followed):
+mkdir -p "$TARGET/.agents/skills"
+# Claude Code — skills at .claude/skills/ (local):
 mkdir -p "$TARGET/.claude/skills"
 for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-compile-schema ai-sdd-run; do
-  ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"
+  ln -sfn "$AISDD/skills/$s" "$TARGET/.agents/skills/$s"   # Codex: invoke with $s or /skills
+  ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"   # Claude Code: /$s
 done
-ls -l "$TARGET/.claude/skills" | grep ai-sdd      # verify the links resolve
 ```
 
-This scopes the toolkit to `$TARGET`. It's only a **seed**: when you run `/ai-sdd-bootstrap`
+This scopes the toolkit to `$TARGET`. It's only a **seed**: when you run `ai-sdd-bootstrap`
 (Step 3) it vendors the skills into the repo's own `.ai-sdd/skills/` and re-points these links
-there — so the repo becomes self-contained (only the `ai-sdd` binary stays external, until
-Homebrew).
+there — so the repo becomes self-contained (only the `ai-sdd` binary stays external, until Homebrew).
 
-- **Codex** — point it at `$AISDD/skills/` (referenced from the repo's `AGENTS.md`).
-- **Machine-wide instead** (use across many repos)? Link into your user dir:
-  `mkdir -p ~/.claude/skills && for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-compile-schema ai-sdd-run; do ln -sfn "$AISDD/skills/$s" ~/.claude/skills/$s; done`
+- **Self-hosting** (bootstrapping the ai-sdd repo itself)? `$AISDD` and `$TARGET` are the same repo and
+  the skills already live in `./skills`, so the `.agents/skills` symlinks are already committed — skip
+  this step and go to Step 3.
+- **Machine-wide instead** (across many repos)? Symlink into your user skill dirs:
+  `~/.agents/skills/` (Codex) and `~/.claude/skills/` (Claude Code).
 
 ---
 
@@ -104,9 +108,10 @@ It is repeatable and does the whole stand-up:
    ```
 3. **Compiles the gates** (via `ai-sdd-compile-schema`): each schema becomes deterministic
    `ai-sdd check` / `ai-sdd scope` / build-test checks, wired onto the worker that produces it.
-4. **Wires provider-neutral surfacing**: writes `AGENTS.md` (the cross-agent surface) and symlinks
-   `.claude/skills/*` → `.ai-sdd/skills/*`. Agent folders are gitignored; the canonical source is
-   `.ai-sdd/`.
+4. **Wires provider-neutral surfacing**: symlinks the framework skills into each agent's native skill
+   dir — `.agents/skills/*` (Codex, committed) and `.claude/skills/*` (Claude Code, local) → the
+   `.ai-sdd/skills/*` source. Skill discovery is the agent's own mechanism, not AGENTS.md prose;
+   AGENTS.md stays a general repo guide.
 5. **Validates**: `ai-sdd validate .ai-sdd` must pass before any run.
 
 Review the generated `.ai-sdd/` and commit it.

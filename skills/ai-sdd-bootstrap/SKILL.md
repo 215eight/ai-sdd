@@ -84,34 +84,38 @@ For each schema, run **ai-sdd-compile-schema**: it emits `.ai-sdd/checks/*.check
 the ids onto the worker that produces that schema. Eval-gate any authored (intent/judge) checks
 before promoting them to blocking.
 
-## 6. Wire provider-neutral surfacing  ← the copy-then-symlink step
+## 6. Wire provider-neutral surfacing  ← the symlink-into-each-agent's-skill-dir step
 
-The factory must be drivable by any agent, so skills are surfaced, not duplicated:
+The factory must be drivable by any agent, so the *framework* skills a human/agent invokes
+(`ai-sdd-plan`, `ai-sdd-run`, `ai-sdd-compile-schema`, `ai-sdd-bootstrap`) are surfaced through each
+agent's **native skill mechanism** — symlinks into the agent's skill dir, **not** prose in AGENTS.md.
+Skill *discovery* must not depend on a human writing the right pointer; it's the agent's own
+convention. Each agent reads `SKILL.md` frontmatter (`name` + `description`) for matching.
 
-- **`AGENTS.md`** (repo root) — point at `.ai-sdd/skills/` and how to drive (the `ai-sdd-run`
-  loop). This is the **cross-agent surface**; Codex reads it natively, and so do others.
-  **Never overwrite an existing AGENTS.md.** Wrap the factory section in idempotent markers and
-  **upsert** it — replace the existing managed block in place, or append it if absent — so a repo's
-  own guidelines are preserved and a re-bootstrap doesn't duplicate the section:
+- **Codex** (repo-level, committed): `.agents/skills/<name>` → `../../.ai-sdd/skills/<name>`. This is
+  Codex's documented repo skill scope (`$REPO_ROOT/.agents/skills`, symlinks followed); it's the
+  **committed, team-shared** surface, so a fresh clone has the skills with no re-bootstrap. Invoked
+  with `$<name>` or `/skills`.
+- **Claude Code** (local): `.claude/skills/<name>` → `../../.ai-sdd/skills/<name>`. Recreated by
+  re-bootstrap; `.claude/` stays gitignored (local state — §7).
+- add other agents the same way as supported, each into its own native skill dir.
+
+- **`AGENTS.md`** stays a **general repo guide** (what the project is, how to build/test, the
+  `ai-sdd-run` loop) — useful context, but it is **not** the skill-discovery mechanism. Still upsert
+  it idempotently so a re-bootstrap doesn't duplicate or clobber a repo's own guidelines:
 
   ```md
   <!-- ai-sdd:begin — managed by ai-sdd-bootstrap; edits between these markers are overwritten on re-bootstrap -->
   ## AI Software Factory (`.ai-sdd/`)
-  …pointer to .ai-sdd/skills/ + the ai-sdd-run loop…
+  …how to drive: the ai-sdd-run loop; skills are surfaced via each agent's skill dir…
   <!-- ai-sdd:end -->
   ```
 
   Upsert algorithm (same for any marker-managed file): if both markers exist, replace everything
   between them; else append the marked block (to a new file if none exists). The content between
   markers is regenerated each run, so it must be self-contained — never put hand-edited prose there.
-- **Per-agent symlinks** for the *framework* skills a human/agent invokes (`ai-sdd-plan`,
-  `ai-sdd-run`, `ai-sdd-compile-schema`, `ai-sdd-bootstrap`):
-  - Claude Code: `.claude/skills/<name>` → `../../.ai-sdd/skills/<name>`
-  - add other agents' folders the same way as they're supported (e.g. `.codex/`).
-  - These folders are **local, not committed** — they're gitignored (§7) and recreated by
-    re-bootstrap. `AGENTS.md` is the committed cross-agent surface; the symlinks are just local
-    convenience, so cloning the repo + re-running bootstrap restores them.
-- **Worker skills** (`plan-feature`, …) need *no* agent-folder symlink — the driver resolves them
+
+  **Worker skills** (`plan-feature`, …) need *no* agent skill-dir symlink — the driver resolves them
   by path (`task.skill: X` → `.ai-sdd/skills/X.md`).
 
 The engine itself is already neutral: `ai-sdd` is a CLI any agent calls over a shell.
@@ -119,15 +123,15 @@ The engine itself is already neutral: `ai-sdd` is a CLI any agent calls over a s
 ## 7. Ignore runtime + per-agent surfacing, then validate
 
 The `.gitignore` is the **one place** that declares what stays out of git — so a commit never has to
-*ask* what to include. The managed block ignores the factory runtime **and** the per-agent surfacing
-folders (the symlinks from §6 are local conveniences, recreated by re-bootstrap — never committed):
+*ask* what to include. The managed block ignores the factory runtime and each agent's **local** state
+folder — but **not** `.agents/skills/`, which is the committed repo-level skill surface (§6):
 
 ```gitignore
 # ai-sdd:begin — managed by ai-sdd-bootstrap; edits between these markers are overwritten on re-bootstrap
 # Software factory runtime (the rest of .ai-sdd/ is committed)
 .ai-sdd/runs/
 .ai-sdd/artifacts/
-# Per-agent skill surfacing — local symlinks, recreated by re-bootstrap; never committed
+# Agent-local state (NOT .agents/skills/ — that's the committed Codex repo-level skill surface)
 .claude/
 .codex/
 # ai-sdd:end
@@ -135,8 +139,9 @@ folders (the symlinks from §6 are local conveniences, recreated by re-bootstrap
 
 - Write this with the **same marker upsert** as AGENTS.md (`# ai-sdd:begin` / `# ai-sdd:end`,
   `#` comments) so an existing `.gitignore` is extended, not clobbered, and a re-run doesn't
-  duplicate the block. The committed set is therefore exactly `.ai-sdd/` (minus runtime) + `AGENTS.md`
-  + `.gitignore` + any tool config a gate needs — decided by `.gitignore`, not by prompting per commit.
+  duplicate the block. The committed set is therefore `.ai-sdd/` (minus runtime) + `.agents/skills/`
+  + `AGENTS.md` + `.gitignore` + any tool config a gate needs — decided by `.gitignore`, not by
+  prompting per commit.
 - Run `ai-sdd validate .ai-sdd` — referential + edge-type + acyclicity must pass before any run.
 
 ## Discovery quality — evals + observability
