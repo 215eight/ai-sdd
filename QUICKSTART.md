@@ -57,23 +57,26 @@ discoverable first. That's this one-time seed. The framework skills (`ai-sdd-boo
 not part of any one project. Seed them so your agent discovers them through **its own native skill
 mechanism** (not via prose in a docs file). Each agent has a skill dir; symlink the framework skills in:
 
+**Copy** the skills *into* the repo (under `.ai-sdd/skills/`) and point the agent dirs at that in-repo
+copy — so once committed, the links resolve for everyone, not just on the setter-upper's machine:
+
 ```sh
-AISDD=/path/to/ai-sdd          # where you cloned ai-sdd (the toolkit source)
+AISDD=/path/to/ai-sdd          # the toolkit source — ONLY whoever sets up needs this clone
 TARGET=/path/to/your-repo      # the repo you want to bootstrap
 
-# Codex — repo-level skills at .agents/skills/ (committed; symlinks are followed):
-mkdir -p "$TARGET/.agents/skills"
-# Claude Code — skills at .claude/skills/ (local):
-mkdir -p "$TARGET/.claude/skills"
+mkdir -p "$TARGET/.ai-sdd/skills" "$TARGET/.agents/skills" "$TARGET/.claude/skills"
 for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-plan-program ai-sdd-compile-schema ai-sdd-run; do
-  ln -sfn "$AISDD/skills/$s" "$TARGET/.agents/skills/$s"   # Codex: invoke with $s or /skills
-  ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"   # Claude Code: /$s
+  cp -R "$AISDD/skills/$s" "$TARGET/.ai-sdd/skills/$s"            # vendor INTO the repo (committed)
+  ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.agents/skills/$s"   # Codex → in-repo (committed)
+  ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.claude/skills/$s"   # Claude Code → in-repo (local)
 done
 ```
 
-This scopes the toolkit to `$TARGET`. It's only a **seed**: when you run `ai-sdd-bootstrap`
-(Step 3) it vendors the skills into the repo's own `.ai-sdd/skills/` and re-points these links
-there — so the repo becomes self-contained (only the `ai-sdd` binary stays external, until Homebrew).
+This makes `$TARGET` **self-contained**: the skills live in `.ai-sdd/skills/` and the agent dirs link to
+them *inside the repo* (relative links). Commit `.ai-sdd/` and `.agents/skills/` and anyone who clones
+the repo has the skills with **no ai-sdd clone of their own** — they only install the `ai-sdd` binary on
+PATH (a tool, like git). `ai-sdd-bootstrap` (Step 3) then adds the generated factory (schemas, workers,
+checks) and the per-role worker skills alongside, and validates.
 
 - **Self-hosting** (bootstrapping the ai-sdd repo itself)? `$AISDD` and `$TARGET` are the same repo and
   the skills already live in `./skills`, so the `.agents/skills` symlinks are already committed — skip

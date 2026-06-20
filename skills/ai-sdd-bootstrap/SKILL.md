@@ -75,8 +75,10 @@ the reviewer *is* the judge, captured and enforced structurally, no judge-runner
 ## 4. Copy the framework skills (provider-neutral source)
 
 Copy the framework skills from the ai-sdd install's `skills/` into `.ai-sdd/skills/`:
-`ai-sdd-plan` (the planner), `ai-sdd-run` (the driver), and `ai-sdd-compile-schema` (the gate
-compiler). They live alongside the worker skills — one neutral home.
+`ai-sdd-plan` (the feature planner), `ai-sdd-plan-program` (the program planner — multi-feature graphs
+with milestones + owners), `ai-sdd-run` (the driver), `ai-sdd-compile-schema` (the gate compiler), and
+`ai-sdd-bootstrap` itself (so re-bootstrap needs no external clone). They live alongside the worker
+skills — one neutral home. Copying (not symlinking to the install) is what makes the repo self-contained.
 
 ## 5. Compile the gates
 
@@ -87,7 +89,7 @@ before promoting them to blocking.
 ## 6. Wire provider-neutral surfacing  ← the symlink-into-each-agent's-skill-dir step
 
 The factory must be drivable by any agent, so the *framework* skills a human/agent invokes
-(`ai-sdd-plan`, `ai-sdd-run`, `ai-sdd-compile-schema`, `ai-sdd-bootstrap`) are surfaced through each
+(`ai-sdd-plan`, `ai-sdd-plan-program`, `ai-sdd-run`, `ai-sdd-compile-schema`, `ai-sdd-bootstrap`) are surfaced through each
 agent's **native skill mechanism** — symlinks into the agent's skill dir, **not** prose in AGENTS.md.
 Skill *discovery* must not depend on a human writing the right pointer; it's the agent's own
 convention. Each agent reads `SKILL.md` frontmatter (`name` + `description`) for matching.

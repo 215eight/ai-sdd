@@ -172,12 +172,15 @@ struct Guide: ParsableCommand {
              ai-sdd --version
            Run ai-sdd from your repo root — compiled gates invoke `ai-sdd check`/`ai-sdd scope`.
 
-        2. SEED THE SKILLS — `ai-sdd-bootstrap` is itself a skill, so it can't install itself. Make the
-           framework skills discoverable in your repo (one-time; bootstrap then vendors them in):
+        2. SEED THE SKILLS — `ai-sdd-bootstrap` is itself a skill, so it can't install itself. COPY the
+           framework skills INTO the repo so it's self-contained (only whoever sets up needs the clone;
+           everyone else just clones the target repo + installs the binary):
              AISDD=/path/to/ai-sdd ; TARGET=/path/to/your-repo
+             mkdir -p "$TARGET/.ai-sdd/skills" "$TARGET/.agents/skills" "$TARGET/.claude/skills"
              for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-plan-program ai-sdd-compile-schema ai-sdd-run; do
-               ln -sfn "$AISDD/skills/$s" "$TARGET/.agents/skills/$s"     # Codex
-               ln -sfn "$AISDD/skills/$s" "$TARGET/.claude/skills/$s"     # Claude Code
+               cp -R "$AISDD/skills/$s" "$TARGET/.ai-sdd/skills/$s"            # vendor INTO the repo
+               ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.agents/skills/$s"   # Codex → in-repo
+               ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.claude/skills/$s"   # Claude Code → in-repo
              done
 
         3. BOOTSTRAP the repo's factory (from your repo): ask your agent to run /ai-sdd-bootstrap.
