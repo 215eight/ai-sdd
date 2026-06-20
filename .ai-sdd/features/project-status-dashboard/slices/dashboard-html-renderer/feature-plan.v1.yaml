@@ -1,0 +1,98 @@
+summary: >-
+  Add the pure engine-level dashboard HTML renderer that assembles dashboard projection rows,
+  inline SVG charts, status-styled graph sections, progress, legend, and slice tables into a
+  self-contained PM-facing HTML page.
+scope:
+  in:
+    - Extend GraphRenderer with a pure dashboard HTML rendering API that accepts already-loaded dashboard section data.
+    - Render a complete HTML document with embedded CSS and no external assets, JavaScript, CDN dependency, server requirement, filesystem access, or RunStore access.
+    - Render a summary header showing feature count, slice count, done/total progress, and a bounded progress bar value derived from DashboardProjectionSummary totals.
+    - Render a legend for done, in-progress, rework, escalated, runnable, and pending using the confirmed semantic color values.
+    - Render each build-pattern or feature section with status-styled graph nodes and edges derived from DashboardProjectionRow data.
+    - Include the existing inline SVG status donut and grouped bar chart output from DashboardCharts.
+    - Render feature or build-pattern slice tables with node id, status, owner/fallback group, stack, dependency count, and next-action hint.
+    - HTML-escape all dynamic text emitted by the page renderer, including titles, headings, node ids, status labels, owner labels, stacks, lanes, milestones, dependency text, and next-action hints.
+    - Add focused Swift Testing coverage for escaping, status classes and legend, progress values, feature sections, slice table content, and chart inclusion.
+  out:
+    - No ai-sdd graph CLI flag changes or command wiring.
+    - No project directory discovery, feature loading, run scanning, or RunMeta.pipelineDir matching.
+    - No changes to DashboardProjection status classification, owner fallback semantics, or DashboardCharts chart geometry.
+    - No changes to PipelineSpec, WorkerSpec, CheckSpec, schema formats, RunStore persistence, Scheduler, or Reducer behavior.
+    - No Markdown/Mermaid HTML mode replacement for existing --html output.
+    - No plant dashboard, shared live dashboard, remote fragments, publish adapters, auto-refresh, HTTP server, database, authentication, or external chart library.
+acceptance:
+  - id: complete-html-document
+    description: GraphRenderer exposes a pure dashboard renderer that returns a complete HTML document with doctype, head, embedded CSS, body content, and no required external assets.
+  - id: summary-header
+    description: The renderer emits feature count, slice count, done/total progress text, and a progress bar whose value is derived from doneCount and totalNodeCount.
+  - id: bounded-progress
+    description: Progress rendering handles zero total slices without division by zero and clamps the generated percentage into the 0 through 100 range.
+  - id: semantic-status-legend
+    description: The dashboard includes a legend entry for every DashboardStatus value using the confirmed semantic colors and status labels.
+  - id: status-styled-graph
+    description: Each rendered section includes a status-annotated graph view whose node elements carry deterministic status classes and visible escaped labels.
+  - id: section-slice-table
+    description: Each section renders a slice table with status, owner or fallback group, stack, dependency count, and next-action hint for every DashboardProjectionRow.
+  - id: chart-inclusion
+    description: The page includes DashboardCharts.statusDonut and DashboardCharts.groupedBarChart output inline in the HTML.
+  - id: dynamic-html-escaping
+    description: Dashboard page text and attributes are HTML-escaped so names, ids, labels, metadata, statuses, stacks, and hints containing markup-like characters do not become executable or structural HTML.
+  - id: renderer-purity
+    description: The renderer does not read files, inspect local runs, call SpecLoader or RunStore, fetch network resources, or depend on CLI arguments.
+  - id: existing-graph-modes-preserved
+    description: Existing GraphRenderer.mermaid, projectIndex, programIndex, htmlPage, and contractsSection behavior remains covered by existing tests and is not replaced by the dashboard renderer.
+  - id: renderer-tests
+    description: Swift tests cover dashboard escaping, legend/status classes, progress values, feature sections and slice table content, chart inclusion, and zero-total progress behavior.
+decisions:
+  - id: renderer-home
+    status: closed
+    decision: Implement the dashboard page renderer in Sources/AISDDEngine/GraphRenderer.swift.
+    rationale: The feature is an extension of the existing deterministic graph rendering surface and the slice brief explicitly allows extending GraphRenderer or a closely related engine renderer.
+  - id: pure-renderer-input
+    status: closed
+    decision: Make the renderer accept prepared dashboard section data and projection results instead of loading specs or runs itself.
+    rationale: Directory discovery and run matching belong to the later CLI integration slice, while this slice must keep renderer behavior pure and unit-testable.
+  - id: section-model
+    status: closed
+    decision: Add a small GraphRenderer dashboard section input type that carries a heading and DashboardProjectionResult for one build-pattern or feature section.
+    rationale: The renderer needs a stable input boundary for the CLI slice without taking on file loading or project traversal responsibilities.
+  - id: aggregate-summary
+    status: closed
+    decision: Aggregate dashboard totals inside the renderer from the supplied section summaries.
+    rationale: The page-level header and charts need project-wide counts, and the supplied pure section summaries are sufficient to compute them deterministically.
+  - id: chart-source
+    status: closed
+    decision: Reuse DashboardCharts.statusDonut and DashboardCharts.groupedBarChart for the page charts.
+    rationale: The inline-svg-charts dependency slice already provides deterministic escaped SVG chart helpers, so the HTML renderer should compose them rather than duplicate chart logic.
+  - id: graph-shape
+    status: closed
+    decision: Render dashboard graph sections as static HTML node-and-edge lists with status classes rather than Mermaid.
+    rationale: Dashboard mode must be self-contained with no CDN dependency, and a static status graph is easier to test and style than browser-rendered Mermaid.
+  - id: graph-edge-source
+    status: closed
+    decision: Derive dependency information for the graph view from DashboardProjectionRow.dependencyCount and row order, without requiring PipelineSpec edges in the renderer API.
+    rationale: The current projection rows carry the dependency count required by the slice acceptance table, while full topology reconstruction can remain a CLI/projection enhancement if later needed.
+  - id: css-color-source
+    status: closed
+    decision: Define dashboard CSS variables in the renderer from the same confirmed semantic colors used by DashboardCharts.defaultColors.
+    rationale: Keeping CSS variables aligned with chart colors preserves one visual status vocabulary across graph nodes, legend entries, and charts.
+  - id: progress-policy
+    status: closed
+    decision: Compute progress as doneCount divided by totalNodeCount, rendering 0 percent when totalNodeCount is zero.
+    rationale: This matches the requirements' done/total progress model and avoids a special error state for empty projections.
+  - id: escaping-boundary
+    status: closed
+    decision: Escape dynamic HTML text and attribute values in GraphRenderer for all page-rendered fields.
+    rationale: The renderer emits a self-contained HTML document and must not rely on callers to sanitize spec metadata or row values.
+  - id: tests-location
+    status: closed
+    decision: Add focused dashboard renderer tests to Tests/AISDDEngineTests/EngineTests.swift.
+    rationale: Existing AISDDEngine graph, dashboard projection, and chart behavior is already covered in this Swift Testing file.
+files:
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/project-status-dashboard
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

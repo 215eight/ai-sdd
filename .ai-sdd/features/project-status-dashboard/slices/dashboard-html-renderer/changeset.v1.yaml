@@ -1,0 +1,19 @@
+summary: >-
+  Added a pure GraphRenderer dashboard HTML renderer that accepts prepared
+  DashboardProjection sections, aggregates summary totals, renders a self-contained
+  HTML document with embedded CSS, semantic status legend, bounded progress,
+  section graph views, slice tables, and inline DashboardCharts SVG output. Added
+  focused Swift Testing coverage for escaping, status classes, progress behavior,
+  section/table rendering, and chart inclusion.
+satisfies:
+  - complete-html-document
+  - summary-header
+  - bounded-progress
+  - semantic-status-legend
+  - status-styled-graph
+  - section-slice-table
+  - chart-inclusion
+  - dynamic-html-escaping
+  - renderer-purity
+  - existing-graph-modes-preserved
+  - renderer-tests

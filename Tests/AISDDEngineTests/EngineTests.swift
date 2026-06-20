@@ -1145,6 +1145,124 @@ struct EngineTests {
         #expect(!svg.contains("\"x\""))
     }
 
+    @Test func dashboardPageRendersCompleteDocumentSummaryLegendAndCharts() {
+        let summary = DashboardProjectionSummary(
+            totalFeatureCount: 1,
+            totalNodeCount: 2,
+            doneCount: 1,
+            statusTotals: [.done: 1, .inProgress: 0, .rework: 0, .escalated: 0, .runnable: 1, .pending: 0])
+        let rows = [
+            DashboardProjectionRow(node: "plan", stack: "swift", owner: "alice", lane: "code",
+                                   milestone: "m1", dependencyCount: 0, status: .done,
+                                   nextActionHint: .none),
+            DashboardProjectionRow(node: "implement", stack: "swift", owner: "bob", lane: "code",
+                                   milestone: "m1", dependencyCount: 1, status: .runnable,
+                                   nextActionHint: .startWork)
+        ]
+        let page = GraphRenderer.dashboardPage(title: "Project Status", sections: [
+            .init(heading: "Feature · dashboard", projection: .init(rows: rows, summary: summary))
+        ])
+
+        #expect(page.hasPrefix("<!doctype html>"))
+        #expect(page.contains("<title>Project Status — ai-sdd dashboard</title>"))
+        #expect(page.contains("<style>"))
+        #expect(!page.contains("cdn.jsdelivr"))
+        #expect(!page.contains("<script"))
+        #expect(page.contains("<span class=\"summary-value\">1</span><span class=\"summary-label\">features</span>"))
+        #expect(page.contains("<span class=\"summary-value\">2</span><span class=\"summary-label\">slices</span>"))
+        #expect(page.contains("<span class=\"summary-value\">1/2</span><span class=\"summary-label\">done</span>"))
+        #expect(page.contains("role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"50\""))
+        #expect(page.contains("style=\"width: 50.0%\""))
+        #expect(page.contains("1/2 done"))
+        #expect(page.contains("class=\"dashboard-chart dashboard-status-donut\""))
+        #expect(page.contains("class=\"dashboard-chart dashboard-grouped-bars\""))
+        for status in DashboardStatus.allCases {
+            #expect(page.contains("--status-\(status.rawValue): \(DashboardCharts.defaultColors[status]!)"))
+            #expect(page.contains("legend-swatch status-\(status.rawValue)"))
+            #expect(page.contains(">\(status.rawValue)</li>"))
+        }
+    }
+
+    @Test func dashboardPageRendersStatusGraphAndSliceTableRows() {
+        let summary = DashboardProjectionSummary(
+            totalFeatureCount: 1,
+            totalNodeCount: 3,
+            doneCount: 1,
+            statusTotals: [.done: 1, .inProgress: 1, .rework: 1, .escalated: 0, .runnable: 0, .pending: 0])
+        let rows = [
+            DashboardProjectionRow(node: "plan", stack: "swift", owner: "alice", lane: "code",
+                                   milestone: "m1", dependencyCount: 0, status: .done,
+                                   nextActionHint: .none),
+            DashboardProjectionRow(node: "implement", stack: "swift", owner: "bob", lane: "code",
+                                   milestone: "m1", dependencyCount: 1, status: .inProgress,
+                                   nextActionHint: .continueWork),
+            DashboardProjectionRow(node: "review", stack: "swift", owner: "alice", lane: "code",
+                                   milestone: "m1", dependencyCount: 1, status: .rework,
+                                   nextActionHint: .fixFailedChecks)
+        ]
+        let page = GraphRenderer.dashboardPage(title: "Project", sections: [
+            .init(heading: "Build pattern · project", projection: .init(rows: rows, summary: summary))
+        ])
+
+        #expect(page.contains("<h2>Build pattern · project</h2>"))
+        #expect(page.contains("dashboard-node status-done"))
+        #expect(page.contains("dashboard-node status-in-progress"))
+        #expect(page.contains("dashboard-node status-rework"))
+        #expect(page.contains("<span>plan</span><span aria-hidden=\"true\">→</span><span>implement</span>"))
+        #expect(page.contains("<td>implement</td>"))
+        #expect(page.contains("<td>in-progress</td>"))
+        #expect(page.contains("<td>bob</td>"))
+        #expect(page.contains("<td>swift</td>"))
+        #expect(page.contains("<td>code</td>"))
+        #expect(page.contains("<td>m1</td>"))
+        #expect(page.contains("<td>1</td>"))
+        #expect(page.contains("<td>continue-work</td>"))
+    }
+
+    @Test func dashboardPageEscapesDynamicTextAndBoundsProgress() {
+        let unsafe = "Team & <script>alert(\"x\")</script> 'lead'"
+        let summary = DashboardProjectionSummary(
+            totalFeatureCount: 1,
+            totalNodeCount: 4,
+            doneCount: 12,
+            statusTotals: [.done: 12, .inProgress: 0, .rework: 0, .escalated: 0, .runnable: 0, .pending: 0])
+        let rows = [DashboardProjectionRow(
+            node: "node<&>\"'",
+            stack: "swift<&>",
+            owner: unsafe,
+            lane: "lane<&>",
+            milestone: "mile<&>",
+            dependencyCount: 0,
+            status: .done,
+            nextActionHint: .none)]
+        let page = GraphRenderer.dashboardPage(title: unsafe, sections: [
+            .init(heading: "Feature <unsafe>", projection: .init(rows: rows, summary: summary))
+        ])
+
+        #expect(page.contains("Team &amp; &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &#39;lead&#39;"))
+        #expect(page.contains("Feature &lt;unsafe&gt;"))
+        #expect(page.contains("node&lt;&amp;&gt;&quot;&#39;"))
+        #expect(page.contains("swift&lt;&amp;&gt;"))
+        #expect(page.contains("lane&lt;&amp;&gt;"))
+        #expect(page.contains("mile&lt;&amp;&gt;"))
+        #expect(!page.contains("<script>"))
+        #expect(!page.contains("\"x\""))
+        #expect(page.contains("aria-valuenow=\"100\""))
+        #expect(page.contains("style=\"width: 100.0%\""))
+        #expect(page.contains("<span class=\"summary-value\">100%</span><span class=\"summary-label\">progress</span>"))
+
+        let empty = GraphRenderer.dashboardPage(title: "Empty", sections: [
+            .init(heading: "Empty", projection: .init(
+                rows: [],
+                summary: DashboardProjectionSummary(totalFeatureCount: 0, totalNodeCount: 0,
+                                                    doneCount: 0, statusTotals: [:])))
+        ])
+        #expect(empty.contains("0/0 done"))
+        #expect(empty.contains("aria-valuenow=\"0\""))
+        #expect(empty.contains("style=\"width: 0.0%\""))
+        #expect(empty.contains("<td colspan=\"8\">No slices</td>"))
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

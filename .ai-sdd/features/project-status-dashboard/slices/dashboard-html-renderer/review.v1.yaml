@@ -1,0 +1,35 @@
+items:
+  - id: complete-html-document
+    verdict: pass
+    notes: GraphRenderer.dashboardPage returns a full doctype/html/head/body document with embedded CSS and no script, CDN, server, filesystem, or external asset dependency.
+  - id: summary-header
+    verdict: pass
+    notes: The header renders aggregate feature count, slice count, done/total text, and progressbar values computed from the supplied DashboardProjectionSummary totals.
+  - id: bounded-progress
+    verdict: pass
+    notes: Progress calculation returns 0 for zero total slices and clamps over-complete summaries to 100 percent; tests cover both zero and over-bound cases.
+  - id: semantic-status-legend
+    verdict: pass
+    notes: The page defines CSS variables from DashboardCharts.defaultColors and renders a legend entry for every DashboardStatus.allCases label.
+  - id: status-styled-graph
+    verdict: pass
+    notes: Each section renders graph nodes with deterministic status-* classes, data-status attributes, and escaped visible node and status labels.
+  - id: section-slice-table
+    verdict: pass
+    notes: Each section renders a slice table containing node, status, owner/fallback label, stack, lane, milestone, dependency count, and next-action hint for every projection row.
+  - id: chart-inclusion
+    verdict: pass
+    notes: The dashboard embeds DashboardCharts.statusDonut(summary) and DashboardCharts.groupedBarChart(rows) inline in the generated HTML.
+  - id: dynamic-html-escaping
+    verdict: pass
+    notes: Dynamic page text and attributes from titles, headings, row metadata, node ids, owner labels, stacks, lanes, milestones, statuses, dependency edge labels, and hints are escaped; chart helpers also escape SVG text and attributes.
+  - id: renderer-purity
+    verdict: pass
+    notes: The renderer accepts prepared DashboardSection values and performs deterministic string rendering only, with no SpecLoader, RunStore, network, filesystem, or CLI argument access.
+  - id: existing-graph-modes-preserved
+    verdict: pass
+    notes: Existing GraphRenderer mermaid, projectIndex, programIndex, htmlPage, fragmentHeader, and contractsSection behavior remains in place and the existing coverage still passes.
+  - id: renderer-tests
+    verdict: pass
+    notes: Swift tests cover complete document output, summary and progress values, legend/status classes, feature sections, slice table contents, chart inclusion, HTML escaping, and zero-total progress behavior.
+verdict: approve

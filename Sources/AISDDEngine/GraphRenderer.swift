@@ -1,3 +1,4 @@
+import Foundation
 import AISDDModels
 
 /// Renders a Pipeline as a Mermaid flowchart — the "renders 1:1 to the DAG diagram" view (§5,
@@ -121,6 +122,67 @@ public enum GraphRenderer {
         ].joined(separator: "\n")
     }
 
+    /// One prepared dashboard section. The renderer stays pure: callers load specs/runs and pass
+    /// already-projected rows.
+    public struct DashboardSection: Equatable, Sendable {
+        public var heading: String
+        public var projection: DashboardProjectionResult
+
+        public init(heading: String, projection: DashboardProjectionResult) {
+            self.heading = heading
+            self.projection = projection
+        }
+    }
+
+    /// Render a self-contained dashboard page from prepared dashboard sections.
+    public static func dashboardPage(title: String, sections: [DashboardSection]) -> String {
+        let summary = dashboardSummary(for: sections)
+        let rows = sections.flatMap(\.projection.rows)
+        let progress = progressPercent(done: summary.doneCount, total: summary.totalNodeCount)
+        let progressWidth = String(format: "%.1f", progress)
+
+        var parts = [
+            "<!doctype html>",
+            "<html lang=\"en\">",
+            "<head>",
+            "  <meta charset=\"utf-8\">",
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+            "  <title>\(escapeHTML(title)) — ai-sdd dashboard</title>",
+            dashboardStyles(),
+            "</head>",
+            "<body>",
+            "  <main class=\"dashboard-page\">",
+            "    <header class=\"dashboard-header\">",
+            "      <p class=\"dashboard-kicker\">ai-sdd project status</p>",
+            "      <h1>\(escapeHTML(title))</h1>",
+            "      <div class=\"summary-grid\" aria-label=\"Dashboard summary\">",
+            "        <div><span class=\"summary-value\">\(summary.totalFeatureCount)</span><span class=\"summary-label\">features</span></div>",
+            "        <div><span class=\"summary-value\">\(summary.totalNodeCount)</span><span class=\"summary-label\">slices</span></div>",
+            "        <div><span class=\"summary-value\">\(summary.doneCount)/\(summary.totalNodeCount)</span><span class=\"summary-label\">done</span></div>",
+            "        <div><span class=\"summary-value\">\(Int(progress.rounded()))%</span><span class=\"summary-label\">progress</span></div>",
+            "      </div>",
+            "      <div class=\"progress-wrap\" aria-label=\"\(escapeHTML("\(summary.doneCount) of \(summary.totalNodeCount) slices done"))\">",
+            "        <div class=\"progress-track\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"\(Int(progress.rounded()))\"><div class=\"progress-fill\" style=\"width: \(progressWidth)%\"></div></div>",
+            "        <p>\(summary.doneCount)/\(summary.totalNodeCount) done</p>",
+            "      </div>",
+            "    </header>",
+            "    \(statusLegend())",
+            "    <section class=\"dashboard-charts\" aria-label=\"Dashboard charts\">",
+            "      \(DashboardCharts.statusDonut(summary))",
+            "      \(DashboardCharts.groupedBarChart(rows))",
+            "    </section>"
+        ]
+        for section in sections {
+            parts.append(sectionHTML(section))
+        }
+        parts += [
+            "  </main>",
+            "</body>",
+            "</html>"
+        ]
+        return parts.joined(separator: "\n")
+    }
+
     /// A "Contracts" section listing each cross-repo contract — its provider + version and each
     /// consumer's requirement with a ✓ / ⚠ / ? compatibility mark (ADR-0027). nil when there are no
     /// contracts, so a program without them renders unchanged.
@@ -194,5 +256,198 @@ public enum GraphRenderer {
         if let path = origin.path { text += text.isEmpty ? path : " \(path)" }
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func dashboardSummary(for sections: [DashboardSection]) -> DashboardProjectionSummary {
+        var totals = Dictionary(uniqueKeysWithValues: DashboardStatus.allCases.map { ($0, 0) })
+        var featureCount = 0
+        var nodeCount = 0
+        var doneCount = 0
+
+        for section in sections {
+            featureCount += max(0, section.projection.summary.totalFeatureCount)
+            nodeCount += max(0, section.projection.summary.totalNodeCount)
+            doneCount += max(0, section.projection.summary.doneCount)
+            for status in DashboardStatus.allCases {
+                totals[status, default: 0] += max(0, section.projection.summary.statusTotals[status, default: 0])
+            }
+        }
+
+        return DashboardProjectionSummary(
+            totalFeatureCount: featureCount,
+            totalNodeCount: nodeCount,
+            doneCount: doneCount,
+            statusTotals: totals)
+    }
+
+    private static func progressPercent(done: Int, total: Int) -> Double {
+        guard total > 0 else { return 0 }
+        let percent = Double(done) / Double(total) * 100
+        return min(100, max(0, percent))
+    }
+
+    private static func statusLegend() -> String {
+        let items = DashboardStatus.allCases.map { status in
+            "        <li><span class=\"legend-swatch status-\(escapeHTML(status.rawValue))\"></span>\(escapeHTML(status.rawValue))</li>"
+        }.joined(separator: "\n")
+        return [
+            "    <nav class=\"status-legend\" aria-label=\"Status legend\">",
+            "      <ul>",
+            items,
+            "      </ul>",
+            "    </nav>"
+        ].joined(separator: "\n")
+    }
+
+    private static func sectionHTML(_ section: DashboardSection) -> String {
+        [
+            "    <section class=\"dashboard-section\">",
+            "      <header>",
+            "        <h2>\(escapeHTML(section.heading))</h2>",
+            "        <p>\(section.projection.summary.doneCount)/\(section.projection.summary.totalNodeCount) done</p>",
+            "      </header>",
+            graphHTML(rows: section.projection.rows),
+            tableHTML(rows: section.projection.rows),
+            "    </section>"
+        ].joined(separator: "\n")
+    }
+
+    private static func graphHTML(rows: [DashboardProjectionRow]) -> String {
+        let nodes = rows.map { row in
+            [
+                "          <li class=\"dashboard-node status-\(escapeHTML(row.status.rawValue))\" data-status=\"\(escapeHTML(row.status.rawValue))\">",
+                "            <span class=\"node-id\">\(escapeHTML(row.node))</span>",
+                "            <span class=\"node-status\">\(escapeHTML(row.status.rawValue))</span>",
+                "          </li>"
+            ].joined(separator: "\n")
+        }.joined(separator: "\n")
+
+        let edges = graphEdges(rows: rows).map { edge in
+            "          <li><span>\(escapeHTML(edge.from))</span><span aria-hidden=\"true\">→</span><span>\(escapeHTML(edge.to))</span></li>"
+        }.joined(separator: "\n")
+        let edgeContent = edges.isEmpty ? "          <li>No dependencies</li>" : edges
+
+        return [
+            "      <div class=\"dashboard-graph\" aria-label=\"Section graph\">",
+            "        <ol class=\"dashboard-nodes\">",
+            nodes,
+            "        </ol>",
+            "        <ul class=\"dashboard-edges\">",
+            edgeContent,
+            "        </ul>",
+            "      </div>"
+        ].joined(separator: "\n")
+    }
+
+    private static func tableHTML(rows: [DashboardProjectionRow]) -> String {
+        let body = rows.map { row in
+            [
+                "          <tr class=\"status-\(escapeHTML(row.status.rawValue))\">",
+                "            <td>\(escapeHTML(row.node))</td>",
+                "            <td>\(escapeHTML(row.status.rawValue))</td>",
+                "            <td>\(escapeHTML(row.owner))</td>",
+                "            <td>\(escapeHTML(row.stack ?? "—"))</td>",
+                "            <td>\(escapeHTML(row.lane ?? "—"))</td>",
+                "            <td>\(escapeHTML(row.milestone ?? "—"))</td>",
+                "            <td>\(max(0, row.dependencyCount))</td>",
+                "            <td>\(escapeHTML(row.nextActionHint.rawValue))</td>",
+                "          </tr>"
+            ].joined(separator: "\n")
+        }.joined(separator: "\n")
+        let rowsHTML = body.isEmpty ? "          <tr><td colspan=\"8\">No slices</td></tr>" : body
+
+        return [
+            "      <table class=\"slice-table\">",
+            "        <thead>",
+            "          <tr><th>Node</th><th>Status</th><th>Owner</th><th>Stack</th><th>Lane</th><th>Milestone</th><th>Dependencies</th><th>Next action</th></tr>",
+            "        </thead>",
+            "        <tbody>",
+            rowsHTML,
+            "        </tbody>",
+            "      </table>"
+        ].joined(separator: "\n")
+    }
+
+    private static func graphEdges(rows: [DashboardProjectionRow]) -> [(from: String, to: String)] {
+        rows.enumerated().flatMap { index, row -> [(from: String, to: String)] in
+            guard row.dependencyCount > 0, index > 0 else { return [] }
+            let first = max(0, index - row.dependencyCount)
+            return rows[first..<index].map { ($0.node, row.node) }
+        }
+    }
+
+    private static func dashboardStyles() -> String {
+        let variables = DashboardStatus.allCases.map { status in
+            "    --status-\(status.rawValue): \(DashboardCharts.defaultColors[status] ?? "#9e9e9e");"
+        }.joined(separator: "\n")
+        return """
+        <style>
+        :root {
+        \(variables)
+          --text: #1f2328;
+          --muted: #59636e;
+          --line: #d0d7de;
+          --panel: #f6f8fa;
+          --background: #ffffff;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--background); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
+        .dashboard-page { max-width: 1180px; margin: 0 auto; padding: 32px 20px 48px; }
+        .dashboard-header { border-bottom: 1px solid var(--line); padding-bottom: 24px; }
+        .dashboard-kicker { color: var(--muted); font-size: 0.82rem; font-weight: 700; letter-spacing: 0; margin: 0 0 8px; text-transform: uppercase; }
+        h1 { font-size: 2rem; margin: 0 0 20px; }
+        h2 { font-size: 1.2rem; margin: 0; }
+        .summary-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 20px; }
+        .summary-grid > div { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+        .summary-value { display: block; font-size: 1.55rem; font-weight: 700; }
+        .summary-label { color: var(--muted); font-size: 0.86rem; }
+        .progress-wrap p { color: var(--muted); margin: 8px 0 0; }
+        .progress-track { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; height: 14px; overflow: hidden; }
+        .progress-fill { background: var(--status-done); height: 100%; }
+        .status-legend ul { display: flex; flex-wrap: wrap; gap: 10px 18px; list-style: none; margin: 22px 0; padding: 0; }
+        .status-legend li { align-items: center; color: var(--muted); display: flex; gap: 8px; font-size: 0.92rem; }
+        .legend-swatch { border-radius: 999px; display: inline-block; height: 10px; width: 10px; }
+        .dashboard-charts { align-items: start; display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 28px; }
+        .dashboard-chart { max-width: 100%; }
+        .dashboard-section { border-top: 1px solid var(--line); padding: 26px 0; }
+        .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+        .dashboard-section > header p { color: var(--muted); margin: 0; }
+        .dashboard-graph { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr); margin-bottom: 18px; }
+        .dashboard-nodes { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); list-style: none; margin: 0; padding: 0; }
+        .dashboard-node { border: 1px solid var(--line); border-left: 5px solid currentColor; border-radius: 8px; color: var(--muted); min-height: 70px; padding: 12px; }
+        .node-id { color: var(--text); display: block; font-weight: 700; overflow-wrap: anywhere; }
+        .node-status { display: block; font-size: 0.82rem; margin-top: 6px; }
+        .dashboard-edges { background: var(--panel); border-radius: 8px; list-style: none; margin: 0; padding: 12px; }
+        .dashboard-edges li { align-items: center; display: flex; gap: 8px; min-height: 26px; overflow-wrap: anywhere; }
+        .slice-table { border-collapse: collapse; font-size: 0.92rem; width: 100%; }
+        .slice-table th, .slice-table td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; vertical-align: top; }
+        .slice-table th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
+        .status-done { color: var(--status-done); }
+        .status-in-progress { color: var(--status-in-progress); }
+        .status-rework { color: var(--status-rework); }
+        .status-escalated { color: var(--status-escalated); }
+        .status-runnable { color: var(--status-runnable); }
+        .status-pending { color: var(--status-pending); }
+        .legend-swatch.status-done { background: var(--status-done); }
+        .legend-swatch.status-in-progress { background: var(--status-in-progress); }
+        .legend-swatch.status-rework { background: var(--status-rework); }
+        .legend-swatch.status-escalated { background: var(--status-escalated); }
+        .legend-swatch.status-runnable { background: var(--status-runnable); }
+        .legend-swatch.status-pending { background: var(--status-pending); }
+        @media (max-width: 760px) {
+          .dashboard-graph { grid-template-columns: 1fr; }
+          .slice-table { display: block; overflow-x: auto; }
+        }
+        </style>
+        """
+    }
+
+    private static func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 }
