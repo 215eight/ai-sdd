@@ -13,7 +13,7 @@ reject **routes rework to the producer of the input it indicts** (architecture �
 | `changeset.v1` | [changeset.schema.yaml](changeset.schema.yaml) | `satisfies` — the acceptance ids the change addresses |
 | `review.v1` | [review.schema.yaml](review.schema.yaml) | per-item `items[].verdict` + overall `verdict` + `rework` routing |
 
-The gates are all **deterministic** — the schema invariants compile to a `ai-sdd check`, so no
+The gates are all **deterministic** — the schema invariants compile to an `ai-sdd check`, so no
 judge-runner is needed; the reviewer *is* the judge, captured structurally.
 
 ## Walk the thread
