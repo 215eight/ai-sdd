@@ -579,7 +579,7 @@ back-end* shape, with a synthesis join, applied to the input boundary.
 
 The original `ai-sdd` — the hardcoded plan→implement→review phase engine — is **not** the base
 for the new model. It lives under `legacy/` as reference (a parts bin); the new spec-driven
-engine is greenfield (`Sources/FactoryModels`, `Sources/FactoryEngine`). The phase engine is
+engine is greenfield (`Sources/AISDDModels`, `Sources/AISDDEngine`). The phase engine is
 *replaced*; only the **infra patterns** are worth porting deliberately:
 
 | Concern | From `legacy/` | New |
@@ -594,8 +594,8 @@ engine is greenfield (`Sources/FactoryModels`, `Sources/FactoryEngine`). The pha
 | Secrets | `SecretResolving` | port; wire into `Resource` credentials |
 | Execution | `AgentAdapter` | `Adapter` (LLM) + `Resource` (systems), resolved via the Model Catalog |
 
-**Status — the interactive engine + observability are built.** `FactoryModels` (Codable spec types)
-+ `FactoryEngine` drive the full interactive loop (Mode B, ADR-0026): `SpecLoader`/`SpecValidator`
+**Status — the interactive engine + observability are built.** `AISDDModels` (Codable spec types)
++ `AISDDEngine` drive the full interactive loop (Mode B, ADR-0026): `SpecLoader`/`SpecValidator`
 (referential + edge-type + acyclicity), `Scheduler`/`Reducer` over the DAG (parallel branches,
 slice descent), and a deterministic `CheckRunner` that runs the gates and advances state. Gating is
 real: the `SchemaValidator` (structural/verdict gates incl. the reviewer's approve/reject + per-item

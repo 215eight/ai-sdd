@@ -18,11 +18,11 @@ surface options and let the maintainer decide. New questions go under "Open deci
 
 ## Layout
 
-- `Sources/FactoryModels` — Codable spec types (`PipelineSpec`, `WorkerSpec`, `CheckSpec`, …).
-- `Sources/FactoryEngine` — `SpecLoader`, `SpecValidator`, `Scheduler`, `Reducer`, `RunStore`,
+- `Sources/AISDDModels` — Codable spec types (`PipelineSpec`, `WorkerSpec`, `CheckSpec`, …).
+- `Sources/AISDDEngine` — `SpecLoader`, `SpecValidator`, `Scheduler`, `Reducer`, `RunStore`,
   `CheckRunner`, `Renderer`, type-safe `Layout`.
-- `Sources/FactoryCLI` — the `ai-sdd` CLI: `validate · start · status · next · submit`.
-- `Tests/FactoryEngineTests` — Swift Testing (`@Test`/`#expect`/`#require`).
+- `Sources/AISDDCLI` — the `ai-sdd` CLI: `validate · start · status · next · submit · check · scope · cover · graph`.
+- `Tests/AISDDEngineTests` — Swift Testing (`@Test`/`#expect`/`#require`).
 - `legacy/` — the previous phase-engine implementation and its planning docs (`legacy/docs/`).
   **Reference only.** Generalize patterns from it; never extend it.
 
