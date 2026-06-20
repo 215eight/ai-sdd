@@ -53,8 +53,8 @@ public enum DashboardCharts {
         let maxTotal = max(groups.map(\.total).max() ?? 0, 1)
         let rowHeight = 36
         let top = 32
-        let chartX = 220
-        let chartWidth = 240
+        let chartX = 260
+        let chartWidth = 420
         let totalX = chartX + chartWidth + 16
         let height = max(110, top + groups.count * rowHeight + 28)
         let label = "Status by owner: " + groups
@@ -62,7 +62,7 @@ public enum DashboardCharts {
             .joined(separator: ", ")
 
         var lines = [
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 540 \(height)\" role=\"img\" aria-label=\"\(escape(label))\" class=\"dashboard-chart dashboard-grouped-bars\">",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 760 \(height)\" role=\"img\" aria-label=\"\(escape(label))\" class=\"dashboard-chart dashboard-grouped-bars\">",
             "  <g class=\"bar-groups\">"
         ]
         for (index, group) in groups.enumerated() {

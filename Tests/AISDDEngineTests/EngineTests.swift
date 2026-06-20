@@ -1137,6 +1137,28 @@ struct EngineTests {
         #expect(dashboard.sections[0].projection.rows.map(\.status) == [.runnable])
     }
 
+    @Test func projectDashboardAssemblerShowsActiveBuildPatternWithFeatures() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try writePipeline(at: tmp, name: "factory", nodes: ["build"], edges: [])
+        let feature = tmp
+            .appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("dashboard", isDirectory: true)
+        try writePipeline(at: feature, name: "dashboard", nodes: ["plan"], edges: [])
+
+        let store = RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true))
+        try store.create(runId: "factory-run", pipelineDir: tmp.standardizedFileURL.path)
+        try store.append(.nodeStarted(node: "build"), to: "factory-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: tmp, runStore: store)
+
+        #expect(dashboard.sections.map(\.heading) == ["Feature · dashboard", "Build pattern · factory"])
+        #expect(dashboard.sections[1].projection.rows.map(\.status) == [.inProgress])
+        #expect(dashboard.sections[1].projection.rows.map(\.owner) == ["factory"])
+    }
+
     @Test func projectDashboardWorkflowWritesSelfContainedHTMLFile() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
@@ -1222,6 +1244,8 @@ struct EngineTests {
             state: state)
         let svg = DashboardCharts.groupedBarChart(result.rows)
 
+        #expect(svg.contains("viewBox=\"0 0 760"))
+        #expect(svg.contains("<rect x=\"260\""))
         #expect(svg.contains("data-group=\"alice\" data-total=\"6\""))
         #expect(svg.contains("data-group=\"bob\" data-total=\"1\""))
         #expect(svg.contains("alice done: 2"))
@@ -1292,6 +1316,8 @@ struct EngineTests {
         #expect(page.contains("1/2 done"))
         #expect(page.contains("class=\"dashboard-chart dashboard-status-donut\""))
         #expect(page.contains("class=\"dashboard-chart dashboard-grouped-bars\""))
+        #expect(page.contains("grid-template-columns: minmax(0, 1fr)"))
+        #expect(page.contains(".dashboard-grouped-bars { width: 100%; }"))
         for status in DashboardStatus.allCases {
             #expect(page.contains("--status-\(status.rawValue): \(DashboardCharts.defaultColors[status]!)"))
             #expect(page.contains("legend-swatch status-\(status.rawValue)"))

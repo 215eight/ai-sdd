@@ -450,8 +450,10 @@ public enum GraphRenderer {
         .status-legend ul { display: flex; flex-wrap: wrap; gap: 10px 18px; list-style: none; margin: 22px 0; padding: 0; }
         .status-legend li { align-items: center; color: var(--muted); display: flex; gap: 8px; font-size: 0.92rem; }
         .legend-swatch { border-radius: 999px; display: inline-block; height: 10px; width: 10px; }
-        .dashboard-charts { align-items: start; display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 28px; }
+        .dashboard-charts { align-items: start; display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-bottom: 28px; }
         .dashboard-chart { max-width: 100%; }
+        .dashboard-status-donut { max-width: 360px; }
+        .dashboard-grouped-bars { width: 100%; }
         .dashboard-section { border-top: 1px solid var(--line); padding: 26px 0; }
         .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
         .dashboard-section > header p { color: var(--muted); margin: 0; }

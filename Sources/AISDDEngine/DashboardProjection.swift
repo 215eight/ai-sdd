@@ -133,7 +133,7 @@ public enum ProjectDashboardAssembler {
             }
         }
 
-        if sections.isEmpty, let buildPattern {
+        if let buildPattern, sections.isEmpty || containsActiveWork(buildPattern.projection) {
             sections.append(buildPattern)
         }
 
@@ -156,6 +156,12 @@ public enum ProjectDashboardAssembler {
 
     private static func standardizedPath(_ path: String) -> String {
         URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+    }
+
+    private static func containsActiveWork(_ projection: DashboardProjectionResult) -> Bool {
+        projection.rows.contains { row in
+            row.status == .inProgress || row.status == .rework || row.status == .escalated
+        }
     }
 
     private static func emptyProjection() -> DashboardProjectionResult {
