@@ -1,0 +1,29 @@
+items:
+  - id: donut-inline-svg
+    verdict: pass
+    notes: DashboardCharts.statusDonut is a pure static helper that emits a self-contained inline SVG and renders one status-segment circle for each DashboardStatus.allCases value from summary.statusTotals.
+  - id: donut-counts
+    verdict: pass
+    notes: The donut emits escaped status labels and counts in data attributes, titles, legend text, total text, and accessibility text, with tests asserting the rendered distribution.
+  - id: semantic-colors
+    verdict: pass
+    notes: DashboardCharts.defaultColors defines deterministic semantic colors for done, in-progress, rework, escalated, runnable, and pending, and chart tests verify those colors appear.
+  - id: grouped-bar-chart
+    verdict: pass
+    notes: DashboardCharts.groupedBarChart is a pure static helper that emits an inline SVG grouped by label, with group labels sorted deterministically.
+  - id: owner-fallback-grouping
+    verdict: pass
+    notes: Grouping uses DashboardProjectionRow.owner directly, preserving DashboardProjection's explicit owner, metadata owner, feature name, then stack fallback behavior; tests cover feature and stack fallbacks through projection rows.
+  - id: grouped-status-breakdown
+    verdict: pass
+    notes: Each group carries data-total and per-status status-bar entries with data-count and title text, so totals and status breakdowns are represented from the source rows.
+  - id: svg-escaping
+    verdict: pass
+    notes: SVG text and attribute values are escaped for ampersands, angle brackets, quotes, apostrophes, and script-like text; tests assert escaped output and absence of raw script text.
+  - id: pure-chart-api
+    verdict: pass
+    notes: The chart helpers transform supplied summary and row values only, with no RunStore, filesystem, network, JavaScript, CLI argument, or browser API dependency.
+  - id: chart-tests
+    verdict: pass
+    notes: Swift Testing coverage exercises donut segment counts and colors, grouped labels, owner fallback grouping, grouped totals and breakdowns, and escaping; swift test passes.
+verdict: approve

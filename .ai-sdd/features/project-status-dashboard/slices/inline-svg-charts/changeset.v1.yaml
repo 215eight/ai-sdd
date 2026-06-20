@@ -1,0 +1,15 @@
+summary: >-
+  Added pure AISDDEngine inline SVG chart helpers for the project status dashboard:
+  a deterministic status donut from DashboardProjectionSummary totals and a grouped
+  stacked bar chart from DashboardProjectionRow.owner labels, with semantic status
+  colors, escaped SVG text and attributes, and focused Swift Testing coverage.
+satisfies:
+  - donut-inline-svg
+  - donut-counts
+  - semantic-colors
+  - grouped-bar-chart
+  - owner-fallback-grouping
+  - grouped-status-breakdown
+  - svg-escaping
+  - pure-chart-api
+  - chart-tests

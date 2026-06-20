@@ -1073,6 +1073,78 @@ struct EngineTests {
         #expect(result.summary.statusTotals[.pending] == 1)
     }
 
+    @Test func dashboardStatusDonutRendersSegmentsCountsAndColors() {
+        let summary = DashboardProjectionSummary(
+            totalFeatureCount: 1,
+            totalNodeCount: 7,
+            doneCount: 2,
+            statusTotals: [.done: 2, .inProgress: 1, .rework: 1, .escalated: 1, .runnable: 1, .pending: 1])
+        let svg = DashboardCharts.statusDonut(summary)
+
+        #expect(svg.components(separatedBy: "class=\"status-segment").count - 1 == DashboardStatus.allCases.count)
+        for status in DashboardStatus.allCases {
+            #expect(svg.contains("data-status=\"\(status.rawValue)\""))
+            #expect(svg.contains("fill=\"\(DashboardCharts.defaultColors[status]!)\"")
+                || svg.contains("stroke=\"\(DashboardCharts.defaultColors[status]!)\""))
+        }
+        #expect(svg.contains("data-status=\"done\" data-count=\"2\""))
+        #expect(svg.contains("done: 2"))
+        #expect(svg.contains("in-progress 1"))
+        #expect(svg.contains("Status distribution: done 2, in-progress 1, rework 1, escalated 1, runnable 1, pending 1"))
+    }
+
+    @Test func dashboardGroupedBarsUseOwnerFallbackLabelsAndBreakdown() {
+        let state = RunState(
+            completedNodes: ["plan", "qa"],
+            inProgressNodes: ["implement"],
+            failedChecks: ["review": ["review.structure"]],
+            escalatedNodes: ["release"])
+        let result = DashboardProjection.project(
+            pipeline: dashboardPipeline(),
+            metadata: SpecMetadata(name: "project-status-dashboard", owner: ["alice"]),
+            state: state)
+        let svg = DashboardCharts.groupedBarChart(result.rows)
+
+        #expect(svg.contains("data-group=\"alice\" data-total=\"6\""))
+        #expect(svg.contains("data-group=\"bob\" data-total=\"1\""))
+        #expect(svg.contains("alice done: 2"))
+        #expect(svg.contains("alice rework: 1"))
+        #expect(svg.contains("alice escalated: 1"))
+        #expect(svg.contains("alice runnable: 1"))
+        #expect(svg.contains("alice pending: 1"))
+        #expect(svg.contains("bob in-progress: 1"))
+    }
+
+    @Test func dashboardGroupedBarsKeepFallbackToFeatureThenStack() {
+        let metadataFallback = DashboardProjection.project(
+            pipeline: PipelineSpec(nodes: [PipelineNode(id: "slice", stack: "swift")], edges: []),
+            metadata: SpecMetadata(name: "feature-name"))
+        #expect(DashboardCharts.groupedBarChart(metadataFallback.rows).contains("data-group=\"feature-name\""))
+
+        let stackFallback = DashboardProjection.project(
+            pipeline: PipelineSpec(nodes: [PipelineNode(id: "slice", stack: "swift")], edges: []),
+            metadata: SpecMetadata(name: ""))
+        #expect(DashboardCharts.groupedBarChart(stackFallback.rows).contains("data-group=\"swift\""))
+    }
+
+    @Test func dashboardChartsEscapeSVGTextAndAttributes() {
+        let label = "Team & <script>alert(\"x\")</script> 'lead'"
+        let rows = [DashboardProjectionRow(
+            node: "node",
+            stack: nil,
+            owner: label,
+            lane: nil,
+            milestone: nil,
+            dependencyCount: 0,
+            status: .runnable,
+            nextActionHint: .startWork)]
+        let svg = DashboardCharts.groupedBarChart(rows)
+
+        #expect(svg.contains("Team &amp; &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &#39;lead&#39;"))
+        #expect(!svg.contains("<script>"))
+        #expect(!svg.contains("\"x\""))
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

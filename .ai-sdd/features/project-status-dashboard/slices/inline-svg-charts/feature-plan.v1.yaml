@@ -1,0 +1,91 @@
+summary: >-
+  Add pure engine-level inline SVG chart helpers for the project status dashboard:
+  a status donut and a grouped status bar chart built from dashboard projection
+  data, with deterministic semantic colors and escaped SVG text.
+scope:
+  in:
+    - Introduce pure AISDDEngine chart rendering helpers for dashboard status summaries and projection rows.
+    - Render a status donut SVG from DashboardProjectionSummary.statusTotals using DashboardStatus.allCases order.
+    - Render a grouped bar chart from DashboardProjectionRow values, grouping by the existing row.owner label produced by the status-projection fallback chain.
+    - Use the dashboard semantic default colors for done, in-progress, rework, escalated, runnable, and pending.
+    - Escape all SVG labels, status names, counts, group labels, and accessibility text emitted by the chart helpers.
+    - Keep chart output self-contained inline SVG with no JavaScript, CDN dependency, browser-only API, RunStore access, or filesystem access.
+    - Add focused Swift Testing coverage for donut status segments and counts, grouped bar labels, owner fallback grouping, deterministic colors, and escaping.
+  out:
+    - No ai-sdd graph CLI flag changes or command wiring.
+    - No dashboard HTML page layout, graph legend, progress header, or Mermaid rendering changes.
+    - No RunStore scanning, run-to-feature matching, or feature directory loading.
+    - No changes to PipelineSpec, WorkerSpec, CheckSpec, schema formats, or dashboard projection status semantics.
+    - No shared state plane, remote fragments, publish adapters, auto-refresh, server mode, or external chart library.
+acceptance:
+  - id: donut-inline-svg
+    description: A pure function returns an inline SVG status donut for DashboardProjectionSummary.statusTotals with one deterministic segment entry per DashboardStatus value.
+  - id: donut-counts
+    description: The donut output includes escaped status labels and counts so tests can verify the rendered distribution without a browser.
+  - id: semantic-colors
+    description: Chart output uses the confirmed semantic default colors for done, in-progress, rework, escalated, runnable, and pending.
+  - id: grouped-bar-chart
+    description: A pure function returns an inline SVG grouped bar chart from DashboardProjectionRow values with one group per grouping label and deterministic ordering.
+  - id: owner-fallback-grouping
+    description: Bar grouping uses DashboardProjectionRow.owner, preserving the existing fallback order of explicit owner, feature metadata name, then stack when owner tags are absent.
+  - id: grouped-status-breakdown
+    description: Each bar group represents its slice count and status breakdown, so grouped totals remain consistent with the source rows.
+  - id: svg-escaping
+    description: Chart helpers escape text and attribute content for labels containing characters such as ampersands, angle brackets, quotes, apostrophes, or script-like text.
+  - id: pure-chart-api
+    description: Chart helpers do not read files, inspect RunStore, use JavaScript, fetch network resources, or depend on CLI arguments.
+  - id: chart-tests
+    description: Swift tests cover donut segments/counts, default colors, bar labels, owner fallback grouping through projection rows, grouped totals, and escaping.
+decisions:
+  - id: chart-helper-home
+    status: closed
+    decision: Add chart rendering under Sources/AISDDEngine as pure engine behavior.
+    rationale: Dashboard charts are deterministic transforms of projection data and should be reusable by later renderer and CLI slices.
+  - id: chart-helper-file
+    status: closed
+    decision: Introduce Sources/AISDDEngine/DashboardCharts.swift for the inline SVG helpers.
+    rationale: A separate file keeps chart-specific SVG rendering separate from status projection and the existing Mermaid graph renderer.
+  - id: chart-api-shape
+    status: closed
+    decision: Expose a DashboardCharts enum namespace with static functions for statusDonut and groupedBarChart.
+    rationale: Existing engine utilities use enum namespaces for pure functions, and this shape keeps call sites simple for the later HTML renderer slice.
+  - id: donut-input
+    status: closed
+    decision: Build the donut from DashboardProjectionSummary rather than recomputing totals from rows.
+    rationale: The previous slice already made summary totals the canonical aggregate projection for dashboard status distribution.
+  - id: bar-input
+    status: closed
+    decision: Build the grouped bar chart from DashboardProjectionRow values.
+    rationale: Rows carry the grouping label, status, stack, lane, milestone, and node identity needed for grouped dashboard summaries without file I/O.
+  - id: grouping-label
+    status: closed
+    decision: Group bars by DashboardProjectionRow.owner.
+    rationale: The projection row owner field already applies the required owner-to-feature-to-stack fallback, so chart code can preserve that closed behavior instead of duplicating fallback rules.
+  - id: status-order
+    status: closed
+    decision: Render status segments in DashboardStatus.allCases order.
+    rationale: The status enum order is already tested as stable and gives deterministic SVG output.
+  - id: bar-shape
+    status: closed
+    decision: Render the grouped bar chart as stacked horizontal bars with status-colored segments and per-group totals.
+    rationale: Stacked bars show both grouping totals and status mix while staying deterministic and compact in static SVG.
+  - id: color-source
+    status: closed
+    decision: Define default semantic chart colors in DashboardCharts using the confirmed dashboard color values.
+    rationale: The slice needs chart output before the full dashboard CSS renderer exists, while later HTML can still style around the same semantic defaults.
+  - id: escaping
+    status: closed
+    decision: Escape SVG text and attribute values inside the chart helper file.
+    rationale: Chart helpers are responsible for emitting safe inline SVG and cannot assume callers pre-escape labels or metadata.
+  - id: tests-location
+    status: closed
+    decision: Add focused chart tests to Tests/AISDDEngineTests/EngineTests.swift.
+    rationale: The repo currently keeps AISDDEngine behavior tests in this Swift Testing file, including dashboard projection coverage from the dependency slice.
+files:
+  - Sources/AISDDEngine/DashboardCharts.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/project-status-dashboard
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml
