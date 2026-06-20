@@ -66,8 +66,8 @@ fastlane/test_output
 # Local run store (Piece 2; the shared state plane of ADR-0025 lands later)
 .factory/
 
-# Agent-specific folders — surfacing only (symlinks + glue) into each agent's expected location.
-# The canonical, provider-neutral skills live in skills/ (and AGENTS.md is the cross-agent surface);
-# the factory-bootstrap skill recreates these per-agent. Add other agents' dirs here as needed.
+# Agent-local folders — local settings/state, not surfacing. (Claude Code's skill symlinks live
+# under .claude/ and are recreated by ai-sdd-bootstrap.) The committed, repo-level skill surface is
+# .agents/skills/ (Codex's native mechanism — symlinks into skills/, tracked, not ignored).
 .claude/
 .codex/
