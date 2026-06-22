@@ -78,20 +78,20 @@ public enum Drift {
         }
     }
 
-    /// Reconstruct the FIXED Tier-1 structural-check template for a schema, purely off its name +
-    /// version + format. This MUST match what `ai-sdd-compile-schema` commits so a reconciled repo
-    /// yields no findings. The committed format is `swift run ai-sdd check <schema-path> <artifact-path>`.
-    public static func structuralCheckName(for schema: String) -> String { "\(schema).structure" }
-
-    /// The expected structural `CheckSpec` for a schema (name, deterministic kind, the `check` command
-    /// over the schema + artifact paths, `required: true`). Pure — keyed only off the schema fields.
-    public static func expectedStructuralCheck(for schema: SchemaInput) -> CheckSpec {
-        let schemaPath = ".ai-sdd/schemas/\(schema.name).schema.yaml"
-        let artifactPath = ".ai-sdd/artifacts/\(schema.name).v\(schema.version).\(schema.format)"
-        return CheckSpec(
-            checkKind: "deterministic",
-            command: "swift run ai-sdd check \(schemaPath) \(artifactPath)",
-            required: true)
+    /// The expected structural `CheckSpec` for a schema, computed by delegating to the engine's single
+    /// source of truth — `SchemaCompiler.structuralCheck(_:name:version:)` — rather than a private
+    /// copy of the Tier-1 template. `Drift` works off `SchemaInput` (name/version/format), so it builds
+    /// a minimal `SchemaSpec` with a non-empty `fields` placeholder per input (the compiler returns nil
+    /// for an empty `fields`); the placeholder is irrelevant to the structural check, which is keyed
+    /// only off name/version/format. The compiler guarantees a non-nil result here, so `.spec` unwraps.
+    private static func expectedStructuralCheck(for schema: SchemaInput) -> CheckSpec {
+        let placeholder = SchemaSpec(
+            format: schema.format, fields: ["_": FieldSpec(type: "string")])
+        guard let compiled = SchemaCompiler.structuralCheck(
+            placeholder, name: schema.name, version: schema.version) else {
+            preconditionFailure("structuralCheck must be non-nil for a non-empty fields placeholder")
+        }
+        return compiled.spec
     }
 
     /// Compute the deterministic drift findings, grouped/ordered by kind (stale-gate then
@@ -132,7 +132,7 @@ public enum Drift {
         var findings: [DriftFinding] = []
 
         for schema in schemas.sorted(by: { $0.name < $1.name }) {
-            let checkName = structuralCheckName(for: schema.name)
+            let checkName = Layout.structuralCheckName(name: schema.name)
             let committedPath = ".ai-sdd/checks/\(checkName).check.yaml"
             let handEdited = handEditedPaths.contains(committedPath)
             let expected = expectedStructuralCheck(for: schema)
@@ -153,7 +153,7 @@ public enum Drift {
         }
 
         // An orphaned structural check (a committed `<name>.structure` whose schema is gone).
-        let schemaNames = Set(schemas.map { structuralCheckName(for: $0.name) })
+        let schemaNames = Set(schemas.map { Layout.structuralCheckName(name: $0.name) })
         for committed in committedChecks.sorted(by: { $0.checkName < $1.checkName })
         where !schemaNames.contains(committed.checkName) {
             let stem = committed.checkName.hasSuffix(".structure")

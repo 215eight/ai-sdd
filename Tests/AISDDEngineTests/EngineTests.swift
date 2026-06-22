@@ -2611,11 +2611,14 @@ struct DriftTests {
         .init(name: name, version: version, format: format)
     }
 
-    /// The committed structural check that EXACTLY matches what the template reconstructs — so a repo
-    /// built from it is reconciled (no Kind-1 finding).
-    private func reconciledCheck(for name: String) -> Drift.CommittedCheck {
-        .init(checkName: Drift.structuralCheckName(for: name),
-              spec: Drift.expectedStructuralCheck(for: schemaInput(name)))
+    /// The committed structural check that EXACTLY matches what the engine reconstructs — so a repo
+    /// built from it is reconciled (no Kind-1 finding). Built via the public engine API (the same
+    /// `SchemaCompiler` source of truth `Drift` now delegates to), with a non-empty `fields`
+    /// placeholder so `structuralCheck` returns non-nil.
+    private func reconciledCheck(for name: String, version: Int = 1, format: String = "yaml") -> Drift.CommittedCheck {
+        let schema = SchemaSpec(format: format, fields: ["_": FieldSpec(type: "string")])
+        let compiled = SchemaCompiler.structuralCheck(schema, name: name, version: version)!
+        return .init(checkName: Layout.structuralCheckName(name: name), spec: compiled.spec)
     }
 
     /// A tiny schema with one required non-empty `summary` field, for Kind-2 fixture validation.
@@ -2649,7 +2652,7 @@ struct DriftTests {
     @Test func staleStructuralCheckIsReported() throws {
         // Inject drift: the committed command points at a stale artifact path.
         let stale = Drift.CommittedCheck(
-            checkName: Drift.structuralCheckName(for: "feature-plan"),
+            checkName: Layout.structuralCheckName(name: "feature-plan"),
             spec: CheckSpec(checkKind: "deterministic",
                             command: "swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml STALE.yaml",
                             required: true))

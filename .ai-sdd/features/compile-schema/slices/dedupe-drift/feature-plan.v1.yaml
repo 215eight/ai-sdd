@@ -1,0 +1,113 @@
+summary: >-
+  Dedupe the Tier-1 structural-check logic out of `Drift.swift` now that the `extract-compiler` slice
+  landed `SchemaCompiler` (C4 — user amendment 2026-06-22). Refactor Drift's Kind-1 (stale-gate)
+  detection to compute the expected structural check by delegating to the engine's single source of
+  truth — `SchemaCompiler.structuralCheck(_:name:version:)` for the `CheckSpec` and
+  `Layout.structuralCheckName(name:)` for the check name — and delete the now-redundant private copies
+  `Drift.expectedStructuralCheck(for:)` and `Drift.structuralCheckName(for:)`. Drift continues to work
+  off `Drift.SchemaInput` (name/version/format); since `SchemaCompiler.structuralCheck` takes a
+  `SchemaSpec` and returns an optional `CompiledCheck?` (nil when the schema declares no `fields`), the
+  implementer builds a minimal `SchemaSpec(format:, fields:)` with a non-empty `fields` from each
+  `SchemaInput`, calls the compiler, and unwraps `.spec`. Behavior is unchanged: a reconciled repo
+  still yields no stale-gate findings; a divergent, missing, or orphaned structural check is still
+  reported under `stale-gate` with the same `recompile <schema>` remedy. The `DriftTests` helper in
+  `EngineTests.swift` referenced the removed private API and is updated to the public engine API. The
+  CLI (`main.swift`), `Layout.swift`, and `SchemaCompiler.swift` are NOT touched.
+
+scope:
+  in:
+    - Refactor `Drift.swift` Kind-1 (stale-gate) detection to delegate the expected structural
+      `CheckSpec` to `SchemaCompiler.structuralCheck(_:name:version:)` (unwrapping `.spec`) and the
+      check name to `Layout.structuralCheckName(name:)`.
+    - Remove the private `Drift.expectedStructuralCheck(for:)` and `Drift.structuralCheckName(for:)`
+      (prefer outright removal over thin forwarders), updating every call site inside `Drift.swift`.
+    - Update the `DriftTests` helpers in `Tests/AISDDEngineTests/EngineTests.swift` that referenced the
+      removed private API so they use the public engine API and continue to assert identical behavior.
+  out:
+    - SchemaCompiler internals or its public API — already shipped by `extract-compiler`; consumed as-is.
+    - >-
+      `Layout.swift` (already exposes `structuralCheckName(name:)`); the stale doc-comment at
+      `Layout.swift:120` mentioning `Drift.expectedStructuralCheck` is cosmetic and out of this slice's
+      tight diff scope.
+    - The `ai-sdd drift` CLI subcommand in `Sources/AISDDCLI/main.swift` — it uses only
+      `Drift.SchemaInput`/`CommittedCheck`/`FixtureInput`/`scan`, none of which change.
+    - Drift Kind-2 (fixture↔schema) and Kind-3 (drift-conventions, deferred) logic.
+
+acceptance:
+  - id: AC-KIND1-DELEGATES
+    description: >-
+      Drift Kind-1 (stale-gate) computes the expected structural check via
+      `SchemaCompiler.structuralCheck(_:name:version:)` (unwrapped `.spec`) and the check name via
+      `Layout.structuralCheckName(name:)`. No private Tier-1 template/command-string construction
+      remains anywhere in `Drift.swift`.
+  - id: AC-PRIVATE-REMOVED
+    description: >-
+      The private `Drift.expectedStructuralCheck(for:)` and `Drift.structuralCheckName(for:)` methods
+      are deleted from `Drift.swift` (no thin forwarders remain), and no caller references them.
+  - id: AC-RECONCILED-CLEAN
+    description: >-
+      A reconciled repo (committed structural checks built from `SchemaCompiler`) still yields zero
+      stale-gate findings — `DriftTests.reconciledRepoHasNoFindings` passes unchanged in observable
+      behavior.
+  - id: AC-DIVERGENT-MISSING-ORPHAN-UNCHANGED
+    description: >-
+      A divergent committed structural check, a missing structural check, and an orphaned structural
+      check are each still reported under `stale-gate` with the same `recompile <schema>` remedy —
+      `staleStructuralCheckIsReported`, `missingStructuralCheckIsReported`, and
+      `orphanedStructuralCheckIsReported` pass with identical assertions.
+  - id: AC-DRIFTTESTS-UPDATED-GREEN
+    description: >-
+      The `DriftTests` suite in `EngineTests.swift` is updated to call the public engine API instead of
+      the removed `Drift.expectedStructuralCheck`/`Drift.structuralCheckName`, and the full
+      `DriftTests` suite (stale-gate, missing, orphan, reconciled-clean, hand-edited annotation,
+      fixture-violation) passes.
+  - id: AC-ANCHOR-TEST-GREEN
+    description: >-
+      The `SchemaCompiler` correctness-anchor test in `SchemaCompilerTests.swift` still passes
+      unchanged (the dedupe does not alter SchemaCompiler output).
+  - id: AC-BUILD-TEST-VALIDATE-GREEN
+    description: >-
+      `swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` all exit 0.
+
+decisions:
+  - id: C4
+    question: Touch `Drift.swift` to dedupe its private Tier-1 structural-check copy onto SchemaCompiler?
+    decision: >-
+      Yes — this slice realizes C4 (user amendment 2026-06-22): refactor Drift Kind-1 to delegate to
+      `SchemaCompiler` and remove the private `expectedStructuralCheck`/`structuralCheckName` copies,
+      keeping `DriftTests` and the anchor test green. `extract-compiler` already landed `SchemaCompiler`
+      on this branch, so no separate drift branch needs reconciling.
+    status: closed
+  - id: D-API-RECONCILIATION
+    question: >-
+      How does Drift (which works off `Drift.SchemaInput`) call the actual SchemaCompiler API, given
+      the slice brief's assumed signatures (`structuralCheck(name:version:schema:)`,
+      `SchemaCompiler.structuralCheckName(for:)`) do not match the shipped code?
+    decision: >-
+      Use the actual API: `SchemaCompiler.structuralCheck(_ schema: SchemaSpec, name: String,
+      version: Int) -> CompiledCheck?` and `Layout.structuralCheckName(name:)` (there is no
+      `SchemaCompiler.structuralCheckName`). Because the compiler keys the structural check off a
+      `SchemaSpec` and returns nil for an empty `fields`, Drift constructs a minimal
+      `SchemaSpec(format: input.format, fields: <one non-empty placeholder field>)` per
+      `Drift.SchemaInput`, calls `structuralCheck(...)`, and force-unwraps `.spec` (the placeholder
+      guarantees non-nil). The resulting `CheckSpec` is byte-identical to today's hand-built one
+      (`swift run ai-sdd check <schema-path> <artifact-path>`, deterministic, required: true).
+    status: closed
+  - id: D-FILES-SCOPE
+    question: Which test/source files must be in the plan's `files` list?
+    decision: >-
+      Exactly `Sources/AISDDEngine/Drift.swift` (the dedupe) and
+      `Tests/AISDDEngineTests/EngineTests.swift` (its `DriftTests.reconciledCheck` helper and the
+      `staleStructuralCheckIsReported` test reference the removed private API and must be updated).
+      `main.swift`, `Layout.swift`, and `SchemaCompiler.swift` are verified unaffected and excluded so
+      the `diff-in-scope` gate stays tight.
+    status: closed
+
+files:
+  - Sources/AISDDEngine/Drift.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd

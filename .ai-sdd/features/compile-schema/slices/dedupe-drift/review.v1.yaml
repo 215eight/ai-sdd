@@ -1,0 +1,78 @@
+schema: review.v1
+run: compile-schema
+slice: dedupe-drift
+
+summary: >-
+  Reviewed the dedupe-drift slice against feature-plan.v1 (AC-KIND1-DELEGATES ..
+  AC-BUILD-TEST-VALIDATE-GREEN; decisions C4, D-API-RECONCILIATION, D-FILES-SCOPE, all closed) by
+  inspecting the actual git diff and source, not the changeset's say-so. The tracked changes are
+  exactly the two planned files (Sources/AISDDEngine/Drift.swift, Tests/AISDDEngineTests/EngineTests.swift)
+  and nothing else. The Tier-1 template body (inline schema/artifact path + `swift run ai-sdd check`
+  command strings) no longer exists in Drift.swift: Kind-1 now computes the expected structural check
+  by delegating to SchemaCompiler.structuralCheck(_:name:version:) (unwrapping .spec) and the check
+  name via Layout.structuralCheckName(name:). The public Drift.structuralCheckName(for:) is removed
+  with no remaining code references. Stale-gate behavior is unchanged (reconciled -> no finding;
+  divergent/missing/orphaned -> stale-gate finding with `recompile <schema>` remedy), and no
+  DriftTest was weakened or deleted — only references to the removed API were updated, intent
+  preserved. swift build, swift test (154 tests incl. DriftTests + the SchemaCompiler anchor
+  structuralReproducesCommitted), swift run ai-sdd validate .ai-sdd, and a spot-check of
+  swift run ai-sdd drift all exit 0 (drift reports "no drift — 4 schema(s) reconciled").
+
+items:
+  - id: AC-KIND1-DELEGATES
+    verdict: pass
+    notes: >-
+      Drift.swift:87-95 — expectedStructuralCheck(for:) builds a minimal SchemaSpec(format:,
+      fields: ["_": FieldSpec(type:"string")]) and delegates to
+      SchemaCompiler.structuralCheck(_:name:version:), unwrapping .spec; the check name comes from
+      Layout.structuralCheckName(name:) at Drift.swift:135 and :156. No Tier-1 template/command
+      strings remain in Drift.swift — grep for `swift run ai-sdd check` and for inline
+      schema/artifact path construction in Drift.swift returns none.
+  - id: AC-PRIVATE-REMOVED
+    verdict: pass
+    notes: >-
+      The public Drift.structuralCheckName(for:) is deleted and the duplicated template body is
+      removed from expectedStructuralCheck, which is now `private` and a delegating bridge — permitted
+      by D-API-RECONCILIATION and the review brief (a thin private forwarder is acceptable IF it
+      delegates and carries no duplicated template body; confirmed). grep -rn over Sources/Tests for
+      `Drift.structuralCheckName`/`structuralCheckName(for`/`Drift.expectedStructuralCheck` finds no
+      code references — only the stale doc-comment at Layout.swift:120, which the plan explicitly
+      scopes OUT (scope.out / D-FILES-SCOPE), so it is not a defect.
+  - id: AC-RECONCILED-CLEAN
+    verdict: pass
+    notes: >-
+      DriftTests.reconciledRepoHasNoFindings (EngineTests.swift:2640-2648) passes (Suite DriftTests
+      passed). The reconciledCheck helper (EngineTests.swift:2638-2641) builds the committed check via
+      the same public SchemaCompiler/Layout source of truth Drift now delegates to, so the test still
+      exercises the real Drift.scan reconciliation path. Independently confirmed live:
+      `swift run ai-sdd drift` exits 0 with "no drift — 4 schema(s) reconciled, 3 fixture(s) valid".
+  - id: AC-DIVERGENT-MISSING-ORPHAN-UNCHANGED
+    verdict: pass
+    notes: >-
+      staleStructuralCheckIsReported (EngineTests.swift:2652), missingStructuralCheckIsReported
+      (:2669), and orphanedStructuralCheckIsReported (:2679) all pass with identical assertions —
+      each asserts kind .staleGate and remedy `recompile <schema>` (and detail "missing"/"no matching
+      schema"). The only change in the stale test swapped the removed-API call for
+      Layout.structuralCheckName(name:); injected-drift spec and all assertions are preserved.
+  - id: AC-DRIFTTESTS-UPDATED-GREEN
+    verdict: pass
+    notes: >-
+      The two helpers that referenced the removed private API (reconciledCheck and
+      staleStructuralCheckIsReported) now call the public SchemaCompiler + Layout API. No DriftTests
+      test was deleted or weakened — stale, missing, orphan, reconciled-clean, hand-edited
+      annotation, fixture-violation, and ordering tests are all present and asserting. swift test
+      reports Suite DriftTests passed; full run 154 tests in 5 suites passed (exit 0).
+  - id: AC-ANCHOR-TEST-GREEN
+    verdict: pass
+    notes: >-
+      SchemaCompilerTests.structuralReproducesCommitted (the correctness anchor) passes unchanged —
+      Suite SchemaCompilerTests passed. git diff confirms SchemaCompiler.swift is untouched (only
+      Drift.swift and EngineTests.swift modified), so the dedupe did not alter SchemaCompiler output.
+  - id: AC-BUILD-TEST-VALIDATE-GREEN
+    verdict: pass
+    notes: >-
+      Independently run: swift build -> "Build complete!"; swift test -> 154 tests in 5 suites passed;
+      swift run ai-sdd validate .ai-sdd -> "✓ ai-sdd-feature: valid", exit 0. All three exit 0.
+
+verdict: approve
+rework: []

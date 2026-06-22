@@ -1,0 +1,25 @@
+summary: >-
+  Deduped the Tier-1 structural-check logic out of Drift now that SchemaCompiler owns it.
+  Refactored Drift's Kind-1 (stale-gate) detection to compute the expected structural CheckSpec
+  by delegating to SchemaCompiler.structuralCheck(_:name:version:) (unwrapping .spec) and the
+  check name to Layout.structuralCheckName(name:). Removed the public Drift.structuralCheckName(for:)
+  and the private Tier-1 template body from Drift.expectedStructuralCheck(for:); the surviving
+  expectedStructuralCheck(for:) is now a thin private bridge that builds a minimal
+  SchemaSpec(format:, fields:) — with a non-empty placeholder field so the compiler returns
+  non-nil — and delegates to SchemaCompiler. Updated the DriftTests helpers in EngineTests.swift
+  (reconciledCheck and staleStructuralCheckIsReported) to call the public engine API
+  (SchemaCompiler + Layout) instead of the removed Drift private API, preserving every
+  assertion's intent. Behavior is unchanged: a reconciled repo yields no stale-gate findings; a
+  divergent, missing, or orphaned structural check is still reported under stale-gate with the
+  same `recompile <schema>` remedy. Only Sources/AISDDEngine/Drift.swift and
+  Tests/AISDDEngineTests/EngineTests.swift changed; SchemaCompiler.swift, Layout.swift, and
+  main.swift are untouched. swift build, swift test (154 tests, incl. DriftTests and the
+  SchemaCompiler anchor test), and swift run ai-sdd validate .ai-sdd all exit 0.
+satisfies:
+  - AC-KIND1-DELEGATES
+  - AC-PRIVATE-REMOVED
+  - AC-RECONCILED-CLEAN
+  - AC-DIVERGENT-MISSING-ORPHAN-UNCHANGED
+  - AC-DRIFTTESTS-UPDATED-GREEN
+  - AC-ANCHOR-TEST-GREEN
+  - AC-BUILD-TEST-VALIDATE-GREEN
