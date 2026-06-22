@@ -1,0 +1,64 @@
+verdict: approve
+items:
+  - id: ACC-frozen-exit3
+    verdict: pass
+    notes: >-
+      A locked-path change renders as a hard ✗ carrying its lock reason
+      (`✗ .ai-sdd/conventions/swift.md (modified) [frozen: <reason>]`) and the real binary exits 3.
+      The pure result reports `frozenPresent == true`. Reviewer verified with a throwaway locks.yaml +
+      touched tracked artifact against the real `ai-sdd plan .ai-sdd` (observed exit=3) and by the unit
+      test `frozenChangeReportsFrozenPresentAndRendersHardX`.
+  - id: ACC-frozen-not-waivable
+    verdict: pass
+    notes: >-
+      `frozenPresent` is derived purely from `.frozen` tier presence, independent of `requireAck`, and
+      `throw ExitCode(3)` is evaluated BEFORE the `ExitCode(2)` ack check in main.swift. Reviewer ran
+      the real binary at `--require-ack contract`, `local`, and `refresh` — all exited 3. Unit test
+      `frozenStaysPresentRegardlessOfThreshold` asserts frozenPresent stays true across all thresholds.
+  - id: ACC-unlock-downgrades
+    verdict: pass
+    notes: >-
+      `--unlock <that-path>` downgrades the frozen change to its base tier for the invocation; the real
+      binary re-rendered the change under `refresh:` (no ✗) and exited 0. Downgrade re-runs the base
+      classifier with `locks: []` over the same changes (single source of truth) — never reads or
+      writes locks.yaml. Reviewer confirmed locks.yaml was byte-for-byte unchanged after `--unlock`
+      runs. Unit test `unlockDowngradesToBaseTierThenExitsPerThreshold` covers exit-follows-base-tier.
+  - id: ACC-unlock-noop-warns
+    verdict: pass
+    notes: >-
+      `--unlock <some/other/path>` emitted `⚠ --unlock <path>: no frozen change matches` to stderr and
+      did NOT error; the genuinely-frozen change is untouched, so the exit stays whatever the unchanged
+      plan dictates (observed exit 3 from the still-frozen change, warning non-fatal — correct L3
+      behavior). Unit test `unlockOfNonFrozenOrUnmatchedPathIsNoOpWithWarning` asserts the unmatched set
+      and that frozenPresent stays true for the untouched change.
+  - id: ACC-frozen-renders-above-contract
+    verdict: pass
+    notes: >-
+      `groupOrder` prepends `.frozen` (frozen -> contract -> local -> refresh); empty groups omitted.
+      Non-frozen tiers keep their full render path (consumers, flags, blast-radius). Unit test
+      `frozenGroupRendersAboveContractAndNonFrozenUnaffected` asserts the frozen heading precedes the
+      contract heading and the contract change still renders its consumer line unchanged.
+  - id: ACC-help-documents-unlock
+    verdict: pass
+    notes: >-
+      `ai-sdd plan --help` lists `--unlock <unlock> ...` in USAGE and documents it as per-invocation,
+      repeatable, never editing locks.yaml, no-op-with-warning on no match. Reviewer verified against
+      the real binary help output.
+  - id: ACC-build-test-validate-green
+    verdict: pass
+    notes: >-
+      Reviewer ran all three: `swift build` complete; `swift test` passed (125 tests, 3 suites,
+      including the 6 new frozen/unlock cases); `swift run ai-sdd validate .ai-sdd` reports valid
+      (3 nodes, 3 edges, 4 workers, 8 checks).
+rework: []
+notes: >-
+  CLI slice as scoped (ADR-0031, cli-locks): consumes the already-shipped engine `frozen` substrate,
+  re-implements nothing. Touched exactly the three planned files — Sources/AISDDEngine/PlanReport.swift,
+  Sources/AISDDCLI/main.swift, Tests/AISDDEngineTests/EngineTests.swift; ChangePlan.swift is NOT
+  modified (single classifier preserved). Exit-3 is derived from tier presence (threshold-independent)
+  and thrown before exit-2 in one ordered place in run(). The `--unlock` downgrade is a pure in-memory
+  helper that re-runs the base classifier with `locks: []` — locks.yaml is never read-for-mutation or
+  written (reviewer confirmed the file unchanged after live `--unlock` runs). `--since`, validate-first
+  (exit 1), and contract/local/refresh ack (exit 2) semantics intact. Tests are Swift Testing style
+  (@Test/#expect/#require). Every acceptance id is covered by a real test AND verified against the real
+  binary. Working tree left exactly as found (throwaway locks.yaml removed, touched artifact restored).

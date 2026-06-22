@@ -1,0 +1,125 @@
+summary: >-
+  Wire the user-facing freeze behaviour into `ai-sdd plan`, consuming the engine `frozen` tier
+  already shipped by the `frozen-tier` slice (ADR-0031, slice `cli-locks`). `PlanReport` adds
+  `frozen` to its render `groupOrder` (above `contract`), rendering each frozen change as a hard ✗
+  with its lock `reason` (from `ChangeClassification.lockReason`). The pure `PlanReport.make` result
+  gains a `frozenPresent` signal (sibling to the existing `ackRequired`) so the exit-code decision is
+  unit-testable without driving `ParsableCommand`. The `Plan` command exits `3` whenever any change
+  is `frozen`, computed and thrown BEFORE the `ackRequired` (exit `2`) check so a frozen change
+  cannot be waved through by lowering `--require-ack` — exit `3` is independent of the threshold and
+  distinct from validate's `1` and ack's `2`. A repeatable `--unlock <path>` `@Option` on `Plan`
+  downgrades a matching `frozen` change to its base tier for that one invocation only (the
+  `locks.yaml` file is untouched); per L3, an `--unlock` of a non-frozen / unmatched path is a no-op
+  with a warning to stderr, not an error. `--since`, the validate-first gate, and the existing
+  contract/local/refresh render + ack behaviour are all preserved.
+scope:
+  in:
+    - "PlanReport: add `frozen` to the `groupOrder` array as the FIRST element (frozen -> contract -> local -> refresh), so frozen items render above contract. Render a frozen change as a hard ✗ line carrying its `lockReason` (e.g. `✗ <path> (<status>) [frozen: <reason>]`), keeping the existing flag/blast-radius labels for non-frozen tiers intact."
+    - "PlanReport.Result: add a `frozenPresent: Bool` field (sibling to `ackRequired`), set true iff any classification has `tier == .frozen`. Computed by a pure helper over `plan.classifications` (like `ackRequired`), so the exit decision is testable without `ParsableCommand`."
+    - "Plan command (Sources/AISDDCLI/main.swift): after rendering, throw `ExitCode(3)` when `report.frozenPresent`, BEFORE the existing `if report.ackRequired { throw ExitCode(2) }` check — frozen precedence is independent of `--require-ack`."
+    - "Plan command: add `@Option(name: .long, parsing: .upToNextOption) var unlock: [String] = []` — a repeatable `--unlock <path>` documented in help. Apply it to the classified plan: any `frozen` change whose path matches an `--unlock` entry is downgraded to its base tier for this invocation only (the `locks.yaml` manifest is not modified)."
+    - "Downgrade is applied via a pure engine helper over the classified `ChangePlan` (so it is unit-testable and the lock file is never touched); downgrading recomputes the change back to its base tier and drops the `.locked` flag + `lockReason`, then `PlanReport.make` runs over the downgraded plan and exit follows the normal threshold."
+    - "L3: an `--unlock <path>` that matches no `frozen` change (non-frozen or unmatched path) is a no-op that emits a warning to stderr (e.g. `⚠ --unlock <path>: no frozen change matches`), and does NOT fail the command."
+    - "Swift Testing unit tests in Tests/AISDDEngineTests/EngineTests.swift via the pure PlanReport / exit-decision / downgrade path (no ParsableCommand driving): frozen -> exit 3 (frozenPresent true); frozen + requireAck contract -> still exit 3 (frozenPresent stays true regardless of threshold); `--unlock` downgrades a frozen change to base tier then exit follows threshold; `--unlock` of a non-frozen/unmatched path is a no-op + warning; frozen renders ✗ with its reason above contract; non-frozen changes unaffected."
+  out:
+    - "Engine `Tier.frozen`, `ChangeFlag.locked`, `lockReason`, `locks.yaml` loading, and the promote-to-frozen pass — already shipped by the `frozen-tier` slice; consumed here, not re-implemented."
+    - "Editing / interactively managing `.ai-sdd/locks.yaml` — it is a hand-edited committed file; `--unlock` is per-invocation only and never writes it."
+    - "Provenance / `hand-edited` annotation (ADR-0032), drift detection (ADR-0033), and any git pre-commit hook convenience — separate features, not built here."
+    - "Changing `--since`, the validate-first (exit 1) gate, or the existing contract/local/refresh ack (exit 2) semantics."
+acceptance:
+  - id: ACC-frozen-exit3
+    description: >-
+      A locked-path change is rendered as a hard ✗ with its lock reason, and `ai-sdd plan` exits `3`
+      (the pure result reports `frozenPresent == true`; the command throws `ExitCode(3)`).
+  - id: ACC-frozen-not-waivable
+    description: >-
+      `--require-ack <any tier>` does not lower a frozen change below exit `3`: with a frozen change
+      present, `frozenPresent` stays true and exit `3` is thrown regardless of the threshold (and
+      before the exit-`2` ack check).
+  - id: ACC-unlock-downgrades
+    description: >-
+      `--unlock <path>` downgrades that path's frozen change to its base tier for this invocation
+      (the `locks.yaml` file is untouched); the plan then renders/exits per the normal `--require-ack`
+      threshold (no longer exit `3` for that change).
+  - id: ACC-unlock-noop-warns
+    description: >-
+      `--unlock <path>` for a non-frozen or unmatched path is a no-op that warns to stderr and does
+      NOT error (L3); other changes' tiers and the exit code are unchanged.
+  - id: ACC-frozen-renders-above-contract
+    description: >-
+      In the grouped report a `frozen` group renders above `contract`, and a non-frozen change is
+      unaffected (its tier, grouping, consumers, and flags render as before).
+  - id: ACC-help-documents-unlock
+    description: "`ai-sdd plan --help` documents the `--unlock` option."
+  - id: ACC-build-test-validate-green
+    description: "`swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` all pass."
+decisions:
+  - id: D-FROZEN-EXIT-PRECEDENCE
+    status: closed
+    question: How is the exit-3 frozen precedence factored so it is unit-testable and cannot be waved through by `--require-ack`?
+    decision: >-
+      Add a pure `frozenPresent: Bool` to `PlanReport.Result`, computed by a helper over
+      `plan.classifications` (`contains { $0.tier == .frozen }`) exactly like `ackRequired` — so the
+      exit decision is exercised by unit tests over the pure `PlanReport.make` path with no
+      `ParsableCommand` driving. `frozenPresent` is derived purely from the presence of a `.frozen`
+      tier and is INDEPENDENT of the `requireAck` threshold, so lowering the threshold cannot change
+      it. In the `Plan` command, `throw ExitCode(3)` when `report.frozenPresent` is evaluated and
+      thrown BEFORE the existing `if report.ackRequired { throw ExitCode(2) }`, making `3` strictly
+      take precedence over `2`. This keeps exit-code policy in one ordered place in `run()` while the
+      testable signal lives in the pure result. Exit `3` is distinct from validate-first's `1` and
+      ack's `2` (ADR-0031, requirement L1).
+  - id: D-UNLOCK-DOWNGRADE
+    status: closed
+    question: Where and how is `--unlock` downgrade applied so it is testable and never writes `locks.yaml`?
+    decision: >-
+      Add a pure engine helper that takes the classified `ChangePlan` plus the `--unlock` path list
+      and returns a new `ChangePlan` (or classification list) in which each `frozen` change whose path
+      matches an unlock entry is downgraded to its base tier — dropping the `.locked` flag and
+      clearing `lockReason`. The base tier is recovered by re-running the existing base classification
+      for that change (the promotion pass is the only thing that set `.frozen`, so re-classifying the
+      same `ArtifactChange` yields its base tier deterministically), keeping a single classifier (no
+      second source of truth). This operates entirely on in-memory classifications — the `locks.yaml`
+      file is never read for mutation or written — so the lock manifest is untouched and the helper is
+      unit-testable in isolation. The downgraded plan is then fed to `PlanReport.make`, so exit follows
+      the normal threshold afterward. Path matching uses exact-path equality against the change path
+      (the `--unlock` argument is a repo-relative `.ai-sdd/...` path, the same form `ArtifactChange.path`
+      carries).
+  - id: D-UNLOCK-NOOP-L3
+    status: closed
+    question: What happens when `--unlock <path>` matches no frozen change (L3)?
+    decision: >-
+      No-op with a warning, not an error (requirement L3). The downgrade helper reports which unlock
+      entries matched a frozen change; the `Plan` command emits a `⚠` warning to stderr for each
+      unlock path that matched no frozen change and continues. An unmatched or non-frozen unlock never
+      changes any tier and never throws, so the exit code is whatever the (unchanged) plan dictates.
+      The warning goes to stderr so it does not pollute the rendered report on stdout.
+  - id: D-FROZEN-GROUP-RENDER
+    status: closed
+    question: How is `frozen` rendered in the grouped report and where does it sit?
+    decision: >-
+      Prepend `.frozen` to `PlanReport.groupOrder` (frozen -> contract -> local -> refresh), so an
+      existing `frozen` group renders above `contract`; empty groups stay omitted. The `heading(.frozen)`
+      arm (already present, returning `"frozen"`) becomes reachable. Each frozen change renders as a
+      hard ✗ line that includes its `lockReason` in the inline label (e.g.
+      `✗ <path> (<status>) [frozen: <reason>]`), reusing the existing per-change render path with the
+      ✗ glyph + reason for the frozen tier; contract/local/refresh rendering (paths, consumers, flags,
+      blast-radius) is unchanged. Reason text comes from `ChangeClassification.lockReason`.
+  - id: D-NO-NEW-ARCH
+    status: closed
+    question: Does this slice require any new architecture decision?
+    decision: >-
+      No. It consumes the already-shipped engine substrate (`Tier.frozen`, `ChangeFlag.locked`,
+      `lockReason`, the promotion pass) and ADR-0031's already-accepted exit-3 / `--unlock` policy.
+      The only additions are a pure `frozenPresent` result field, a pure downgrade helper, the
+      `--unlock` option + warning, and the `frozen` group ordering/render — all within the bounds of
+      ADR-0030/0031. No second classifier is introduced; downgrade re-uses the existing base
+      classifier. Engine logic stays in `AISDDEngine`, CLI surface in `AISDDCLI`, tests in
+      `Tests/AISDDEngineTests`.
+files:
+  - Sources/AISDDEngine/PlanReport.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd

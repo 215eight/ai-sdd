@@ -2073,6 +2073,108 @@ struct PlanReportTests {
         #expect(text.contains("consumer: w-node (w)"))
     }
 
+    // MARK: - frozen tier: exit 3 + --unlock downgrade (ADR-0031, cli-locks slice)
+
+    /// A `--unlock`-applied plan reduced to its (classifications, requireAck) → Result, the same path
+    /// the `Plan` command takes. `changes` are the original artifact changes (needed to recompute base
+    /// tiers on downgrade); `locks` is the in-memory lock manifest (no `locks.yaml` on disk).
+    private func report(changes: [ArtifactChange], home: URL, locks: [LockEntry],
+                        requireAck: Tier, unlock: [String] = [])
+        -> (result: PlanReport.Result, unmatched: [String]) {
+        let plan = ChangePlan(changes: changes, homeDirectory: home, locks: locks)
+        let downgrade = PlanReport.downgradingUnlocked(
+            plan: plan, changes: changes, homeDirectory: home, unlock: unlock)
+        return (PlanReport.make(classifications: downgrade.classifications, requireAck: requireAck),
+                downgrade.unmatched)
+    }
+
+    // ACC-frozen-exit3: a locked-path change renders as a hard ✗ with its reason and frozenPresent is
+    // true (the command throws ExitCode(3)).
+    @Test func frozenChangeReportsFrozenPresentAndRendersHardX() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let locks = [LockEntry(glob: ".ai-sdd/conventions/swift.md", reason: "frozen pending review")]
+        let out = report(changes: [ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified)],
+                         home: home, locks: locks, requireAck: .contract)
+        #expect(out.result.frozenPresent == true)
+        #expect(out.result.renderedText.contains("frozen:"))
+        #expect(out.result.renderedText.contains(
+            "✗ .ai-sdd/conventions/swift.md (modified) [frozen: frozen pending review]"))
+    }
+
+    // ACC-frozen-not-waivable: --require-ack (any tier) does not lower a frozen change below exit 3;
+    // frozenPresent stays true regardless of the threshold.
+    @Test func frozenStaysPresentRegardlessOfThreshold() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let locks = [LockEntry(glob: ".ai-sdd/conventions/swift.md", reason: "frozen")]
+        let changes = [ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified)]
+        for threshold in [Tier.refresh, .local, .contract] {
+            let out = report(changes: changes, home: home, locks: locks, requireAck: threshold)
+            #expect(out.result.frozenPresent == true, "threshold \(threshold) must not waive frozen")
+        }
+    }
+
+    // ACC-unlock-downgrades: --unlock <path> downgrades that frozen change to its base tier; the plan
+    // then exits per the normal --require-ack threshold (no longer frozen for that change).
+    @Test func unlockDowngradesToBaseTierThenExitsPerThreshold() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        // A worker path: base tier `local`. Frozen by the lock, unlocked back to local.
+        let locks = [LockEntry(glob: ".ai-sdd/workers/w.worker.yaml", reason: "frozen")]
+        let changes = [ArtifactChange(path: repoPath("workers/w.worker.yaml"), status: .modified)]
+
+        // Frozen without unlock.
+        #expect(report(changes: changes, home: home, locks: locks, requireAck: .contract)
+                    .result.frozenPresent == true)
+
+        // Unlocked → base tier `local`: no longer frozen; at contract no ack, at local it trips.
+        let atContract = report(changes: changes, home: home, locks: locks,
+                                requireAck: .contract, unlock: [repoPath("workers/w.worker.yaml")])
+        #expect(atContract.result.frozenPresent == false)
+        #expect(atContract.result.ackRequired == false)
+        #expect(atContract.unmatched.isEmpty)
+
+        let atLocal = report(changes: changes, home: home, locks: locks,
+                             requireAck: .local, unlock: [repoPath("workers/w.worker.yaml")])
+        #expect(atLocal.result.frozenPresent == false)
+        #expect(atLocal.result.ackRequired == true)   // base tier `local` reached at the lowered threshold
+    }
+
+    // ACC-unlock-noop-warns: --unlock of a non-frozen or unmatched path is a no-op that reports an
+    // unmatched warning and does NOT change tiers or the exit signal (L3).
+    @Test func unlockOfNonFrozenOrUnmatchedPathIsNoOpWithWarning() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let locks = [LockEntry(glob: ".ai-sdd/conventions/swift.md", reason: "frozen")]
+        let changes = [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),   // frozen
+            ArtifactChange(path: repoPath("workers/w.worker.yaml"), status: .modified)    // non-frozen
+        ]
+        // Unlock a non-frozen path + a path with no change at all → both unmatched, nothing changes.
+        let out = report(changes: changes, home: home, locks: locks, requireAck: .contract,
+                         unlock: [repoPath("workers/w.worker.yaml"), repoPath("schemas/ghost.schema.yaml")])
+        #expect(out.unmatched == [repoPath("workers/w.worker.yaml"), repoPath("schemas/ghost.schema.yaml")])
+        #expect(out.result.frozenPresent == true)   // the actually-frozen conventions change is untouched
+    }
+
+    // ACC-frozen-renders-above-contract: the frozen group renders above contract, and a non-frozen
+    // contract change is unaffected (tier, grouping, consumers render as before).
+    @Test func frozenGroupRendersAboveContractAndNonFrozenUnaffected() throws {
+        let home = try makeFixture(schemas: ["s"], workers: [("w", ["s.v1"])])
+        let locks = [LockEntry(glob: ".ai-sdd/conventions/swift.md", reason: "frozen")]
+        let changes = [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),   // frozen
+            ArtifactChange(path: repoPath("schemas/s.schema.yaml"), status: .modified)    // contract
+        ]
+        let out = report(changes: changes, home: home, locks: locks, requireAck: .contract)
+        let text = out.result.renderedText
+
+        let frozenIdx = try #require(text.range(of: "frozen:"))
+        let contractIdx = try #require(text.range(of: "contract:"))
+        #expect(frozenIdx.lowerBound < contractIdx.lowerBound, "frozen group renders above contract")
+        // The non-frozen contract change is unaffected: still classified contract with its consumer.
+        #expect(text.contains(".ai-sdd/schemas/s.schema.yaml (modified)"))
+        #expect(text.contains("consumer: w-node (w)"))
+        #expect(out.result.frozenPresent == true)
+    }
+
     // MARK: - skill surface (ai-sdd surface)
 
     /// A two-agent table mirroring `Layout.agentSkillSurfaces` but pinned here so the tests don't

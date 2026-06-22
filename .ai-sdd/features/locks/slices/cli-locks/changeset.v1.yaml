@@ -1,0 +1,25 @@
+summary: >-
+  Wired the user-facing freeze behaviour into `ai-sdd plan`, consuming the already-shipped engine
+  `frozen` tier (ADR-0031, slice cli-locks). `PlanReport.Result` gains a pure `frozenPresent: Bool`
+  (true iff any classification is `.frozen`), computed like `ackRequired` so the exit decision is
+  unit-testable without driving `ParsableCommand`. `PlanReport.groupOrder` now prepends `.frozen`, so a
+  frozen group renders above `contract`; each frozen change renders as a hard
+  `✗ <path> (<status>) [frozen: <reason>]` carrying its `lockReason`, with non-frozen rendering
+  unchanged. A pure `PlanReport.downgradingUnlocked(plan:changes:homeDirectory:unlock:)` helper
+  downgrades each frozen change whose path matches an `--unlock` entry back to its base tier by
+  re-running the base classifier (a parallel `ChangePlan` over the same changes with `locks: []`) —
+  `locks.yaml` is never read-for-mutation or written — and reports unlock entries that matched no
+  frozen change. A new `PlanReport.make(classifications:requireAck:)` overload feeds that downgraded
+  list. The `Plan` command adds a repeatable `--unlock <path>` `@Option` (documented in `--help`),
+  applies the downgrade, emits a `⚠` to stderr for each unmatched unlock path (L3 no-op, not an error),
+  then throws `ExitCode(3)` when `frozenPresent` BEFORE the existing `ExitCode(2)` ack check — making
+  frozen precedence independent of `--require-ack`. Six Swift Testing cases over the pure
+  PlanReport/downgrade path cover every acceptance id.
+satisfies:
+  - ACC-frozen-exit3
+  - ACC-frozen-not-waivable
+  - ACC-unlock-downgrades
+  - ACC-unlock-noop-warns
+  - ACC-frozen-renders-above-contract
+  - ACC-help-documents-unlock
+  - ACC-build-test-validate-green

@@ -548,19 +548,34 @@ struct Plan: ParsableCommand {
     var since: String = "HEAD"
     @Option(name: .long, help: "Tier threshold that requires an ack: refresh | local | contract (default: contract).")
     var requireAck: String = "contract"
+    @Option(name: .long, parsing: .upToNextOption,
+            help: "Path of a frozen (locked) change to unlock for THIS invocation only — downgrades it to its base tier so it no longer forces exit 3. Repeatable. Never edits .ai-sdd/locks.yaml. A path that matches no frozen change is a no-op with a warning.")
+    var unlock: [String] = []
 
     func run() throws {
         // Validate-first (D3): on an invalid graph this throws ExitCode.failure (1) and we never
-        // classify. Distinct from this command's own ExitCode(2) "ack required" signal.
+        // classify. Distinct from this command's own ExitCode(2)/ExitCode(3) signals.
         _ = try loadValidated(dir)
 
         let threshold = try Plan.parseTier(requireAck)
         let home = URL(fileURLWithPath: dir, isDirectory: true)
         let changes = ArtifactDiff(workingDirectory: workspace()).changedArtifacts(baseline: since)
         let plan = ChangePlan(changes: changes, homeDirectory: home)
-        let report = PlanReport.make(plan: plan, requireAck: threshold)
 
+        // Apply any --unlock paths to the classified plan (locks.yaml is never read-for-mutation or
+        // written). An unlock that matches no frozen change warns to stderr and continues (L3).
+        let downgrade = PlanReport.downgradingUnlocked(
+            plan: plan, changes: changes, homeDirectory: home, unlock: unlock)
+        for path in downgrade.unmatched {
+            FileHandle.standardError.write(Data("⚠ --unlock \(path): no frozen change matches\n".utf8))
+        }
+
+        let report = PlanReport.make(classifications: downgrade.classifications, requireAck: threshold)
         print(report.renderedText)
+
+        // Frozen precedence (ADR-0031): a locked change hard-blocks at exit 3, evaluated BEFORE the
+        // ack check so it cannot be waved through by lowering --require-ack.
+        if report.frozenPresent { throw ExitCode(3) }
         if report.ackRequired { throw ExitCode(2) }
     }
 
