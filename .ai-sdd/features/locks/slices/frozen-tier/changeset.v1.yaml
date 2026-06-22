@@ -1,0 +1,25 @@
+summary: >-
+  Made the reserved `frozen` tier real in the blast-radius classifier (ADR-0031, slice frozen-tier).
+  Added `case frozen = 4` as the top `Tier` case so the existing rawValue-based `Comparable` orders
+  `refresh < local < contract < frozen`, and dropped the stale "intentionally omitted" enum doc note.
+  Added `case locked` to `ChangeFlag` and an optional `lockReason: String?` on `ChangeClassification`
+  (mirroring the optional `blastRadius`). Defined a `Codable` `LockEntry { glob, reason }` model, a
+  pure path-prefix glob matcher (trailing `*` or exact path; no fnmatch/regex), and a `loadLocks`
+  loader that decodes `.ai-sdd/locks.yaml` via the existing Yams `YAMLDecoder` (no second parser),
+  returning `[]` for an absent file (requirement L2) and surfacing a decode error for a malformed one.
+  Wired a post-classification promotion pass into `ChangePlan.init`: after base classification, any
+  change whose path matches a lock glob (first match by manifest order wins) is promoted to `.frozen`
+  with `.locked` appended and `lockReason` set; base classification and consumer resolution are
+  untouched. Lock loading is injectable via a new designated init taking `locks: [LockEntry]?`, so
+  tests pass a fixture list or a fixture `locks.yaml` with no real file dependency. Added a `locks.yaml`
+  path constant + URL helper in Layout.swift. Engine-only: CLI rendering, exit-code 3, `--require-ack`,
+  and `--unlock` remain the next slice (cli-locks); the one out-of-plan touch was a behavior-neutral
+  `case .frozen` arm added to PlanReport's `heading` switch (unreachable this slice) so the package
+  still compiles after the new enum case.
+satisfies:
+  - ACC-frozen-sorts-top
+  - ACC-locked-promotes-to-frozen
+  - ACC-non-matching-keeps-base-tier
+  - ACC-absent-locks-no-promotion
+  - ACC-glob-matching-unit-testable
+  - ACC-build-test-green

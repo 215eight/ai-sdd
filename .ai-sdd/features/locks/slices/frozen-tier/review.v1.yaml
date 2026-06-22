@@ -1,0 +1,58 @@
+verdict: approve
+items:
+  - id: ACC-frozen-sorts-top
+    verdict: pass
+    notes: >-
+      `Tier` gains `case frozen = 4` (top raw value above `contract = 2`); `<` still compares
+      `rawValue`, so refresh < local < contract < frozen holds with no change to the operator. The
+      stale "intentionally omitted" enum doc note is dropped. `frozenSortsAboveContract` asserts
+      `contract < frozen`, the full chain, and `.max() == .frozen` across two orderings.
+  - id: ACC-locked-promotes-to-frozen
+    verdict: pass
+    notes: >-
+      `promoteIfLocked` returns a copy with `tier = .frozen`, `.locked` appended to `flags`, and
+      `lockReason` set to the matched glob's reason. `ChangeFlag.locked` and the optional
+      `ChangeClassification.lockReason` (mirroring `blastRadius`) are added. Test
+      `lockedPathPromotesToFrozenWithReason` asserts tier == .frozen, flags == [.locked], the exact
+      reason string, and highestTier == .frozen.
+  - id: ACC-non-matching-keeps-base-tier
+    verdict: pass
+    notes: >-
+      `promoteIfLocked` returns `base` unchanged when no glob matches. Test
+      `nonMatchingChangeKeepsBaseTier` verifies a conventions change stays `refresh` and a schema
+      change stays `contract`, both with no `.locked` flag and `lockReason == nil`.
+  - id: ACC-absent-locks-no-promotion
+    verdict: pass
+    notes: >-
+      `loadLocks` checks `fileExists` and returns `[]` (no throw) when `.ai-sdd/locks.yaml` is
+      absent; the convenience init wraps it in `try?`. Test
+      `absentLocksFileMeansNoPromotionAndNoError` asserts `loadLocks` is empty, no change is
+      `.frozen`, no `.locked` flag, and highestTier == .refresh — exercising the real
+      file-existence path (requirement L2).
+  - id: ACC-glob-matching-unit-testable
+    verdict: pass
+    notes: >-
+      `ChangePlan.glob(_:matches:)` is a pure static function: trailing-`*` => prefix match, else
+      exact equality (no fnmatch/regex). `globMatchingPrefixAndExact` unit-tests both a prefix-`*`
+      glob and an exact-path glob, including negative cases. End-to-end
+      `promotionMatchesPrefixAndExactGlobs` drives both glob shapes through a fixture `locks.yaml`,
+      and `firstMatchingGlobWins` confirms deterministic manifest-order resolution.
+  - id: ACC-build-test-green
+    verdict: pass
+    notes: >-
+      Reviewer ran them directly: `swift build` completes clean; `swift test` passes all 120 tests
+      in 3 suites, including the 8 new frozen/lock tests. The PlanReport `.frozen` heading arm is the
+      only out-of-plan touch — compile-required (plan amendment) and behavior-neutral.
+rework: []
+notes: >-
+  Engine-only slice as scoped (ADR-0031, frozen-tier). The frozen promotion is a clean post-pass in
+  `ChangePlan.init`: it maps `Self.classify(...)` output through `promoteIfLocked`, leaving base
+  classification and contract consumer resolution (`classifyContract`/`resolveConsumers`)
+  byte-for-byte unchanged; freezing layers on top (D-PROMOTION-COMPOSES). Lock loading reuses the
+  existing Yams `YAMLDecoder` (no second parser); the path constant + URL helper live in
+  `Layout.swift` (no path literals elsewhere). An injectable designated init (`locks: [LockEntry]?`)
+  gives a test seam while the convenience init drives the real on-disk decode (covered by
+  `presentLocksFileIsLoadedAndPromotes`). The PlanReport `case .frozen` arm is genuinely unreachable
+  this slice — `.frozen` is absent from `groupOrder`, so render never reaches it; no CLI rendering,
+  exit-code-3, `--require-ack`, or `--unlock` behavior leaked (Sources/AISDDCLI untouched). All
+  conventions hold (Swift Testing style, Layout centralization, Yams reuse). Working tree clean.

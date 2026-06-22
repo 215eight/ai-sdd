@@ -6,6 +6,9 @@ enum Layout {
     static let homeDir = ".ai-sdd"
     static let runsDir = "runs"
     static let artifactsDir = "artifacts"
+    /// The hand-edited committed lock manifest (`.ai-sdd/locks.yaml`) — a top-level list of
+    /// `{ glob, reason }` entries the `frozen` tier promotion reads (ADR-0031). Absent ⇒ no locks.
+    static let locksFile = "locks.yaml"
 
     /// The factory home as a git pathspec — scopes `git diff` to `.ai-sdd/`.
     static let homePathspec = "\(homeDir)/"
@@ -77,6 +80,12 @@ enum Layout {
     static func homeRelativeSubpath(_ repoRelativePath: String) -> String? {
         guard repoRelativePath.hasPrefix(homePathspec) else { return nil }
         return String(repoRelativePath.dropFirst(homePathspec.count))
+    }
+
+    /// The lock manifest file inside a factory home dir (`<home>/locks.yaml`). `homeDirectory` is the
+    /// same `.ai-sdd/` workspace dir `ChangePlan.init` already takes for bundle loading.
+    static func locksURL(homeDirectory: URL) -> URL {
+        homeDirectory.appendingPathComponent(locksFile)
     }
 
     /// The schema id carried in a `PortSpec.schema` for a changed `schemas/<name>.schema.yaml` path.

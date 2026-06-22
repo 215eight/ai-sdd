@@ -54,6 +54,10 @@ public enum PlanReport {
         case .contract: return "contract"
         case .local:    return "local"
         case .refresh:  return "refresh"
+        // `frozen` is not in `groupOrder` yet, so this arm is unreachable in this slice; it exists
+        // only to keep the switch exhaustive after the `Tier.frozen` case was added. The frozen
+        // grouping / hard-✗ rendering is the `cli-locks` slice (ADR-0031, D-SCOPE-ENGINE-ONLY).
+        case .frozen:   return "frozen"
         }
     }
 

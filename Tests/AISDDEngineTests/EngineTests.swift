@@ -1594,13 +1594,18 @@ struct ChangePlanTests {
     /// pipeline gets one node per worker, in the given order, each running that worker.
     private func makeFixture(
         schemas: [String],
-        workers: [(name: String, consumes: [String])]
+        workers: [(name: String, consumes: [String])],
+        locks: String? = nil
     ) throws -> URL {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("changeplan-\(UUID().uuidString)", isDirectory: true)
         let fm = FileManager.default
         try fm.createDirectory(at: home.appendingPathComponent("schemas"), withIntermediateDirectories: true)
         try fm.createDirectory(at: home.appendingPathComponent("workers"), withIntermediateDirectories: true)
+
+        if let locks {
+            try locks.write(to: home.appendingPathComponent("locks.yaml"), atomically: true, encoding: .utf8)
+        }
 
         for stem in schemas {
             let yaml = """
@@ -1793,6 +1798,132 @@ struct ChangePlanTests {
             #expect(result.tier == .local)
             #expect(result.unclassified)
         }
+    }
+
+    // MARK: - frozen tier + locks.yaml promotion (ADR-0031)
+
+    // ACC-frozen-sorts-top: frozen sorts above contract and the full order holds via Comparable.
+    @Test func frozenSortsAboveContract() {
+        #expect(Tier.contract < Tier.frozen)
+        #expect(Tier.refresh < Tier.local)
+        #expect(Tier.local < Tier.contract)
+        #expect([Tier.refresh, .local, .contract, .frozen].max() == .frozen)
+        #expect([Tier.contract, .frozen, .refresh].max() == .frozen)
+    }
+
+    // ACC-locked-promotes-to-frozen: a change whose path matches a lock glob becomes frozen, carries
+    // the `.locked` flag, and surfaces the matched glob's reason via `lockReason`.
+    @Test func lockedPathPromotesToFrozenWithReason() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let locks = [LockEntry(glob: ".ai-sdd/conventions/swift.md",
+                               reason: "Swift conventions are frozen pending review")]
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified)],
+            homeDirectory: home, locks: locks)
+
+        let result = try #require(plan.classifications.first)
+        #expect(result.tier == .frozen)            // promoted off its base `refresh`
+        #expect(result.flags == [.locked])
+        #expect(result.lockReason == "Swift conventions are frozen pending review")
+        #expect(plan.highestTier == .frozen)
+    }
+
+    // ACC-non-matching-keeps-base-tier: a non-matching change keeps its base tier with no lock flag
+    // and no reason (a conventions change stays refresh; a schema change stays contract).
+    @Test func nonMatchingChangeKeepsBaseTier() throws {
+        let home = try makeFixture(schemas: ["plan"], workers: [("w", ["plan.v1"])])
+        let locks = [LockEntry(glob: ".ai-sdd/workers/*", reason: "workers are frozen")]
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),
+            ArtifactChange(path: repoPath("schemas/plan.schema.yaml"), status: .modified)
+        ], homeDirectory: home, locks: locks)
+
+        let conventions = try #require(plan.classifications.first)
+        #expect(conventions.tier == .refresh)
+        #expect(!conventions.flags.contains(.locked))
+        #expect(conventions.lockReason == nil)
+
+        let schema = plan.classifications[1]
+        #expect(schema.tier == .contract)
+        #expect(!schema.flags.contains(.locked))
+        #expect(schema.lockReason == nil)
+    }
+
+    // ACC-glob-matching-unit-testable: a prefix-`*` glob matches every path under the prefix; an
+    // exact-path glob matches only that path. The matcher is pure and tested in isolation.
+    @Test func globMatchingPrefixAndExact() {
+        // Prefix glob (trailing `*`).
+        #expect(ChangePlan.glob(".ai-sdd/skills/*", matches: ".ai-sdd/skills/implement-feature/SKILL.md"))
+        #expect(ChangePlan.glob(".ai-sdd/skills/*", matches: ".ai-sdd/skills/plan-feature/SKILL.md"))
+        #expect(!ChangePlan.glob(".ai-sdd/skills/*", matches: ".ai-sdd/workers/w.worker.yaml"))
+        // Exact-path glob (no `*`).
+        #expect(ChangePlan.glob(".ai-sdd/pipeline.yaml", matches: ".ai-sdd/pipeline.yaml"))
+        #expect(!ChangePlan.glob(".ai-sdd/pipeline.yaml", matches: ".ai-sdd/pipeline.yaml.bak"))
+        #expect(!ChangePlan.glob(".ai-sdd/pipeline.yaml", matches: ".ai-sdd/x/pipeline.yaml"))
+    }
+
+    // ACC-glob-matching-unit-testable (end-to-end): promotion via a fixture `locks.yaml` exercises
+    // both a prefix-`*` glob and an exact-path glob in one plan.
+    @Test func promotionMatchesPrefixAndExactGlobs() throws {
+        let home = try makeFixture(schemas: [], workers: [], locks: """
+        - { glob: ".ai-sdd/skills/*", reason: "skills locked" }
+        - { glob: ".ai-sdd/pipeline.yaml", reason: "pipeline locked" }
+        """)
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("skills/implement-feature/SKILL.md"), status: .modified),
+            ArtifactChange(path: repoPath("pipeline.yaml"), status: .modified),
+            ArtifactChange(path: repoPath("workers/w.worker.yaml"), status: .modified)
+        ], homeDirectory: home)
+
+        #expect(plan.classifications[0].tier == .frozen)             // prefix glob
+        #expect(plan.classifications[0].lockReason == "skills locked")
+        #expect(plan.classifications[1].tier == .frozen)             // exact glob
+        #expect(plan.classifications[1].lockReason == "pipeline locked")
+        #expect(plan.classifications[2].tier == .local)              // unmatched
+        #expect(!plan.classifications[2].flags.contains(.locked))
+    }
+
+    // ACC-absent-locks-no-promotion: with no `.ai-sdd/locks.yaml`, no change is promoted and the
+    // load raises no error (requirement L2). Exercises the real file-existence path.
+    @Test func absentLocksFileMeansNoPromotionAndNoError() throws {
+        let home = try makeFixture(schemas: [], workers: [])   // no locks.yaml written
+        #expect(try ChangePlan.loadLocks(homeDirectory: home).isEmpty)
+
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),
+            ArtifactChange(path: repoPath("skills/x/SKILL.md"), status: .modified)
+        ], homeDirectory: home)
+        #expect(plan.classifications.allSatisfy { $0.tier != .frozen })
+        #expect(plan.classifications.allSatisfy { !$0.flags.contains(.locked) })
+        #expect(plan.highestTier == .refresh)
+    }
+
+    // A present `locks.yaml` is loaded and drives promotion through the convenience init (no injected
+    // list) — proving the on-disk decode path, not just the injection seam.
+    @Test func presentLocksFileIsLoadedAndPromotes() throws {
+        let home = try makeFixture(schemas: [], workers: [], locks: """
+        - { glob: ".ai-sdd/conventions/*", reason: "conventions frozen" }
+        """)
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified)],
+            homeDirectory: home)
+        #expect(plan.classifications.first?.tier == .frozen)
+        #expect(plan.classifications.first?.lockReason == "conventions frozen")
+    }
+
+    // First-match-wins: when several globs match, the first by manifest order supplies the reason.
+    @Test func firstMatchingGlobWins() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let locks = [
+            LockEntry(glob: ".ai-sdd/skills/*", reason: "first — all skills"),
+            LockEntry(glob: ".ai-sdd/skills/implement-feature/*", reason: "second — narrower")
+        ]
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("skills/implement-feature/SKILL.md"), status: .modified)],
+            homeDirectory: home, locks: locks)
+        let result = try #require(plan.classifications.first)
+        #expect(result.tier == .frozen)
+        #expect(result.lockReason == "first — all skills", "first matching glob by manifest order wins")
     }
 }
 

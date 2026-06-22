@@ -1,0 +1,121 @@
+summary: >-
+  Make the reserved `frozen` tier real in the blast-radius classifier (ADR-0031, slice
+  frozen-tier). Add `frozen` as the top `Tier` case so the `Comparable` order becomes
+  `refresh < local < contract < frozen`. Load a committed `.ai-sdd/locks.yaml` manifest — a list of
+  `{ glob, reason }` entries whose globs are path-prefix + trailing `*` scoped under `.ai-sdd/` —
+  with an absent file treated as "no locks" (not an error; requirement L2). After `ChangePlan`
+  computes each change's base tier, promote any change whose path matches a lock glob to `frozen`,
+  attaching a `locked` flag carrying the matched glob's `reason`. The promotion pass and glob
+  matching are pure and unit-testable against a fixture `locks.yaml`. This slice is engine-only:
+  the CLI `PlanReport` rendering, the exit-code 3 behaviour, `--require-ack` interaction, and
+  `--unlock` are the next slice (`cli-locks`) and are explicitly out of scope here.
+scope:
+  in:
+    - "Add `frozen` as the top case of `Tier` in Sources/AISDDEngine/ChangePlan.swift (raw value 4, the next free `Int` above `contract = 2`), preserving the `Comparable` order refresh < local < contract < frozen; drop the 'intentionally omitted' note from the enum doc."
+    - "Add `case locked` to the `ChangeFlag` string enum, and carry the matched glob's reason on `ChangeClassification` via a new optional field (`lockReason: String?`), mirroring the existing optional `blastRadius`."
+    - "Define a `Codable` lock-manifest model (`LockEntry { glob, reason }`, list-valued) and a deterministic glob matcher (path-prefix + trailing `*`, scoped under `.ai-sdd/`) inside Sources/AISDDEngine."
+    - "Add a `locks.yaml` path constant in Sources/AISDDEngine/Layout.swift (no path-string literals elsewhere) plus any small helper needed to build/load its URL."
+    - "Load `.ai-sdd/locks.yaml` via the existing Yams `YAMLDecoder` (no second parser); an absent file returns an empty lock list and no error (L2). A present-but-malformed file surfaces a decode error consistent with the existing loader."
+    - "Add a post-classification promotion pass in `ChangePlan.init`: after base-tier classification, any change whose path matches a lock glob is promoted to `tier == .frozen` with `.locked` appended to flags and `lockReason` set; non-matching changes keep their base tier. The lock list is loaded once per init (lazily, like the existing bundle graph)."
+    - "Swift Testing unit tests in Tests/AISDDEngineTests/EngineTests.swift covering every acceptance item, using a temp `.ai-sdd/` fixture with a `locks.yaml` (mirroring the existing `ChangePlanTests.makeFixture` pattern)."
+  out:
+    - "CLI: `PlanReport` rendering of `frozen` as a hard ✗ with the reason — next slice (`cli-locks`)."
+    - "Exit code 3 on any `frozen` change, and `frozen` being non-waivable by `--require-ack` — next slice (`cli-locks`)."
+    - "`--unlock <path>` downgrade-for-one-invocation and the L3 no-op-on-non-frozen behaviour — next slice (`cli-locks`)."
+    - "Provenance / `hand-edited` annotation (ADR-0032), drift detection (ADR-0033), and any git pre-commit hook — separate features, not built here."
+    - "Interactive editing of `locks.yaml` — it is a hand-edited committed file."
+acceptance:
+  - id: ACC-frozen-sorts-top
+    description: >-
+      `frozen` sorts above `contract` in `Tier` (`Tier.contract < Tier.frozen`), and the full order
+      refresh < local < contract < frozen holds via `Comparable`.
+  - id: ACC-locked-promotes-to-frozen
+    description: >-
+      A change whose path matches a `locks.yaml` glob is classified `frozen` and carries a `locked`
+      flag plus the matched glob's `reason` (surfaced via `lockReason`).
+  - id: ACC-non-matching-keeps-base-tier
+    description: >-
+      A change whose path matches no lock glob keeps its base tier (e.g. a conventions change stays
+      `refresh`, a schema change stays `contract`) with no `locked` flag and no `lockReason`.
+  - id: ACC-absent-locks-no-promotion
+    description: >-
+      When `.ai-sdd/locks.yaml` is absent, no change is promoted to `frozen` and no error is raised
+      (requirement L2).
+  - id: ACC-glob-matching-unit-testable
+    description: >-
+      Lock glob matching (path-prefix + trailing `*` under `.ai-sdd/`) is exercised by unit tests
+      against a fixture `locks.yaml`, covering both a prefix-`*` glob and an exact-path glob.
+  - id: ACC-build-test-green
+    description: "`swift build` and `swift test` pass."
+decisions:
+  - id: D-FROZEN-RAWVALUE
+    status: closed
+    question: How is `frozen` added to `Tier` while keeping the `Comparable` order?
+    decision: >-
+      Add `case frozen = 4` (the next free `Int` raw value above `contract = 2`) as the last case.
+      `Tier.<` already compares `rawValue`, so the highest raw value sorts highest and `frozen`
+      becomes the top tier with no change to the `<` operator. Update the enum doc to drop the
+      "intentionally omitted to avoid a dead case" note, since the promotion pass now produces it.
+  - id: D-LOCKFLAG
+    status: closed
+    question: What shape carries the `locked` flag and its per-change `reason`?
+    decision: >-
+      Add `case locked` to the existing `ChangeFlag` string enum (alongside `breakingRemoval` /
+      `nonAckBlocking`), and carry the matched glob's human-readable reason on `ChangeClassification`
+      via a new optional field `lockReason: String?`, mirroring the existing optional `blastRadius:
+      String?`. `ChangeFlag` cases stay payload-free string-raw enums (consistent with the shipped
+      design); the reason is per-change data, so it belongs on the classification, not on the flag case.
+  - id: D-LOCKS-MODEL
+    status: closed
+    question: How is the `locks.yaml` manifest modeled and loaded?
+    decision: >-
+      Model it as a top-level list of `{ glob, reason }` entries (a small `Codable` `LockEntry` in
+      AISDDEngine, both fields required strings), decoded with the same Yams `YAMLDecoder` the loader
+      already uses — no second parser. The path constant lives in Layout.swift.
+  - id: D-LOCKS-ABSENT
+    status: closed
+    question: What happens when `.ai-sdd/locks.yaml` does not exist?
+    decision: >-
+      Treat absent as an empty lock list — no `frozen` promotion, no error (requirement L2, ADR-0031).
+      The loader checks existence and returns `[]` rather than throwing. A present-but-malformed file
+      still surfaces a decode error (deferring the refuse/report decision to the CLI slice), consistent
+      with how the existing `SpecLoader` treats invalid YAML.
+  - id: D-GLOB-MATCH
+    status: closed
+    question: What glob semantics does lock matching implement?
+    decision: >-
+      Path-prefix + trailing `*` only, scoped under `.ai-sdd/` (per ADR-0031 and the slice brief): a
+      glob ending in `*` matches any path sharing the literal prefix before the `*`; a glob with no
+      `*` matches that exact path. No general fnmatch/regex. Matching is a pure function over (changed
+      path, lock entries), unit-testable in isolation. Globs and changed paths are both repo-relative
+      `.ai-sdd/...` strings (the form `ArtifactChange.path` carries).
+  - id: D-PROMOTION-COMPOSES
+    status: closed
+    question: How does promotion compose with the existing classifier?
+    decision: >-
+      As a post-pass inside `ChangePlan.init`, after `Self.classify` produces each base
+      `ChangeClassification`: map over the classified results and, for any whose `path` matches a lock
+      glob, return a promoted copy with `tier = .frozen`, `.locked` appended to `flags`, and
+      `lockReason` set to the matched glob's reason. Base classification (including contract consumer
+      resolution) is unchanged; freezing layers on top. The lock list is loaded once per init (lazily,
+      like the existing bundle graph) so an all-unlocked run does no extra I/O beyond the existence
+      check. First-matching glob wins if several match (deterministic by manifest order).
+  - id: D-SCOPE-ENGINE-ONLY
+    status: closed
+    question: Is any CLI / exit-code / unlock work in this slice?
+    decision: >-
+      No. Per the slice brief this slice delivers only the engine-side tier + lock loading + promotion
+      + flag. `PlanReport` rendering, exit code 3, the `--require-ack` interaction, and `--unlock` are
+      the `cli-locks` slice. `frozen` being unconsumed by the CLI in this slice is acceptable (the next
+      slice consumes it); it is no longer a dead case because the promotion pass produces it.
+files:
+  - Sources/AISDDEngine/ChangePlan.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+  # Plan amendment: adding `Tier.frozen` breaks PlanReport's exhaustive switch over Tier, so a
+  # single behavior-neutral `case .frozen` arm here is compile-required for this slice (its build is
+  # part of ACC-build-test-green). The actual frozen rendering/exit-3 stays in the `cli-locks` slice.
+  - Sources/AISDDEngine/PlanReport.swift
+tests:
+  - swift build
+  - swift test

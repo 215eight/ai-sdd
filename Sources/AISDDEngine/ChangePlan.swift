@@ -1,14 +1,16 @@
 import Foundation
 import AISDDModels
+import Yams
 
-/// The blast-radius tier of a changed factory artifact (ADR-0030). Ordered `refresh < local <
-/// contract` so the highest tier present drives the later CLI exit code via `Comparable`. ADR-0030
-/// also reserves a `frozen` tier; it is intentionally omitted here (unused in this slice) to avoid a
-/// dead case.
+/// The blast-radius tier of a changed factory artifact (ADR-0030/0031). Ordered `refresh < local <
+/// contract < frozen` so the highest tier present drives the later CLI exit code via `Comparable`.
+/// `frozen` is the top tier: a change whose path matches a `.ai-sdd/locks.yaml` glob is promoted to
+/// it after base classification (see `ChangePlan.init`).
 public enum Tier: Int, Comparable, Sendable {
     case refresh = 0   // conventions / skills — agent context, no graph edge changes
     case local = 1     // workers / pipeline / checks — affects this pipeline only
     case contract = 2  // schemas — a typed edge contract; may affect every consumer
+    case frozen = 4    // a locked path (locks.yaml) — the top tier; the CLI slice hard-blocks it
 
     public static func < (lhs: Tier, rhs: Tier) -> Bool { lhs.rawValue < rhs.rawValue }
 }
@@ -21,6 +23,22 @@ public enum ChangeFlag: String, Equatable, Sendable {
     /// An *added* schema with zero consumers — nothing depends on it yet, so it should not block on an
     /// ack (parent D3). Pairs with the `"0 consumers (new)"` blast-radius label.
     case nonAckBlocking
+    /// The changed path matched a `.ai-sdd/locks.yaml` glob (ADR-0031). It is promoted to the `frozen`
+    /// tier and the matched glob's reason is carried on `ChangeClassification.lockReason`.
+    case locked
+}
+
+/// One entry of the `.ai-sdd/locks.yaml` manifest (ADR-0031): a path-prefix glob and the
+/// human-readable reason the matched path(s) are frozen. The file is a top-level list of these.
+/// Globs are path-prefix + optional trailing `*`, scoped under `.ai-sdd/` (no fnmatch/regex).
+public struct LockEntry: Codable, Equatable, Sendable {
+    public var glob: String
+    public var reason: String
+
+    public init(glob: String, reason: String) {
+        self.glob = glob
+        self.reason = reason
+    }
 }
 
 /// One pipeline consumer of a contract (schema): the pipeline node id paired with the worker name it
@@ -48,10 +66,14 @@ public struct ChangeClassification: Equatable, Sendable {
     public var unclassified: Bool
     /// A human-readable blast-radius label, e.g. `"0 consumers (new)"` for an added 0-consumer schema.
     public var blastRadius: String?
+    /// The matched lock glob's human-readable reason, set only when this change was promoted to
+    /// `frozen` (carries `.locked`); `nil` otherwise. Mirrors the optional `blastRadius`.
+    public var lockReason: String?
 
     public init(path: String, status: ArtifactChange.Status, tier: Tier,
                 consumers: [ChangeConsumer] = [], flags: [ChangeFlag] = [],
-                unclassified: Bool = false, blastRadius: String? = nil) {
+                unclassified: Bool = false, blastRadius: String? = nil,
+                lockReason: String? = nil) {
         self.path = path
         self.status = status
         self.tier = tier
@@ -59,6 +81,7 @@ public struct ChangeClassification: Equatable, Sendable {
         self.flags = flags
         self.unclassified = unclassified
         self.blastRadius = blastRadius
+        self.lockReason = lockReason
     }
 }
 
@@ -78,6 +101,16 @@ public struct ChangePlan: Sendable {
     /// load (invalid graph), contract changes still classify as `contract` with no resolved consumers;
     /// refusing on an invalid graph is the CLI slice's concern, not this engine type's.
     public init(changes: [ArtifactChange], homeDirectory: URL, loader: SpecLoader = SpecLoader()) {
+        self.init(changes: changes, homeDirectory: homeDirectory,
+                  locks: try? Self.loadLocks(homeDirectory: homeDirectory), loader: loader)
+    }
+
+    /// Designated init taking the lock manifest directly — the injection seam tests use so they can
+    /// pass a fixture lock list (or `nil` for "no locks file") with no real file dependency. `nil`
+    /// and `[]` both mean "no promotion". A present-but-malformed file surfaces a decode error from
+    /// the convenience init's loader (which the CLI slice will route); here the list is already loaded.
+    public init(changes: [ArtifactChange], homeDirectory: URL, locks: [LockEntry]?,
+                loader: SpecLoader = SpecLoader()) {
         // Resolve the graph lazily: only load the bundle when a schema change actually needs it.
         var cachedGraph: (pipeline: PipelineSpec, workers: [String: WorkerSpec])?? = nil
         func graph() -> (pipeline: PipelineSpec, workers: [String: WorkerSpec])? {
@@ -88,8 +121,10 @@ public struct ChangePlan: Sendable {
             return resolved
         }
 
+        let lockEntries = locks ?? []
         self.classifications = changes.map { change in
-            Self.classify(change, graph: graph)
+            let base = Self.classify(change, graph: graph)
+            return Self.promoteIfLocked(base, locks: lockEntries)
         }
     }
 
@@ -178,5 +213,44 @@ public struct ChangePlan: Sendable {
         guard schemaId.hasPrefix("\(stem).v") else { return false }
         let version = schemaId.dropFirst(stem.count + 2)   // after "<stem>.v"
         return !version.isEmpty && version.allSatisfy(\.isNumber)
+    }
+
+    // MARK: - Lock loading & frozen promotion (ADR-0031)
+
+    /// Load `.ai-sdd/locks.yaml` (a top-level list of `LockEntry`) via the same Yams `YAMLDecoder`
+    /// the spec loader uses — no second parser. An absent file returns `[]` and no error (requirement
+    /// L2); a present-but-malformed file throws the decode error (the CLI slice decides refuse/report).
+    static func loadLocks(homeDirectory: URL) throws -> [LockEntry] {
+        let url = Layout.locksURL(homeDirectory: homeDirectory)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let yaml = try String(contentsOf: url, encoding: .utf8)
+        return try YAMLDecoder().decode([LockEntry].self, from: yaml)
+    }
+
+    /// The reason of the first lock entry (by manifest order) whose glob matches `path`, or `nil` if
+    /// none match. First-match-wins makes overlapping globs deterministic.
+    static func lockReason(forPath path: String, locks: [LockEntry]) -> String? {
+        locks.first { Self.glob($0.glob, matches: path) }?.reason
+    }
+
+    /// Path-prefix glob matching: a glob ending in `*` matches any path sharing the literal prefix
+    /// before the `*`; a glob with no `*` matches that exact path. No fnmatch/regex (ADR-0031 D-GLOB).
+    static func glob(_ glob: String, matches path: String) -> Bool {
+        if glob.hasSuffix("*") {
+            return path.hasPrefix(String(glob.dropLast()))
+        }
+        return path == glob
+    }
+
+    /// If `base.path` matches a lock glob, return a copy promoted to `frozen` with `.locked` appended
+    /// and `lockReason` set to the matched glob's reason; otherwise return `base` unchanged. The
+    /// post-pass that layers freezing on top of base classification (ADR-0031 D-PROMOTION-COMPOSES).
+    static func promoteIfLocked(_ base: ChangeClassification, locks: [LockEntry]) -> ChangeClassification {
+        guard let reason = Self.lockReason(forPath: base.path, locks: locks) else { return base }
+        var promoted = base
+        promoted.tier = .frozen
+        promoted.flags.append(.locked)
+        promoted.lockReason = reason
+        return promoted
     }
 }
