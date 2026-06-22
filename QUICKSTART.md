@@ -39,7 +39,7 @@ cp .build/release/ai-sdd /usr/local/bin/ai-sdd     # or any dir on your PATH
 scope`, so this must succeed anywhere:
 
 ```sh
-ai-sdd --version        # → ai-sdd 0.2.0   (if "command not found", fix your PATH)
+ai-sdd --version        # → ai-sdd 0.3.0   (if "command not found", fix your PATH)
 ai-sdd guide            # the built-in getting-started guide — travels with the binary
 ```
 
