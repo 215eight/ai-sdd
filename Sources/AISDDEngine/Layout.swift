@@ -39,6 +39,31 @@ enum Layout {
         static let workerExtension = "yaml"
         static let checksDir = "checks"
         static let checkExtension = "yaml"
+        static let schemasDir = "schemas"
+        static let conventionsDir = "conventions"
+        static let skillsDir = "skills"
+        /// A schema file is `<name>.schema.yaml` — the double extension that marks the contract tier.
+        static let schemaSuffix = ".schema.yaml"
+    }
+
+    /// The repo-relative subpath of an artifact under `.ai-sdd/` (drops the `.ai-sdd/` prefix), used
+    /// by `ChangePlan` to classify a changed path by its role. Returns nil for a path that is not
+    /// under the factory home.
+    static func homeRelativeSubpath(_ repoRelativePath: String) -> String? {
+        guard repoRelativePath.hasPrefix(homePathspec) else { return nil }
+        return String(repoRelativePath.dropFirst(homePathspec.count))
+    }
+
+    /// The schema id carried in a `PortSpec.schema` for a changed `schemas/<name>.schema.yaml` path.
+    /// The on-disk file is `<name>.schema.yaml` (stem `<name>`); the id used in worker `consumes`
+    /// adds the version segment (`<name>.v<N>`, e.g. `feature-plan` -> `feature-plan.v1`). Since the
+    /// changed file (especially a deleted one) may be gone, the classifier matches a `PortSpec.schema`
+    /// that is either exactly `<name>` or has the `<name>.v<digits>` shape — see `ChangePlan`.
+    static func schemaStem(fromSubpath subpath: String) -> String? {
+        guard subpath.hasPrefix("\(Workspace.schemasDir)/"),
+              subpath.hasSuffix(Workspace.schemaSuffix) else { return nil }
+        let withoutDir = String(subpath.dropFirst(Workspace.schemasDir.count + 1))
+        return String(withoutDir.dropLast(Workspace.schemaSuffix.count))
     }
 }
 

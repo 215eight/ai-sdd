@@ -1,0 +1,127 @@
+summary: >-
+  Add a deterministic `ChangePlan` engine type in Sources/AISDDEngine that takes a list of
+  `ArtifactChange` (from the diff-source slice) plus the factory `.ai-sdd/` dir and classifies
+  each changed artifact by blast-radius tier, grounded in the loaded spec graph — no model, no
+  content heuristics. Path role drives the tier: `schemas/*.schema.yaml` -> contract;
+  `conventions/*` and `skills/*` -> refresh; `workers/*`, `pipeline.yaml`, `checks/*` -> local;
+  any other non-runtime `.ai-sdd/` path -> local (unclassified). For a contract-tier (schema)
+  change, consumer resolution reuses the existing SpecLoader.loadBundle (the `validate` load
+  path — no second loader): it lists every worker whose `consumes` includes the changed schema id,
+  as (node id, worker name) pairs — that list is the blast radius. A deleted schema that still has
+  consumers is contract + a breaking-removal flag (parent D2); an added schema with zero consumers
+  is contract with blast radius "0 consumers (new)" and a non-ack-blocking flag (parent D3). The
+  result is an ordered, inspectable value: per-change { path, status, tier, consumers[], flags[] },
+  plus a helper returning the highest tier present so the later CLI can decide the exit code. The
+  classifier takes the changed-artifact list as input (injected), so it is fully unit-testable
+  against a fixture factory dir with synthetic schemas/workers — no git needed. Per parent D5 this
+  is an AISDDEngine type, not a new AISDDModels spec type. CLI surfacing is out of scope (next slice).
+scope:
+  in:
+    - New deterministic ChangePlan engine type in Sources/AISDDEngine/ChangePlan.swift, taking [ArtifactChange] plus the .ai-sdd dir URL and returning an ordered per-change classification.
+    - A Tier enum with explicit ordering (refresh < local < contract) modeling the blast-radius tiers from ADR-0030; `frozen` is reserved/unused in this slice.
+    - Path-role -> tier mapping by repo-relative subpath under .ai-sdd/ (schemas/*.schema.yaml -> contract; conventions/* and skills/* -> refresh; workers/*, pipeline.yaml, checks/* -> local; other non-runtime .ai-sdd/ paths -> local/unclassified).
+    - Mapping a changed schemas/<x>.schema.yaml path to its schema id and resolving consumers by reusing SpecLoader.loadBundle (the validate load path): every worker whose `consumes` includes that schema id, paired with each pipeline node id that runs that worker, as (node id, worker name).
+    - A per-change result value { path, status, tier, consumers[], flags[] } with a flags vocabulary covering breakingRemoval (deleted consumed schema, parent D2) and nonAckBlocking (added 0-consumer schema, parent D3) plus the "0 consumers (new)" blast-radius label.
+    - A highestTier helper returning the max tier present across all changes (contract when any contract change exists, else the max of the rest), so the later CLI decides the exit code.
+    - Any new path-role/subpath constants centralized in Layout.swift (naming/layering convention).
+    - Swift Testing unit tests in Tests/AISDDEngineTests/EngineTests.swift driven by a fixture factory dir with synthetic schemas/workers/pipeline (no git).
+  out:
+    - The AISDDCLI `plan` subcommand and any --since / --require-ack flags, output rendering grouped by tier, and exit-code thresholding (the next slice).
+    - The git change-detection / ArtifactDiff substrate (diff-source slice, already shipped — its [ArtifactChange] is this slice's INPUT).
+    - Running the `validate` wiring check before classifying / refusing on an invalid graph (CLI-slice concern; the engine type loads the bundle but does not own the validate gate).
+    - Richer checks/* blast radius (classify a check by the worker it gates) — parent D4 keeps checks/* at local for this slice.
+    - Transitive or cross-schema blast radius beyond direct `consumes` edges; enforced freeze/locks and any `frozen`-tier rendering; provenance/drift; JSON/machine output.
+acceptance:
+  - id: ACC-contract-lists-consumers
+    description: >-
+      A changed schemas/<x>.schema.yaml classifies as contract, and its consumers list contains
+      every worker that `consumes` <x> paired with its pipeline node id. Verified against a fixture
+      with >=2 distinct workers consuming the same schema.
+  - id: ACC-refresh-and-local-tiers
+    description: >-
+      A changed conventions/<stack>.md classifies as refresh; a changed workers/<x>.worker.yaml
+      classifies as local. (Per parent D4 a changed checks/* and pipeline.yaml also classify as local.)
+  - id: ACC-deleted-schema-breaking-removal
+    description: >-
+      A deleted schema that still has consumers classifies as contract and additionally carries a
+      breaking-removal flag, with the now-dangling consumers still listed.
+  - id: ACC-added-schema-zero-consumers
+    description: >-
+      An added schema with no consumers classifies as contract, reports blast radius
+      "0 consumers (new)", and carries a non-ack-blocking flag (nothing depends on it yet).
+  - id: ACC-reuses-specloader
+    description: >-
+      Consumer resolution loads the pipeline and workers through the existing SpecLoader
+      (SpecLoader.loadBundle / the validate load path) — there is no second/duplicate spec parser
+      introduced by this type.
+  - id: ACC-highest-tier-helper
+    description: >-
+      The highest-tier helper returns contract when any contract change is present, otherwise the
+      maximum tier of the remaining changes (local over refresh), and a defined value for the empty
+      change list.
+  - id: ACC-unclassified-non-runtime
+    description: >-
+      A non-runtime .ai-sdd/ path that matches no role (e.g. a features/ or README under .ai-sdd/)
+      classifies as local and is labeled unclassified.
+  - id: ACC-build-test-green
+    description: swift build and swift test both succeed.
+decisions:
+  - id: D1
+    status: closed
+    question: Where does the classifier live and what is it named (per parent D5)?
+    decision: >-
+      A new file Sources/AISDDEngine/ChangePlan.swift holding a public deterministic ChangePlan
+      engine type. Per the parent feature's D5 this is an AISDDEngine type, NOT a new AISDDModels
+      spec type — it is transient runtime analysis, not a persisted/edge artifact. The type takes
+      the injected [ArtifactChange] list plus the .ai-sdd dir URL so it is fully unit-testable
+      against a fixture factory dir with no git.
+  - id: D2
+    status: closed
+    question: How are the tiers modeled and ordered?
+    decision: >-
+      A Tier enum (refresh, local, contract) conforming to Comparable with the explicit order
+      refresh < local < contract, matching ADR-0030 names exactly. `frozen` is reserved by ADR-0030
+      but unused here, so it is intentionally omitted from this slice's enum to avoid dead cases. The
+      Comparable conformance backs the highestTier helper directly.
+  - id: D3
+    status: closed
+    question: How does a changed path map to a tier, and where do the role constants live?
+    decision: >-
+      Classification is by the changed path's repo-relative subpath under .ai-sdd/ (deterministic,
+      grounded in path role per ADR-0001 — no content reading). schemas/<name>.schema.yaml -> contract;
+      conventions/* and skills/* -> refresh; workers/*, pipeline.yaml, checks/* -> local; any other
+      non-runtime .ai-sdd/ path -> local with an unclassified label. The runtime-excluded prefixes
+      (runs/, artifacts/) are already filtered upstream by ArtifactDiff and are not re-handled here.
+      New subpath/segment constants needed for the mapping are centralized in Layout.swift (naming
+      /layering convention), reusing existing Layout.Workspace names (workersDir, checksDir,
+      pipelineFile, *Extension) where they already exist.
+  - id: D4
+    status: closed
+    question: How is consumer resolution computed for a contract (schema) change, reusing SpecLoader?
+    decision: >-
+      Reuse SpecLoader.loadBundle(at: <.ai-sdd dir>) — the same load path `validate` uses — to obtain
+      the pipeline plus workers-by-name; no second loader or duplicate parsing. Derive the changed
+      schema's id from its filename (the <name>.schema.yaml stem, which is the schema id used in
+      PortSpec.schema, e.g. feature-plan.v1). The blast radius is every pipeline node whose worker's
+      `consumes` includes a PortSpec with that schema id, emitted as (node id, worker name) so a
+      single worker reused across nodes yields one entry per node. The `consumes`-edge is sufficient
+      blast radius for this slice; transitive/cross-schema resolution is explicitly out of scope (the
+      slice brief defines blast radius as the direct consumer list).
+  - id: D5
+    status: closed
+    question: How are the special-case flags (parent D2/D3) and per-change result modeled?
+    decision: >-
+      The per-change result is an ordered value { path, status, tier, consumers[], flags[] } where
+      flags is a small enum/typed set. A deleted schema that still resolves consumers is tier contract
+      with a breakingRemoval flag (parent D2), keeping the now-dangling consumers in the list. An added
+      schema that resolves zero consumers is tier contract with blast-radius label "0 consumers (new)"
+      and a nonAckBlocking flag (parent D3). A modified schema with consumers is plain contract. The
+      flags vocabulary is closed to these two cases for this slice; the later CLI reads them (e.g.
+      nonAckBlocking suppresses the non-zero exit, breakingRemoval is surfaced in output).
+files:
+  - Sources/AISDDEngine/ChangePlan.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test

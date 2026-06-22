@@ -1,0 +1,35 @@
+summary: >-
+  Added the deterministic ChangePlan blast-radius classifier in
+  Sources/AISDDEngine/ChangePlan.swift. It takes an injected [ArtifactChange] list plus the
+  .ai-sdd dir URL and returns an ordered per-change classification
+  { path, status, tier, consumers[], flags[] } (plus unclassified/blastRadius labels). A Tier
+  enum (refresh < local < contract) conforms to Comparable per ADR-0030 names; the reserved
+  `frozen` tier is intentionally omitted. Tier is assigned by the changed path's repo-relative
+  role under .ai-sdd/: schemas/<name>.schema.yaml -> contract; conventions/* and skills/* ->
+  refresh; workers/*, pipeline.yaml, checks/* -> local; any other non-runtime .ai-sdd/ path ->
+  local with an unclassified label. For a contract (schema) change, consumer resolution reuses
+  the existing SpecLoader.loadBundle (the validate load path — no second parser): it lists every
+  pipeline node whose worker `consumes` the changed schema id, as (node id, worker name), one
+  entry per node. The schema id is derived from the <name>.schema.yaml filename stem and matched
+  against PortSpec.schema in both the bare-stem and versioned <stem>.v<N> forms. A deleted schema
+  that still has consumers is contract + a breakingRemoval flag with the now-dangling consumers
+  still listed (parent D2); an added 0-consumer schema is contract with blast radius
+  "0 consumers (new)" and a nonAckBlocking flag (parent D3). A highestTier helper returns the max
+  Tier present (contract when any contract change exists, else local over refresh), nil for the
+  empty list, backing the later CLI exit code. Layout.swift gained schemasDir/conventionsDir/
+  skillsDir/schemaSuffix constants plus homeRelativeSubpath and schemaStem helpers, all derived
+  from existing names. Swift Testing cases were added to Tests/AISDDEngineTests/EngineTests.swift
+  in a ChangePlanTests suite, driven by temp fixture factory dirs (schemas/ + workers/ +
+  pipeline.yaml) with no git, exercising >=2 consumers, per-node consumer entries, refresh/local
+  tiers, breaking-removal, zero-consumer add, the highest-tier helper, tier ordering, and the
+  unclassified non-runtime case. CLI surfacing (the plan subcommand, --since/--require-ack, output
+  rendering, exit-code wiring) is out of scope — next slice. swift build and swift test both pass.
+satisfies:
+  - ACC-contract-lists-consumers
+  - ACC-refresh-and-local-tiers
+  - ACC-deleted-schema-breaking-removal
+  - ACC-added-schema-zero-consumers
+  - ACC-reuses-specloader
+  - ACC-highest-tier-helper
+  - ACC-unclassified-non-runtime
+  - ACC-build-test-green

@@ -1585,3 +1585,213 @@ private extension SpecLoadError {
     var isSyntax: Bool { if case .syntax = self { return true } else { return false } }
     var isSchema: Bool { if case .schema = self { return true } else { return false } }
 }
+
+// MARK: - ChangePlan (blast-radius classification)
+
+struct ChangePlanTests {
+    /// Build a temp `.ai-sdd/` fixture: `schemas/<each>.schema.yaml`, a `workers/` dir, and a
+    /// `pipeline.yaml`. `workers` maps a worker name to the list of schema ids it `consumes`. The
+    /// pipeline gets one node per worker, in the given order, each running that worker.
+    private func makeFixture(
+        schemas: [String],
+        workers: [(name: String, consumes: [String])]
+    ) throws -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("changeplan-\(UUID().uuidString)", isDirectory: true)
+        let fm = FileManager.default
+        try fm.createDirectory(at: home.appendingPathComponent("schemas"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appendingPathComponent("workers"), withIntermediateDirectories: true)
+
+        for stem in schemas {
+            let yaml = """
+            apiVersion: ai-sdd/v1
+            kind: Schema
+            metadata: { name: \(stem), version: 1 }
+            spec: { handle: file, format: yaml, scope: internal }
+            """
+            try yaml.write(to: home.appendingPathComponent("schemas/\(stem).schema.yaml"),
+                           atomically: true, encoding: .utf8)
+        }
+
+        for worker in workers {
+            let consumesList = worker.consumes.map { "{ schema: \($0), required: true }" }.joined(separator: ", ")
+            let yaml = """
+            apiVersion: ai-sdd/v1
+            kind: Worker
+            metadata: { name: \(worker.name) }
+            spec:
+              workerKind: transform
+              consumes: [\(consumesList)]
+            """
+            try yaml.write(to: home.appendingPathComponent("workers/\(worker.name).worker.yaml"),
+                           atomically: true, encoding: .utf8)
+        }
+
+        let nodeLines = workers.map { "    - { id: \($0.name)-node, worker: \($0.name) }" }.joined(separator: "\n")
+        let pipeline = """
+        apiVersion: ai-sdd/v1
+        kind: Pipeline
+        metadata: { name: fixture, version: 1 }
+        spec:
+          semantics: enabler
+          nodes:
+        \(nodeLines)
+          edges: []
+        """
+        try pipeline.write(to: home.appendingPathComponent("pipeline.yaml"),
+                           atomically: true, encoding: .utf8)
+        return home
+    }
+
+    /// Wrap a home-relative subpath into the repo-relative form `git`/`ArtifactDiff` emit.
+    private func repoPath(_ subpath: String) -> String { ".ai-sdd/\(subpath)" }
+
+    // ACC-contract-lists-consumers + ACC-reuses-specloader: a changed schema is contract and lists
+    // every node whose worker consumes it (>=2 distinct consumers), resolved via SpecLoader.loadBundle.
+    @Test func contractChangeListsAllConsumers() throws {
+        let home = try makeFixture(
+            schemas: ["feature-plan"],
+            workers: [
+                ("implementer", ["feature-plan.v1"]),
+                ("reviewer", ["feature-plan.v1"]),
+                ("noop", ["something-else.v1"])
+            ])
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("schemas/feature-plan.schema.yaml"), status: .modified)],
+            homeDirectory: home)
+
+        let result = try #require(plan.classifications.first)
+        #expect(result.tier == .contract)
+        #expect(result.consumers == [
+            ChangeConsumer(node: "implementer-node", worker: "implementer"),
+            ChangeConsumer(node: "reviewer-node", worker: "reviewer")
+        ])
+        #expect(result.flags.isEmpty)
+    }
+
+    // A single worker reused across two nodes yields one consumer entry per node.
+    @Test func contractConsumerPerNode() throws {
+        let home = try makeFixture(schemas: ["plan"], workers: [("w", ["plan.v1"])])
+        // Add a second node running the same worker by hand-patching the pipeline.
+        let pipeline = """
+        apiVersion: ai-sdd/v1
+        kind: Pipeline
+        metadata: { name: fixture, version: 1 }
+        spec:
+          semantics: enabler
+          nodes:
+            - { id: nodeA, worker: w }
+            - { id: nodeB, worker: w }
+          edges: []
+        """
+        try pipeline.write(to: home.appendingPathComponent("pipeline.yaml"), atomically: true, encoding: .utf8)
+
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("schemas/plan.schema.yaml"), status: .modified)],
+            homeDirectory: home)
+        #expect(plan.classifications.first?.consumers == [
+            ChangeConsumer(node: "nodeA", worker: "w"),
+            ChangeConsumer(node: "nodeB", worker: "w")
+        ])
+    }
+
+    // ACC-refresh-and-local-tiers
+    @Test func refreshAndLocalTiers() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),
+            ArtifactChange(path: repoPath("skills/implement-feature/SKILL.md"), status: .modified),
+            ArtifactChange(path: repoPath("workers/implementer.worker.yaml"), status: .modified),
+            ArtifactChange(path: repoPath("pipeline.yaml"), status: .modified),
+            ArtifactChange(path: repoPath("checks/build.check.yaml"), status: .modified)
+        ], homeDirectory: home)
+
+        let tiers = plan.classifications.map(\.tier)
+        #expect(tiers == [.refresh, .refresh, .local, .local, .local])
+        #expect(plan.classifications.allSatisfy { !$0.unclassified })
+    }
+
+    // ACC-deleted-schema-breaking-removal
+    @Test func deletedSchemaWithConsumersIsBreakingRemoval() throws {
+        let home = try makeFixture(
+            schemas: ["feature-plan"],
+            workers: [("implementer", ["feature-plan.v1"]), ("reviewer", ["feature-plan.v1"])])
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("schemas/feature-plan.schema.yaml"), status: .deleted)],
+            homeDirectory: home)
+
+        let result = try #require(plan.classifications.first)
+        #expect(result.tier == .contract)
+        #expect(result.flags == [.breakingRemoval])
+        #expect(result.consumers.count == 2, "dangling consumers stay listed")
+    }
+
+    // ACC-added-schema-zero-consumers
+    @Test func addedSchemaZeroConsumersIsNonAckBlocking() throws {
+        let home = try makeFixture(
+            schemas: ["brand-new"],
+            workers: [("implementer", ["feature-plan.v1"])])   // no worker consumes brand-new
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("schemas/brand-new.schema.yaml"), status: .added)],
+            homeDirectory: home)
+
+        let result = try #require(plan.classifications.first)
+        #expect(result.tier == .contract)
+        #expect(result.consumers.isEmpty)
+        #expect(result.flags == [.nonAckBlocking])
+        #expect(result.blastRadius == "0 consumers (new)")
+    }
+
+    // ACC-highest-tier-helper
+    @Test func highestTierHelper() throws {
+        let home = try makeFixture(schemas: ["s"], workers: [("w", ["s.v1"])])
+
+        // contract present -> contract, regardless of order.
+        let mixed = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),
+            ArtifactChange(path: repoPath("schemas/s.schema.yaml"), status: .modified),
+            ArtifactChange(path: repoPath("workers/w.worker.yaml"), status: .modified)
+        ], homeDirectory: home)
+        #expect(mixed.highestTier == .contract)
+
+        // no contract -> local over refresh.
+        let noContract = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),
+            ArtifactChange(path: repoPath("workers/w.worker.yaml"), status: .modified)
+        ], homeDirectory: home)
+        #expect(noContract.highestTier == .local)
+
+        // refresh only.
+        let refreshOnly = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("skills/x/SKILL.md"), status: .modified)],
+            homeDirectory: home)
+        #expect(refreshOnly.highestTier == .refresh)
+
+        // empty -> defined nil.
+        let empty = ChangePlan(changes: [], homeDirectory: home)
+        #expect(empty.highestTier == nil)
+    }
+
+    // The Tier ordering itself: refresh < local < contract.
+    @Test func tierIsOrdered() {
+        #expect(Tier.refresh < Tier.local)
+        #expect(Tier.local < Tier.contract)
+        #expect([Tier.contract, .refresh, .local].max() == .contract)
+    }
+
+    // ACC-unclassified-non-runtime
+    @Test func nonRuntimePathIsUnclassifiedLocal() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("features/plan-command/pipeline.yaml"), status: .modified),
+            ArtifactChange(path: repoPath("README.md"), status: .added)
+        ], homeDirectory: home)
+
+        // A nested features/.../pipeline.yaml is NOT the top-level pipeline.yaml — it falls through
+        // to unclassified local.
+        for result in plan.classifications {
+            #expect(result.tier == .local)
+            #expect(result.unclassified)
+        }
+    }
+}

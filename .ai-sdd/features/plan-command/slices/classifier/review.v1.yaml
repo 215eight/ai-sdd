@@ -1,0 +1,66 @@
+verdict: approve
+items:
+  - id: ACC-contract-lists-consumers
+    verdict: pass
+    notes: >-
+      schemas/feature-plan.schema.yaml classifies as contract. contractChangeListsAllConsumers
+      builds a fixture with 2 distinct consumers (implementer, reviewer) plus a noop worker that
+      consumes a different schema, and asserts the EXACT ordered consumer set as
+      (node id, worker name) pairs — not mere presence — with noop correctly excluded.
+      contractConsumerPerNode confirms one worker reused across two nodes yields one entry per node.
+      Resolution runs through the real SpecLoader.loadBundle (default loader), not a reimplemented
+      parser.
+  - id: ACC-refresh-and-local-tiers
+    verdict: pass
+    notes: >-
+      refreshAndLocalTiers asserts conventions/* and skills/* -> refresh, and workers/*,
+      pipeline.yaml, checks/* -> local, none marked unclassified. Matches the mapping exactly.
+  - id: ACC-deleted-schema-breaking-removal
+    verdict: pass
+    notes: >-
+      deletedSchemaWithConsumersIsBreakingRemoval deletes feature-plan.schema.yaml whose consumers
+      reference the versioned id feature-plan.v1; asserts tier contract, flags == [breakingRemoval],
+      and the now-dangling consumers (count 2) stay listed. The deleted-schema-still-resolves path
+      via stem-vs-versioned matching is genuinely exercised.
+  - id: ACC-added-schema-zero-consumers
+    verdict: pass
+    notes: >-
+      addedSchemaZeroConsumersIsNonAckBlocking adds brand-new.schema.yaml with no consuming worker;
+      asserts tier contract, empty consumers, flags == [nonAckBlocking], and blastRadius
+      "0 consumers (new)". Exact match to the contract.
+  - id: ACC-reuses-specloader
+    verdict: pass
+    notes: >-
+      ChangePlan.init takes loader: SpecLoader = SpecLoader() and resolves consumers via
+      loader.loadBundle(at:), reading pipeline.spec and workers-by-name. No second/duplicate spec
+      parser is introduced; tests drive it through the real loader against YAML fixtures.
+  - id: ACC-highest-tier-helper
+    verdict: pass
+    notes: >-
+      highestTierHelper covers contract-present -> contract (order-independent), no-contract ->
+      local over refresh, refresh-only -> refresh, and empty -> nil. tierIsOrdered confirms
+      refresh < local < contract. Helper is classifications.map(\.tier).max() over a Comparable
+      Tier — correct.
+  - id: ACC-unclassified-non-runtime
+    verdict: pass
+    notes: >-
+      nonRuntimePathIsUnclassifiedLocal covers a README under .ai-sdd/ AND the keystone edge case
+      features/plan-command/pipeline.yaml — both land at local with unclassified == true. The code
+      matches the top-level pipeline by exact subpath == "pipeline.yaml", so a nested
+      features/*/pipeline.yaml correctly does NOT match and falls through to unclassified local.
+  - id: ACC-build-test-green
+    verdict: pass
+    notes: >-
+      Reviewer ran `swift build` (Build complete) and `swift test` (98 tests, 2 suites, all passed,
+      ChangePlanTests suite green). Verified directly, not taken on trust from the changeset.
+notes: >-
+  Keystone (blast-radius classification) is correct and well-tested. Consumer resolution returns the
+  full (node id, worker name) set via the real SpecLoader bundle load; the deleted-schema breaking
+  removal and added-0-consumer non-ack paths are both exercised; tier mapping handles the nested
+  features/*/pipeline.yaml edge case; highest-tier returns contract whenever any contract change is
+  present. Conventions satisfied: path/role constants centralized in Layout.swift, Swift Testing
+  style, reuses SpecLoader, no new AISDDModels type (parent D5 respected — ChangePlan/Tier/ChangeFlag
+  all live in AISDDEngine). One non-blocking coverage gap: every test uses the versioned consumes id
+  (feature-plan.v1 / s.v1 / plan.v1), so the bare-stem branch of schemaId(_:matchesStem:)
+  (schemaId == stem) is never exercised by a test, though it is correct by inspection and the
+  load-bearing versioned path is well covered — not enough to reject.
