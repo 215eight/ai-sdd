@@ -1,0 +1,66 @@
+schema: review.v1
+program: guardrails
+feature: provenance
+slice: provenance-manifest
+
+items:
+  - id: AC-ROUNDTRIP-DETERMINISTIC
+    verdict: pass
+    notes: >-
+      `encoded()` uses JSONEncoder with `[.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]` over a
+      `[String: ProvenanceEntry]` dict; identical inputs yield byte-identical Data. Test
+      `provenanceRoundTripIsDeterministic` records two out-of-order paths twice and `#expect(first == second)`
+      on the raw Data, AND asserts keys are sorted (a.md before z.md) and slashes unescaped — proving the
+      `.sortedKeys` option actually took effect, not merely that two equal values compared equal.
+  - id: AC-STATUS-PRISTINE
+    verdict: pass
+    notes: >-
+      `status(of:artifactURL:)` returns `.pristine` when current on-disk bytes hash to the recorded hash.
+      Test `provenanceStatusPristine` records "generated" and reads the unchanged temp file → `.pristine`.
+  - id: AC-STATUS-HANDEDITED
+    verdict: pass
+    notes: >-
+      Hash mismatch returns `.handEdited`. Test `provenanceStatusHandEdited` records then overwrites the
+      temp file with new text → `.handEdited`, and asserts `rawValue == "hand-edited"`.
+  - id: AC-STATUS-UNTRACKED
+    verdict: pass
+    notes: >-
+      A path with no recorded entry returns `.untracked`. Test `provenanceStatusUntracked` checks both the
+      URL overload and the data-driven overload against an empty manifest.
+  - id: AC-CLOBBER-GUARD
+    verdict: pass
+    notes: >-
+      `clobberDecision(for:)` maps `.handEdited` → `.doNotOverwrite` (rawValue "do not overwrite"),
+      `.pristine`/`.untracked` → `.ok`; `canOverwrite` mirrors it. Test `provenanceClobberGuard` asserts all
+      three statuses plus the literal "do not overwrite" string. Guard returns must-not-overwrite for
+      hand-edited only — correct.
+  - id: AC-SHA256-NO-CLOCK
+    verdict: pass
+    notes: >-
+      `contentHash(of:)` uses CryptoKit `SHA256.hash(data:)` formatted with `%02x` (lowercase hex, 64
+      chars). Grep of Provenance.swift for `Date(`, `Date.now`, `.now`, `DateFormatter`, `Date ` found
+      NONE; `generatedAt` is a caller-supplied String stored verbatim in the entry. Test asserts the known
+      SHA-256 of "abc", the 64-char length, and that a fixed FUTURE timestamp round-trips unchanged into the
+      entry (a clock could never return it) — proving no clock read.
+  - id: AC-BUILD-TEST-GREEN
+    verdict: pass
+    notes: >-
+      Reviewer ran all three: `swift build` complete; `swift test` 132 tests in 3 suites passed (7
+      provenance cases green); `swift run ai-sdd validate .ai-sdd` → valid (3 nodes, 3 edges, 4 workers,
+      8 checks). Package.swift / Package.resolved unchanged — no new SwiftPM dependency.
+
+verdict: approve
+rework: []
+
+notes: >-
+  Engine-only slice as scoped (ADR-0032 P1/P3). New pure, injectable `Provenance` type in
+  Sources/AISDDEngine/Provenance.swift: hashing, status classification, and clobber-guard are static/pure
+  over Data; manifest load/save and artifact reads take explicit URLs, so all 7 tests run from temp dirs
+  (makeProvenanceFixture) with no real `.ai-sdd/`. Determinism check: JSON is genuinely byte-identical and
+  `[.sortedKeys]` is verifiably set (key-order assertion). No-clock check: zero Date/clock references in
+  Provenance.swift; generatedAt is purely an input. SHA-256 is lowercase hex (`%02x`). Path literals
+  centralized — provenanceFile + provenanceURL(homeDirectory:) added to Layout.swift mirroring
+  locksFile/locksURL. Tests are Swift Testing style (@Test/#expect/#require). Scope honored: only
+  Layout.swift, EngineTests.swift, and the new Provenance.swift changed — NO CLI/main.swift, NO PlanReport,
+  NO generator wiring (correctly deferred to the plan-annotation slice). Every acceptance id covered by a
+  real, load-bearing test.

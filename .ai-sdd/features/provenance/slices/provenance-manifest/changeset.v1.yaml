@@ -1,0 +1,24 @@
+summary: >-
+  Added a pure, injectable `Provenance` engine type in `Sources/AISDDEngine/Provenance.swift`
+  backed by a committed `provenance.json` manifest mapping `path -> ProvenanceEntry
+  { generator, generatedAt, contentHash }`. The write API records/updates an entry from artifact
+  bytes; `generatedAt` is a caller-supplied ISO-8601 string (the engine never reads the clock) and
+  `contentHash` is SHA-256 (CryptoKit `SHA256.hash`) as lowercase hex. Serialization uses
+  `JSONEncoder` with `[.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]` so identical inputs
+  produce byte-identical JSON (a no-op re-run yields no diff). The read API classifies a path as
+  `pristine | hand-edited | untracked` by comparing the current on-disk SHA-256 to the recorded
+  hash, and a pure clobber-guard maps `hand-edited -> "do not overwrite"`, `pristine`/`untracked ->
+  "ok"`. Hashing, status classification, and the guard are pure functions over `Data`; manifest
+  load/save and artifact reads take explicit URLs, so tests run entirely from temp dirs with no real
+  `.ai-sdd/`. Added `provenanceFile` (`provenance.json`) + `provenanceURL(homeDirectory:)` to
+  `Layout.swift`, mirroring `locksFile`/`locksURL`. Added 7 Swift Testing cases covering every
+  acceptance id. Engine-only: no CLI surface, no `ai-sdd plan` annotation, no generator wiring (next
+  slice: `plan-annotation`). Implements ADR-0032 decisions P1 and P3.
+satisfies:
+  - AC-ROUNDTRIP-DETERMINISTIC
+  - AC-STATUS-PRISTINE
+  - AC-STATUS-HANDEDITED
+  - AC-STATUS-UNTRACKED
+  - AC-CLOBBER-GUARD
+  - AC-SHA256-NO-CLOCK
+  - AC-BUILD-TEST-GREEN

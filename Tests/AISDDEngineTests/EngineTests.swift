@@ -2326,4 +2326,111 @@ struct PlanReportTests {
         let recheck = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: true)
         #expect(recheck.reconciled)
     }
+
+    // MARK: - Provenance manifest (ADR-0032 P1/P3: deterministic provenance + clobber-guard)
+
+    /// A temp manifest URL + an artifact URL under a fresh temp home, written with `bytes`. Drives the
+    /// provenance tests entirely from a temp dir — no real `.ai-sdd/`.
+    private func makeProvenanceFixture(artifact: String, bytes: String) throws -> (manifest: URL, artifact: URL) {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("provenance-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let artifactURL = home.appendingPathComponent(artifact)
+        try bytes.write(to: artifactURL, atomically: true, encoding: .utf8)
+        return (Layout.provenanceURL(homeDirectory: home), artifactURL)
+    }
+
+    // AC-ROUNDTRIP-DETERMINISTIC: recording the same path/generator/timestamp/bytes twice produces
+    // byte-identical manifest JSON — a no-op re-run yields no diff.
+    @Test func provenanceRoundTripIsDeterministic() throws {
+        func record() throws -> Data {
+            var manifest = Provenance()
+            // Insert two paths out of sorted order — `.sortedKeys` must normalize the key order.
+            manifest.record(path: ".ai-sdd/skills/z.md", generator: "bootstrap",
+                            generatedAt: "2026-06-22T00:00:00Z", data: Data("zebra".utf8))
+            manifest.record(path: ".ai-sdd/skills/a.md", generator: "bootstrap",
+                            generatedAt: "2026-06-22T00:00:00Z", data: Data("apple".utf8))
+            return try manifest.encoded()
+        }
+        let first = try record()
+        let second = try record()
+        #expect(first == second, "identical inputs must serialize to byte-identical JSON")
+        // The deterministic options actually took effect: keys sorted, slashes unescaped.
+        let text = try #require(String(data: first, encoding: .utf8))
+        #expect(text.range(of: ".ai-sdd/skills/a.md")!.lowerBound
+            < text.range(of: ".ai-sdd/skills/z.md")!.lowerBound, "keys must be sorted")
+        #expect(text.contains(".ai-sdd/skills/a.md"), "slashes must not be escaped")
+    }
+
+    // A saved manifest round-trips through load unchanged (absent file ⇒ empty manifest).
+    @Test func provenanceLoadSaveRoundTrip() throws {
+        let (manifestURL, _) = try makeProvenanceFixture(artifact: "x.txt", bytes: "x")
+        #expect(try Provenance.load(from: manifestURL) == Provenance(), "absent file ⇒ empty manifest")
+
+        var manifest = Provenance()
+        manifest.record(path: ".ai-sdd/a.json", generator: "compile-schema",
+                        generatedAt: "2026-06-22T12:00:00Z", data: Data("payload".utf8))
+        try manifest.save(to: manifestURL)
+        #expect(try Provenance.load(from: manifestURL) == manifest)
+    }
+
+    // AC-STATUS-PRISTINE: recorded entry whose on-disk bytes are unchanged ⇒ pristine.
+    @Test func provenanceStatusPristine() throws {
+        let (_, artifactURL) = try makeProvenanceFixture(artifact: "gen.txt", bytes: "generated")
+        var manifest = Provenance()
+        manifest.record(path: "gen.txt", generator: "bootstrap",
+                        generatedAt: "2026-06-22T00:00:00Z", data: Data("generated".utf8))
+        #expect(manifest.status(of: "gen.txt", artifactURL: artifactURL) == .pristine)
+    }
+
+    // AC-STATUS-HANDEDITED: recorded entry whose on-disk bytes diverged (hash mismatch) ⇒ hand-edited.
+    @Test func provenanceStatusHandEdited() throws {
+        let (_, artifactURL) = try makeProvenanceFixture(artifact: "gen.txt", bytes: "generated")
+        var manifest = Provenance()
+        manifest.record(path: "gen.txt", generator: "bootstrap",
+                        generatedAt: "2026-06-22T00:00:00Z", data: Data("generated".utf8))
+        // A human edits the file on disk.
+        try "generated — and then hand tweaked".write(to: artifactURL, atomically: true, encoding: .utf8)
+        let status = manifest.status(of: "gen.txt", artifactURL: artifactURL)
+        #expect(status == .handEdited)
+        #expect(status.rawValue == "hand-edited", "the raw value matches the feature vocabulary")
+    }
+
+    // AC-STATUS-UNTRACKED: a path with no recorded entry ⇒ untracked.
+    @Test func provenanceStatusUntracked() throws {
+        let (_, artifactURL) = try makeProvenanceFixture(artifact: "unknown.txt", bytes: "whatever")
+        let manifest = Provenance()   // empty — nothing recorded
+        #expect(manifest.status(of: "unknown.txt", artifactURL: artifactURL) == .untracked)
+        // The data-driven overload agrees.
+        #expect(manifest.status(of: "unknown.txt", currentData: Data("whatever".utf8)) == .untracked)
+    }
+
+    // AC-CLOBBER-GUARD: hand-edited ⇒ "do not overwrite"; pristine/untracked ⇒ "ok".
+    @Test func provenanceClobberGuard() {
+        #expect(Provenance.clobberDecision(for: .handEdited) == .doNotOverwrite)
+        #expect(Provenance.clobberDecision(for: .handEdited).rawValue == "do not overwrite")
+        #expect(Provenance.clobberDecision(for: .pristine) == .ok)
+        #expect(Provenance.clobberDecision(for: .untracked) == .ok)
+
+        #expect(Provenance.canOverwrite(.handEdited) == false)
+        #expect(Provenance.canOverwrite(.pristine))
+        #expect(Provenance.canOverwrite(.untracked))
+    }
+
+    // AC-SHA256-NO-CLOCK: content hashing is SHA-256 (lowercase hex), and the API only ever takes a
+    // passed-in timestamp — the engine never reads the clock.
+    @Test func provenanceUsesSHA256AndNeverReadsClock() {
+        // Known SHA-256 of the ASCII string "abc".
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        #expect(Provenance.contentHash(of: Data("abc".utf8)) == expected)
+        #expect(Provenance.contentHash(of: Data()).count == 64, "SHA-256 hex is always 64 chars")
+
+        // The recorded timestamp is exactly the caller-supplied string — not derived from a clock.
+        var manifest = Provenance()
+        let stamp = "2030-01-01T00:00:00Z"   // a future, fixed instant a clock could never return now
+        manifest.record(path: "p", generator: "g", generatedAt: stamp, data: Data("abc".utf8))
+        let entry = manifest.entries["p"]
+        #expect(entry?.generatedAt == stamp)
+        #expect(entry?.contentHash == expected)
+    }
 }

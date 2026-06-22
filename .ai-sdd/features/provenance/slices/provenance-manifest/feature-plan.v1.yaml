@@ -1,0 +1,117 @@
+schema: feature-plan.v1
+program: guardrails
+feature: provenance
+slice: provenance-manifest
+stack: swift
+
+summary: >
+  Add a pure, injectable `Provenance` engine type to `AISDDEngine`, backed by a committed
+  `.ai-sdd/provenance.json` manifest mapping `path -> { generator, generatedAt, contentHash }`.
+  The type offers a write API (record/update an entry for an emitted artifact; `generatedAt` is
+  an ISO-8601 string passed in — the engine never reads the clock; `contentHash` is SHA-256 over
+  the artifact bytes), deterministic byte-identical serialization (so a no-op re-run produces no
+  diff), a read API that classifies an artifact path as `pristine | hand-edited | untracked` by
+  comparing the current on-disk hash to the recorded hash, and a clobber-guard returning
+  "do not overwrite" for a `hand-edited` artifact. Engine-only: NO CLI surface and NO `ai-sdd plan`
+  annotation — that is the next slice (`plan-annotation`). Implements ADR-0032 decisions P1 and P3.
+
+scope:
+  in:
+    - "New `Provenance` engine type in `Sources/AISDDEngine/Provenance.swift` (manifest model + read/write/guard APIs)."
+    - "A `provenanceFile` path constant (`provenance.json`) plus a `provenanceURL(homeDirectory:)` helper in `Layout.swift`, mirroring the existing `locksFile`/`locksURL` pattern."
+    - "Codable manifest model: top-level map `path -> ProvenanceEntry { generator, generatedAt, contentHash }` with deterministic, byte-stable JSON serialization."
+    - "Write API: record/update one entry for an emitted artifact, taking the artifact bytes (or path), generator name, and a passed-in ISO-8601 `generatedAt` string; computes SHA-256 of the bytes."
+    - "Read API: classify a given artifact path as `pristine | hand-edited | untracked` by comparing the current on-disk SHA-256 to the recorded hash."
+    - "Clobber-guard function: returns 'do not overwrite' for `hand-edited`, 'ok' for `pristine`/`untracked`."
+    - "Load/save of the manifest from/to a manifest URL via FileManager (injectable so tests use a temp manifest); absent file => empty manifest."
+    - "Unit tests in `Tests/AISDDEngineTests/EngineTests.swift` covering determinism, status classification, and the clobber-guard, using the existing temp-fixture + Swift Testing patterns."
+  out:
+    - "The `ai-sdd plan` / `PlanReport` `hand-edited` annotation (next slice: `plan-annotation`)."
+    - "Wiring real generators (bootstrap / compile-schema) to write provenance entries."
+    - "Any CLI subcommand, flag, or `main.swift` change."
+    - "Locks / `frozen` tier (ADR-0031), drift detection (ADR-0033), and any three-way merge / re-bootstrap UI."
+    - "Adding a new SwiftPM dependency (CryptoKit ships with macOS 14 — none needed)."
+
+acceptance:
+  - id: AC-ROUNDTRIP-DETERMINISTIC
+    description: >
+      Recording the same set of entries (same path, generator, passed-in ISO-8601 timestamp, and
+      bytes) twice produces byte-identical `provenance.json` data — a no-op re-run yields no diff.
+  - id: AC-STATUS-PRISTINE
+    description: >
+      For a recorded entry whose on-disk artifact bytes are unchanged, the read API returns `pristine`.
+  - id: AC-STATUS-HANDEDITED
+    description: >
+      For a recorded entry whose on-disk artifact bytes have been modified (hash mismatch), the read
+      API returns `hand-edited`.
+  - id: AC-STATUS-UNTRACKED
+    description: >
+      For an artifact path with no recorded entry in the manifest, the read API returns `untracked`.
+  - id: AC-CLOBBER-GUARD
+    description: >
+      The clobber-guard returns "do not overwrite" for a `hand-edited` artifact and "ok" for
+      `pristine` and `untracked` artifacts.
+  - id: AC-SHA256-NO-CLOCK
+    description: >
+      Content hashing uses SHA-256; engine code never reads the system clock — `generatedAt` is only
+      ever an input parameter (no `Date()`, no `Date.now`, no `DateFormatter` reading current time).
+  - id: AC-BUILD-TEST-GREEN
+    description: "`swift build` and `swift test` succeed."
+
+decisions:
+  - id: D-SHA256-SOURCE
+    question: "What provides SHA-256, and does it require a new SwiftPM dependency?"
+    decision: >
+      Use Apple's `CryptoKit` (`import CryptoKit`, `SHA256.hash(data:)`). It ships with the macOS 14
+      platform the package already targets — verified by compiling and running a SHA-256 sample on
+      this toolchain. NO new SwiftPM dependency (no swift-crypto) is added; `Package.swift` is
+      unchanged. The hash is stored as a lowercase hex string.
+    status: closed
+  - id: D-DETERMINISTIC-JSON
+    question: "How is byte-identical manifest serialization achieved?"
+    decision: >
+      Serialize the manifest with `Foundation.JSONEncoder` configured
+      `outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]`, reusing the exact
+      in-repo precedent (`RunStore.swift`, `AISDDCLI/main.swift`). Model the manifest as a Codable
+      `[String: ProvenanceEntry]` (path-keyed dictionary); `.sortedKeys` gives stable path-key and
+      field order, so identical inputs => byte-identical output. `.withoutEscapingSlashes` keeps the
+      `.ai-sdd/...` path keys readable in the committed file. Not Yams: this artifact is JSON
+      (`provenance.json`), and JSONEncoder is the established deterministic-output mechanism here.
+    status: closed
+  - id: D-STATUS-ENUM
+    question: "How is provenance status modeled and named?"
+    decision: >
+      A public `enum ProvenanceStatus: String { case pristine, handEdited, untracked }` with raw
+      values `"pristine"`, `"hand-edited"`, `"untracked"` matching the slice/feature vocabulary.
+      The clobber-guard is a separate function (e.g. `canOverwrite(_:) -> Bool` or a small
+      `ClobberDecision` returning "do not overwrite" / "ok") that maps `handEdited` => do not
+      overwrite, and `pristine`/`untracked` => ok.
+    status: closed
+  - id: D-PURITY-INJECTION
+    question: "How is the type kept pure/injectable and clock-free for unit testing?"
+    decision: >
+      Keep hash computation and status classification as pure functions over byte buffers (hashing
+      takes `Data`; classification takes recorded-hash vs current-hash). Manifest load/save take an
+      explicit manifest `URL`; artifact reads take an explicit artifact `URL` (or pre-read `Data`),
+      so tests drive everything from a temp directory with no real `.ai-sdd/`. `generatedAt` is a
+      caller-supplied `String`; the engine contains no `Date()`/clock read. Follows the existing
+      temp-fixture + Swift Testing conventions in `EngineTests.swift`.
+    status: closed
+  - id: D-LAYOUT-CONSTANT
+    question: "Where does the manifest path live?"
+    decision: >
+      Add `static let provenanceFile = "provenance.json"` and a
+      `static func provenanceURL(homeDirectory: URL) -> URL` to `enum Layout`, mirroring the existing
+      `locksFile` constant and `locksURL(homeDirectory:)` helper. No path literal is repeated outside
+      `Layout.swift`, per the repo's naming/layering convention.
+    status: closed
+
+files:
+  - Sources/AISDDEngine/Provenance.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd

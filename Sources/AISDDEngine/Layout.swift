@@ -10,6 +10,11 @@ enum Layout {
     /// `{ glob, reason }` entries the `frozen` tier promotion reads (ADR-0031). Absent ⇒ no locks.
     static let locksFile = "locks.yaml"
 
+    /// The committed provenance manifest (`.ai-sdd/provenance.json`) — a path-keyed map of
+    /// `{ generator, generatedAt, contentHash }` the `Provenance` engine reads/writes (ADR-0032).
+    /// Absent ⇒ empty manifest.
+    static let provenanceFile = "provenance.json"
+
     /// The factory home as a git pathspec — scopes `git diff` to `.ai-sdd/`.
     static let homePathspec = "\(homeDir)/"
 
@@ -86,6 +91,12 @@ enum Layout {
     /// same `.ai-sdd/` workspace dir `ChangePlan.init` already takes for bundle loading.
     static func locksURL(homeDirectory: URL) -> URL {
         homeDirectory.appendingPathComponent(locksFile)
+    }
+
+    /// The provenance manifest file inside a factory home dir (`<home>/provenance.json`). Mirrors
+    /// `locksURL(homeDirectory:)`; `homeDirectory` is the same `.ai-sdd/` workspace dir.
+    static func provenanceURL(homeDirectory: URL) -> URL {
+        homeDirectory.appendingPathComponent(provenanceFile)
     }
 
     /// The schema id carried in a `PortSpec.schema` for a changed `schemas/<name>.schema.yaml` path.
