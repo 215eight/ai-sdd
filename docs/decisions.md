@@ -893,6 +893,155 @@ ungrounded — violates ADR-0001; blast radius must be an engine graph computati
 
 ---
 
+## ADR-0031 — Enforced freeze/locks: the `frozen` tier made real
+**Status:** Accepted (implementation pending) · 2026-06-22
+
+**Context.** ADR-0030 shipped `ai-sdd plan` — it *previews* a change's blast radius and reserves a
+**`frozen`** tier, but the shipped `Tier` enum (`Sources/AISDDEngine/ChangePlan.swift`) is only
+`refresh < local < contract`; `frozen` was omitted as a dead case. So `plan` makes an unintended change
+*visible and ack-gated* but cannot *refuse* one. The adopter's original pain — "the framework doesn't
+prevent unintended modification of my frozen contracts" — is still open: a contract a team froze (e.g. the
+three frozen schemas in a contract-first repo) can be edited and committed with only an acknowledgement,
+no enforced protection. `plan` is the `terraform plan`; this ADR adds the `prevent_destroy`.
+
+**Decision.**
+
+- **Declare locks in a committed `.ai-sdd/locks.yaml` manifest** — a list of path globs under `.ai-sdd/`,
+  each with a `reason`. One greppable, diffable source of truth that covers *any* artifact (schemas,
+  conventions, pipeline, checks), not just schemas. The manifest is itself a factory artifact (committed,
+  refreshable). Chosen over per-artifact `frozen: true` metadata (only reaches artifacts that have a
+  metadata block; scatters the policy) and in-file markers (don't generalize to whole files).
+
+- **Make `frozen` the top `Tier`.** Add `frozen` above `contract` to the enum's `Comparable` order. After
+  `ChangePlan` computes a change's base tier, a path matching a `locks.yaml` glob is **promoted to
+  `frozen`**, carrying a `locked` flag with the lock's `reason`.
+
+- **`frozen` is not ack-able by the threshold — it requires an explicit unlock.** `plan` renders a frozen
+  change as a hard ✗ and exits a **distinct code (`3`)**, *regardless of* `--require-ack` (so you cannot
+  wave a frozen change through by lowering the threshold the way `contract` allows). `--unlock <path>`
+  downgrades a frozen change to its underlying base tier **for that one invocation** (a genuine,
+  deliberate contract change then flows through the normal `contract` ack path); the lock itself is
+  unchanged. Permanently unfreezing means editing `locks.yaml` — a visible, reviewed diff.
+
+- **Enforcement is `plan`-owned (commit-time), provider-neutral.** The mechanism is the `frozen` tier +
+  exit code in the engine, surfaced by the `ai-sdd plan` adopters run pre-commit / in CI — not a hidden
+  hook. A git `pre-commit` hook that runs `plan` is offered as an *optional convenience*, never the
+  mechanism (ADR-0001: the engine is the only code).
+
+**Consequences.** A team can finally mark artifacts the factory will *refuse* to silently change — the
+three frozen contracts in a contract-first repo go in `locks.yaml` and a re-bootstrap or hand-edit that
+touches them fails `plan` with exit 3 until explicitly unlocked. Builds entirely on the shipped substrate:
+`ChangePlan` (add the promote-to-frozen pass), `PlanReport` (render + exit), `Layout` (the `locks.yaml`
+path). Enforcement is still **commit-gated, not write-gated** (consistent with ADR-0030) — `plan` is the
+checkpoint; the optional hook tightens it. Composes with provenance (ADR-0032) and drift (ADR-0033): a
+change can be reported as both *hand-edited since generated* and *frozen*.
+
+**Alternatives rejected.** Per-artifact `frozen:` metadata (scatters policy, misses metadata-less files).
+A separate `ai-sdd lock` state store (a manifest is simpler and reviewable). Write-time enforcement as the
+primary mechanism (a git hook is host-specific and bypassable; the engine gate is the neutral source of
+truth — the hook merely *invokes* it). Making `frozen` overridable by `--require-ack` (defeats the point;
+freezing must be deliberate to undo).
+
+---
+
+## ADR-0032 — Provenance: generated vs hand-edited, so re-bootstrap never clobbers
+**Status:** Accepted (implementation pending) · 2026-06-22
+
+**Context.** Re-bootstrap (ADR-0029) and the compilers regenerate factory artifacts (`conventions/`,
+`schemas/`, worker skills, `checks/`). Today the framework cannot tell **what it generated** from **what
+the adopter hand-edited afterward** — so a re-bootstrap can silently overwrite a human's deliberate edit
+to a generated convention or schema, and `plan` cannot mark a change as "this diverged from what the
+generator would produce." The marker upsert (`ai-sdd:begin/end`) solves this only for the two shared files
+(`AGENTS.md`/`.gitignore`); whole generated artifacts have no such protection. This is the guardrail that
+makes the other two trustworthy: locks decide what *may* change, provenance records who *did*.
+
+**Decision.**
+
+- **Record provenance in a committed `.ai-sdd/provenance.json` manifest** mapping each generated artifact
+  path → `{ generator, generatedAt, contentHash }` (the generator id — `bootstrap` / `compile-schema`;
+  the timestamp **passed in**, never read from the clock — see the determinism note; the hash of the
+  bytes the generator emitted).
+
+- **Generators write provenance; consumers read it.** `ai-sdd-bootstrap` and `ai-sdd-compile-schema`
+  record an entry per artifact they emit. On **re-bootstrap**, before overwriting an artifact, compare its
+  current on-disk hash to the recorded `contentHash`: **equal ⇒ regenerate freely; different ⇒ it was
+  hand-edited — do not silently overwrite.** Flag it and require explicit confirmation (or a three-way
+  merge), exactly as the planning gate treats a human edit as authoritative.
+
+- **`plan` surfaces provenance as an annotation.** A changed artifact whose pre-change content already
+  diverged from its recorded generated baseline is marked `hand-edited` in the `PlanReport` output — so
+  the adopter sees they're editing something they'd previously customized, not pristine generated output.
+
+- **Determinism is mandatory.** Hashes are content-addressed and the timestamp is an input, so a no-op
+  re-bootstrap produces an identical `provenance.json` (no spurious diff) — the same idempotency contract
+  ADR-0029 relies on. (Engine code cannot read the clock anyway; the generator is handed the time.)
+
+**Consequences.** Re-bootstrap stops being a potential silent clobber — the framework defends a human's
+edits the way it defends prose outside the `ai-sdd:begin/end` markers, but for whole generated artifacts.
+`plan` gets richer (the `hand-edited` annotation). Adds one manifest + content hashing; generators gain a
+write step, `plan`/re-bootstrap a read step. Reuses `Layout` (the manifest path) and the existing artifact
+write paths. Generalizes the marker-upsert idea (ADR-0029 §6/§7) from two shared files to every generated
+artifact. Feeds drift (ADR-0033): "hand-edited since generated" is one drift signal among several.
+
+**Alternatives rejected.** Marker regions in every generated file (works for partial files like
+`AGENTS.md`, not for a wholly-generated `conventions/<stack>.md` or schema). Git history as the provenance
+source (conflates generator output with normal commits; can't distinguish a hand-edit from a re-bootstrap
+in the log). No provenance, rely on the adopter to not re-bootstrap over edits (the status quo that makes
+re-bootstrap feel unsafe — the whole point is to make it safe).
+
+---
+
+## ADR-0033 — Drift detection: tell the adopter *when* to act
+**Status:** Accepted (implementation pending) · 2026-06-22
+
+**Context.** ADR-0030/0031/0032 handle a change the adopter is *making* (preview, prevent, attribute).
+None answer the opposite question: **when has reality moved out from under the committed factory, so the
+adopter should act?** A `conventions/<stack>.md` can silently fall out of date as the code evolves
+(ADR-0029's whole reason to re-bootstrap); a schema can change without its compiled `checks/` being
+recompiled, leaving a **stale gate**; a fixture can drift to violate a frozen contract. Today this
+knowledge is tribal — you re-bootstrap on a hunch. This is the missing *pull-based* guidance the
+maintenance story needs: a command that says "these artifacts no longer match reality."
+
+**Decision.**
+
+- **Add `ai-sdd drift [<dir>]`** that reports divergence between committed factory artifacts and the
+  reality they describe, **deterministically wherever possible** (ADR-0001), across three kinds:
+  - **Stale gate (schema ↔ compiled check).** Re-run the `ai-sdd-compile-schema` compilation in-memory
+    and diff against the committed `checks/*.check.yaml`; a difference means the gate is stale w.r.t. its
+    schema. Fully deterministic.
+  - **Fixture ↔ schema.** Validate known fixtures against the current schemas via the existing
+    `SchemaValidator`; a failure is contract drift (e.g. a fixture that no longer satisfies a frozen
+    contract). Deterministic.
+  - **Convention ↔ code.** Re-check each convention's **evidence citations** — the `conventions/<stack>.md`
+    Discovery Record already records, per change-type, the *evidence* (a file path, a commit, a command)
+    behind each rule. Mechanically verify those citations still hold (path exists, cited command exits 0);
+    a broken citation flags an ungrounded/outdated convention. This applies the house "grounded
+    non-deterministic" pattern: the deterministic citation check finds *candidates*, the adopter (or a
+    re-bootstrap) judges the fix.
+
+- **Pull-based, non-blocking by default.** `drift` is a report the adopter runs (or wires into CI as a
+  warning), not a gate — it tells you *to* re-bootstrap/recompile, it doesn't block. Each finding names
+  the remedy (`recompile <schema>`, `re-bootstrap <stack>`, `fix fixture <path>`).
+
+- **Provenance-aware.** A drift finding on a `hand-edited` artifact (ADR-0032) is annotated as such, so
+  "the convention drifted" is distinguished from "you customized it on purpose."
+
+**Consequences.** Closes the maintenance loop the four guardrails form: **plan** (preview a change),
+**locks** (prevent one), **provenance** (attribute one), **drift** (detect when the artifacts themselves
+went stale). Converts "re-bootstrap on a hunch" into "re-bootstrap because `drift` flagged
+`conventions/operator.md`." Reuses shipped/most-existing machinery — the compile-schema compiler,
+`SchemaValidator`, `SpecLoader`, and the convention Discovery Record's citations — so the deterministic
+kinds need little new code. The convention-citation check is the one non-deterministic edge, deliberately
+scoped to *flagging* (deterministic citation breakage), not *judging*.
+
+**Alternatives rejected.** A blocking drift gate (drift is advisory by nature — reality moving is not a
+defect to reject; forcing a block would stall every run on stale prose). LLM-judging convention-vs-code
+wholesale (ungrounded, non-reproducible — violates ADR-0001; the citation check keeps it deterministic).
+Folding drift into `plan` (different question — `plan` is about a *pending change*, drift is about
+*standing staleness*; conflating them muddies both exit semantics).
+
+---
+
 ## Open decisions
 
 _None — all decisions above are resolved. New questions will be appended here as they arise._
