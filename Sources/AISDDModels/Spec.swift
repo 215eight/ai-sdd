@@ -246,13 +246,51 @@ public struct SchemaSpec: Codable, Equatable, Sendable {
     public var format: String?                  // yaml · json · markdown · code · …
     public var scope: String?                   // "internal" | "contract"
     public var fields: [String: FieldSpec]?     // structured shape (when format is structured)
+    public var rules: [RuleSpec]?               // Tier-2 semantic gates (explicit command or intent)
+    public var judge: [JudgeSpec]?              // Tier-3 advisory judges (rubric, no command)
 
     public init(handle: String? = nil, format: String? = nil, scope: String? = nil,
-                fields: [String: FieldSpec]? = nil) {
+                fields: [String: FieldSpec]? = nil, rules: [RuleSpec]? = nil,
+                judge: [JudgeSpec]? = nil) {
         self.handle = handle
         self.format = format
         self.scope = scope
         self.fields = fields
+        self.rules = rules
+        self.judge = judge
+    }
+}
+
+/// A Tier-2 semantic rule (architecture.md §8). A rule with an explicit `command` compiles
+/// mechanically to a deterministic `CheckSpec` (`required` iff `severity` is blocking); an
+/// intent-only rule (no command) is authored — it compiles to an advisory marker, never a
+/// fabricated command. `severity` defaults to `blocking` when omitted.
+public struct RuleSpec: Codable, Equatable, Sendable {
+    public var id: String
+    public var command: String?                 // explicit deterministic command (verbatim) — Tier-2 mechanical
+    public var intent: String?                  // natural-language intent — authored until mapped to an executor
+    public var severity: String?                // "blocking" (default) | "advisory"
+
+    public init(id: String, command: String? = nil, intent: String? = nil, severity: String? = nil) {
+        self.id = id
+        self.command = command
+        self.intent = intent
+        self.severity = severity
+    }
+
+    /// A rule is blocking unless its severity is explicitly `advisory`. Omitted ⇒ blocking.
+    public var isBlocking: Bool { (severity ?? "blocking") != "advisory" }
+}
+
+/// A Tier-3 judge (architecture.md §8): an LLM-graded rubric. It never compiles to a fabricated
+/// command or verdict — only to an advisory `authored` marker (`checkKind: judge`, `required: false`).
+public struct JudgeSpec: Codable, Equatable, Sendable {
+    public var id: String
+    public var rubric: String?
+
+    public init(id: String, rubric: String? = nil) {
+        self.id = id
+        self.rubric = rubric
     }
 }
 

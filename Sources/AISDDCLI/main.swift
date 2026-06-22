@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd 0.3.0",
-        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self, Plan.self, Surface.self, DriftCommand.self]
+        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Compile.self, Graph.self, Plan.self, Surface.self, DriftCommand.self]
     )
 }
 
@@ -366,6 +366,42 @@ struct Scope: ParsableCommand {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+// MARK: - compile
+
+/// `ai-sdd compile <schema>` — the read-only surface of the `SchemaCompiler`. It loads one
+/// `kind: Schema` spec, compiles it to its tiered checks (structural + rules + judges) via the pure
+/// engine, and prints each as committed-shape `kind: Check` YAML tagged by origin (or `--json` for
+/// the machine form). It writes nothing — the human/skill commits the auto-generated checks as-is and
+/// finishes + eval-gates the authored markers (see `ai-sdd-compile-schema`).
+struct Compile: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Compile a Schema into its deterministic + authored CheckSpecs (read-only; prints committed-shape YAML)."
+    )
+    @Argument(help: "Path to the Schema spec (kind: Schema).")
+    var schema: String
+    @Flag(name: .long, help: "Emit the compiled checks as JSON instead of committed-shape YAML.")
+    var json = false
+
+    func run() throws {
+        let env = try SpecLoader().loadSchemaYAML(try String(contentsOfFile: schema, encoding: .utf8))
+        let checks = SchemaCompiler.compile(env.spec, name: env.metadata.name, version: env.metadata.version ?? 1)
+
+        if json {
+            struct CompiledCheckJSON: Encodable {
+                var name: String
+                var origin: String
+                var spec: CheckSpec
+            }
+            let payload = checks.map {
+                CompiledCheckJSON(name: $0.name, origin: $0.origin.rawValue, spec: $0.spec)
+            }
+            print(try encodeJSON(payload))
+            return
+        }
+        print(CompiledCheckRenderer.yaml(checks))
     }
 }
 

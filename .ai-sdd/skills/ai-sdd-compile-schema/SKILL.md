@@ -25,14 +25,34 @@ Until a real artifact store exists, a produced artifact lives at a stable, gitig
 The producing worker's skill writes there; compiled checks read from there. (`.ai-sdd/artifacts/`
 and `.ai-sdd/runs/` are gitignored; the rest of `.ai-sdd/` is committed.)
 
-## Compile each tier
+## Compile the deterministic tiers with the engine
 
-Read the schema's `fields`, `rules`, and `judge`. Emit checks tier by tier.
+The deterministic tiers are now compiled by the engine, not by hand: the `SchemaCompiler` lives in
+`AISDDEngine` and is surfaced read-only as **`ai-sdd compile <schema>`**. Run it and let it emit the
+mechanical checks for you — don't transcribe the templates by hand:
+
+```
+ai-sdd compile .ai-sdd/schemas/<name>.schema.yaml          # committed-shape `kind: Check` YAML, tagged by origin
+ai-sdd compile .ai-sdd/schemas/<name>.schema.yaml --json   # machine form
+```
+
+Each printed check carries a `# origin:` tag:
+
+- **`origin: auto-generated`** — mechanically derived (the Tier-1 structural check, and any
+  explicit-`command` Tier-2 rule). **Commit it as-is** into `.ai-sdd/checks/<name>.<id>.check.yaml`
+  (drop the origin comment) — a re-run should produce no diff unless the schema changed.
+- **`origin: authored`** — an advisory marker for an intent-only rule or a Tier-3 judge. The compiler
+  never fabricates a command or verdict for these: **you finish them by hand and eval-gate them**
+  (below) before promoting to `required: true`.
+
+`compile` is read-only — it prints, it never writes. You commit.
+
+The tiers below explain WHAT each origin means; `ai-sdd compile` produces the actual YAML.
 
 ### Tier 1 — `fields` → one deterministic structural check (mechanical)
 
-If the schema has any `fields`, emit exactly one check that runs the validator. This is a fixed
-template — no judgement:
+If the schema has any `fields`, the compiler emits exactly one check that runs the validator. This is
+a fixed template — no judgement — and is tagged `origin: auto-generated`:
 
 ```yaml
 # .ai-sdd/checks/<name>.structure.check.yaml
@@ -41,7 +61,7 @@ kind: Check
 metadata: { name: <name>.structure }
 spec:
   checkKind: deterministic
-  command: "ai-sdd check .ai-sdd/schemas/<name>.schema.yaml .ai-sdd/artifacts/<name>.v<version>.<format>"
+  command: "swift run ai-sdd check .ai-sdd/schemas/<name>.schema.yaml .ai-sdd/artifacts/<name>.v<version>.<format>"
   required: true
 ```
 
@@ -57,9 +77,12 @@ the judge, and its verdict is captured structurally and enforced deterministical
 A rule's check is `required: true` when its command is **trusted by construction**, and advisory
 until eval'd only when you **hand-authored** a bespoke command. Trusted means: an `ai-sdd` engine
 subcommand (`ai-sdd check` / `ai-sdd scope` / `ai-sdd cover`), verified by the engine's own
-tests — not something to re-prove per repo. For each rule:
+tests — not something to re-prove per repo. `ai-sdd compile` handles the mechanical case for you
+(an explicit-`command` rule → `origin: auto-generated`); the intent cases below stay authored. For
+each rule:
 
-- **explicit `command`** → copy it verbatim; `required: <rule.severity == blocking>` (mechanical).
+- **explicit `command`** → `ai-sdd compile` copies it verbatim; `required: <rule.severity == blocking>`
+  (mechanical, `origin: auto-generated`).
 - **intent mapped to a trusted executor** → emit the mapped command **`required: true` immediately**
   (no eval gate — the executor is already verified). Known mappings:
   - `intent: "changed files ⊆ <plan>.files"` → `ai-sdd scope --plan .ai-sdd/artifacts/<plan>.v<ver>.<fmt> --repo .`
@@ -70,7 +93,9 @@ tests — not something to re-prove per repo. For each rule:
 
 ### Tier 3 — `judge` → a judge check (carries its own validation contract)
 
-For each judge item emit:
+`ai-sdd compile` emits each judge as an `origin: authored` advisory marker (`checkKind: judge`,
+`required: false`, no command) — it never fabricates a verdict. You fill in the rubric/eval below and
+promote it once it clears. For each judge item emit:
 ```yaml
 metadata: { name: <name>.<judge.id> }
 spec:
@@ -107,21 +132,24 @@ regenerate during a run.
 
 ## Worked example
 
+(Run `ai-sdd compile <schema>` to produce the deterministic checks below; the structural + explicit-
+command lines come out tagged `origin: auto-generated`, the judge tagged `origin: authored`.)
+
 `feature-plan.schema.yaml` (fields + a `plan-sound` judge) compiles to:
-- `feature-plan.structure.check.yaml` — deterministic (`ai-sdd check …`), blocking.
+- `feature-plan.structure.check.yaml` — deterministic (`swift run ai-sdd check …`), blocking.
 - `feature-plan.plan-sound.check.yaml` — judge, advisory until eval'd.
 …both wired onto the `architect` worker (it `produces: feature-plan.v1`).
 
 `changeset.schema.yaml` (fields: summary, satisfies; rules: build, unit, diff-in-scope) compiles to:
-- `changeset.structure.check.yaml` — deterministic (`ai-sdd check …`), blocking.
+- `changeset.structure.check.yaml` — deterministic (`swift run ai-sdd check …`), blocking.
 - `changeset.build.check.yaml` / `changeset.unit.check.yaml` — explicit commands, blocking.
 - `changeset.diff-in-scope.check.yaml` — `ai-sdd scope --plan …feature-plan.v1.yaml --repo .`,
   **blocking** (trusted executor — no eval gate; this was the bug: scope was being left advisory).
 …wired onto the `implementer` worker.
 
 `review.schema.yaml` (fields encode the verdict; rule: coverage) compiles to:
-- `review.structure.check.yaml` — deterministic (`ai-sdd check …`) — **this is the verdict gate**,
-  blocking (a reject or any failed item fails it → rework).
+- `review.structure.check.yaml` — deterministic (`swift run ai-sdd check …`) — **this is the verdict
+  gate**, blocking (a reject or any failed item fails it → rework).
 - `review.coverage.check.yaml` — `ai-sdd cover --plan …feature-plan.v1.yaml --review …review.v1.yaml`,
   blocking (trusted executor): the review must judge every acceptance item.
 …wired onto the `reviewer` worker. The reviewer is a real gate, not advisory notes.

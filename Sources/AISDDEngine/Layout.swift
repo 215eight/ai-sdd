@@ -77,6 +77,8 @@ enum Layout {
         static let skillsDir = "skills"
         /// A schema file is `<name>.schema.yaml` — the double extension that marks the contract tier.
         static let schemaSuffix = ".schema.yaml"
+        /// A check file is `<name>.check.yaml` — the suffix `ai-sdd check` / drift / compile read.
+        static let checkSuffix = ".check.yaml"
     }
 
     /// The repo-relative subpath of an artifact under `.ai-sdd/` (drops the `.ai-sdd/` prefix), used
@@ -109,6 +111,32 @@ enum Layout {
               subpath.hasSuffix(Workspace.schemaSuffix) else { return nil }
         let withoutDir = String(subpath.dropFirst(Workspace.schemasDir.count + 1))
         return String(withoutDir.dropLast(Workspace.schemaSuffix.count))
+    }
+
+    // MARK: - Compiled-check path literals (SchemaCompiler)
+    //
+    // The repo-relative paths the Tier-1 structural-check template embeds. Centralized here (one
+    // place per literal) so `SchemaCompiler` stays free of inline path strings (A7). These MUST
+    // match the committed reality the compiler reproduces: `Drift.expectedStructuralCheck` builds
+    // the same strings inline today; the downstream `dedupe-drift` slice folds it onto these.
+
+    /// The repo-relative source path of a schema spec: `.ai-sdd/schemas/<name>.schema.yaml`.
+    static func schemaSourcePath(name: String) -> String {
+        "\(homeDir)/\(Workspace.schemasDir)/\(name)\(Workspace.schemaSuffix)"
+    }
+
+    /// The repo-relative path of a schema's produced artifact (interim convention):
+    /// `.ai-sdd/artifacts/<name>.v<version>.<format>`.
+    static func artifactPath(name: String, version: Int, format: String) -> String {
+        "\(homeDir)/\(artifactsDir)/\(name).v\(version).\(format)"
+    }
+
+    /// The name of a schema's Tier-1 structural check: `<name>.structure`.
+    static func structuralCheckName(name: String) -> String { "\(name).structure" }
+
+    /// The repo-relative source path of a committed check: `.ai-sdd/checks/<checkName>.check.yaml`.
+    static func checkSourcePath(checkName: String) -> String {
+        "\(homeDir)/\(Workspace.checksDir)/\(checkName)\(Workspace.checkSuffix)"
     }
 }
 
