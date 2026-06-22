@@ -1,0 +1,27 @@
+summary: >-
+  Teach `ai-sdd plan` to annotate a changed factory artifact as `hand-edited` when its pre-change
+  on-disk content already diverged from the baseline recorded in `.ai-sdd/provenance.json`
+  (ADR-0032). Added a `handEdited: Bool` field (default false) to `ChangeClassification`, resolved
+  upstream in `ChangePlan.init` via `Provenance.load(from: Layout.provenanceURL(...))` +
+  `Provenance.status(of:artifactURL:) == .handEdited` as an additive post-pass (mirroring frozen
+  promotion), so an absent manifest loads empty => everything untracked => unmarked and
+  `PlanReport.make` stays pure (D-PLANREPORT-ACCESS, D-CHANGEPLAN-RESOLVES). `PlanReport.render`
+  appends a `hand-edited` token to the single inline `[...]` label list after blastRadius/flags for
+  any non-frozen `handEdited` item, so it composes with tier labels (D-RENDER-LABEL); the frozen
+  `✗ ... [frozen: reason]` branch is unchanged. Added the representative write-through generator hook
+  `Provenance.emit(artifactPath:artifactURL:generator:generatedAt:data:manifestURL:)` — atomic byte
+  write AND record + deterministic save in one step, timestamp passed in, hash content-addressed
+  (D-GENERATOR-WIRED). No clean engine artifact-emit seam exists (the only atomic writers are
+  Provenance.save and RunStore run-event persistence, neither a provenance-tracked factory artifact),
+  so per the plan's explicit fallback the helper itself plus an exercising test is the representative
+  hook; full bootstrap/compile-schema wiring remains a FOLLOW-UP (ADR-0032 P2). Added 4 Swift Testing
+  cases: diverged artifact renders `hand-edited`; pristine + untracked do not; a hand-edited contract
+  change shows both tier grouping/consumers and the annotation; `emit` records an entry whose
+  contentHash matches the emitted bytes. Changes confined to the planned 4 files. swift build, swift
+  test (136 tests, 3 suites), and swift run ai-sdd validate .ai-sdd all pass.
+satisfies:
+  - AC-HANDEDITED-MARKED
+  - AC-PRISTINE-UNMARKED
+  - AC-ANNOTATION-ORTHOGONAL
+  - AC-GENERATOR-RECORDS
+  - AC-BUILD-TEST-VALIDATE-GREEN

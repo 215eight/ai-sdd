@@ -1,0 +1,67 @@
+schema: review.v1
+program: guardrails
+feature: provenance
+slice: plan-annotation
+
+items:
+  - id: AC-HANDEDITED-MARKED
+    verdict: pass
+    notes: >-
+      A changed artifact whose pre-change on-disk bytes diverge from the recorded baseline is marked
+      `handEdited` and renders `[hand-edited]` in the grouped output. Resolved via the additive
+      `annotateHandEdited` post-pass in `ChangePlan.init` using `Provenance.status(of:artifactURL:)`,
+      with the repo-relative `.ai-sdd/...` path resolved against the repo root (parent of `.ai-sdd/`).
+      Test `divergedArtifactRendersHandEdited` asserts both the classification flag and the rendered
+      `.ai-sdd/conventions/swift.md (modified) [hand-edited]` token.
+  - id: AC-PRISTINE-UNMARKED
+    verdict: pass
+    notes: >-
+      Pristine (on-disk bytes still hash to the recorded baseline) and untracked (no recorded entry)
+      paths are NOT marked. `status(of:)` returns `.pristine`/`.untracked`, the guard in
+      `annotateHandEdited` leaves the classification untouched, and an absent manifest loads an empty
+      `Provenance()` (back-compatible/additive). Test `pristineAndUntrackedDoNotRenderHandEdited` covers
+      both in one plan: asserts neither flag is set and the rendered text contains no `hand-edited`.
+  - id: AC-ANNOTATION-ORTHOGONAL
+    verdict: pass
+    notes: >-
+      The annotation composes with tier in the single `[...]` label site in `PlanReport.render`,
+      appended after blastRadius/flags rather than as a separate render site (D-RENDER-LABEL). Test
+      `handEditedContractShowsBothTierAndAnnotation` exercises a hand-edited CONTRACT (schema) change
+      with valid-but-diverging on-disk schema bytes and asserts tier == .contract, handEdited == true,
+      the `contract:` group, the `[hand-edited]` label, AND both resolved consumers
+      (implementer-node, reviewer-node) — proving the annotation is independent of tier and does not
+      disturb classify/consumer-resolution.
+  - id: AC-GENERATOR-RECORDS
+    verdict: pass
+    notes: >-
+      `Provenance.emit` does an atomic byte write of `data` to `artifactURL`, then loads, records, and
+      saves the manifest entry for `artifactPath` — content-addressed hash, caller-supplied ISO-8601
+      timestamp, no clock read. Test `emitWritesBytesAndRecordsMatchingHash` asserts the bytes landed
+      on disk and the persisted entry's contentHash == `contentHash(of: bytes)`, generator/timestamp
+      match, and the returned manifest equals the saved one. Per D-GENERATOR-WIRED's explicit fallback,
+      no clean live engine artifact-emit seam exists (the only atomic writers are Provenance.save and
+      RunStore run-events, neither a provenance-tracked factory artifact), so the helper + exercising
+      test is the sanctioned representative hook; full bootstrap/compile-schema wiring is a recorded
+      FOLLOW-UP (ADR-0032 P2, scope `out`) — nothing wireable was skipped.
+  - id: AC-BUILD-TEST-VALIDATE-GREEN
+    verdict: pass
+    notes: >-
+      Reviewer ran all three: `swift build` complete; `swift test` 136 tests in 3 suites all pass;
+      `swift run ai-sdd validate .ai-sdd` → valid (3 nodes, 3 edges, 4 workers, 8 checks).
+
+verdict: approve
+rework: []
+
+notes: >-
+  Clean additive slice. The diff confirms `classify` and `promoteIfLocked` are UNCHANGED — the only new
+  control flow in `ChangePlan.init` is a third map stage, `annotateHandEdited`, applied after locking.
+  That post-pass copies the classification and flips only `handEdited` (guarded on `== .handEdited`),
+  leaving tier/consumers/flags/lockReason intact, and the new field defaults to false so an absent
+  manifest / untracked path is purely back-compatible. `PlanReport.make` keeps its signature and stays
+  pure: the only render change is one `if change.handEdited { labels.append("hand-edited") }` in the
+  existing single label site — no loader or content reads pushed into the render layer. `Provenance.emit`
+  reuses the shipped record/load/save APIs unchanged; timestamp is an input (no clock), hash is
+  content-addressed so the recorded hash always matches the emitted bytes. Conventions honored: scope held
+  to exactly the 4 planned files (ChangePlan.swift, PlanReport.swift, Provenance.swift, EngineTests.swift);
+  Swift Testing style (@Test/#expect/#require, temp-dir fixtures); no Date/clock references introduced.
+  Every acceptance id is covered by a real, load-bearing test.

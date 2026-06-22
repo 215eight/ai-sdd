@@ -69,11 +69,16 @@ public struct ChangeClassification: Equatable, Sendable {
     /// The matched lock glob's human-readable reason, set only when this change was promoted to
     /// `frozen` (carries `.locked`); `nil` otherwise. Mirrors the optional `blastRadius`.
     public var lockReason: String?
+    /// `true` when this change's pre-change on-disk content diverged from the baseline recorded in
+    /// `.ai-sdd/provenance.json` (ADR-0032) — i.e. `Provenance.status(of:) == .handEdited`. Resolved
+    /// upstream in `ChangePlan.init` and carried here so `PlanReport.make` stays pure (D-PLANREPORT-
+    /// ACCESS); defaults to `false`, so an absent manifest / untracked path is purely additive.
+    public var handEdited: Bool
 
     public init(path: String, status: ArtifactChange.Status, tier: Tier,
                 consumers: [ChangeConsumer] = [], flags: [ChangeFlag] = [],
                 unclassified: Bool = false, blastRadius: String? = nil,
-                lockReason: String? = nil) {
+                lockReason: String? = nil, handEdited: Bool = false) {
         self.path = path
         self.status = status
         self.tier = tier
@@ -82,6 +87,7 @@ public struct ChangeClassification: Equatable, Sendable {
         self.unclassified = unclassified
         self.blastRadius = blastRadius
         self.lockReason = lockReason
+        self.handEdited = handEdited
     }
 }
 
@@ -121,11 +127,33 @@ public struct ChangePlan: Sendable {
             return resolved
         }
 
+        // Provenance baseline: load the committed manifest once (absent ⇒ empty ⇒ all untracked ⇒
+        // unmarked). The working-tree file during `plan` IS the pre-change content (changes are pending
+        // against `--since`, not yet applied), so on-disk bytes give the correct pre-change vs recorded-
+        // baseline comparison (D-CHANGEPLAN-RESOLVES). Annotation is layered as a post-pass, like locks.
+        let provenance = (try? Provenance.load(from: Layout.provenanceURL(homeDirectory: homeDirectory)))
+            ?? Provenance()
+
         let lockEntries = locks ?? []
         self.classifications = changes.map { change in
             let base = Self.classify(change, graph: graph)
-            return Self.promoteIfLocked(base, locks: lockEntries)
+            let locked = Self.promoteIfLocked(base, locks: lockEntries)
+            return Self.annotateHandEdited(locked, provenance: provenance, homeDirectory: homeDirectory)
         }
+    }
+
+    /// Set `handEdited` from the loaded provenance baseline: `true` iff the change's pre-change on-disk
+    /// content diverged from its recorded hash (`Provenance.status(...) == .handEdited`). The artifact
+    /// URL is the repo-relative change path resolved against the repo root (the parent of `.ai-sdd/`).
+    /// Additive post-pass — leaves every other field untouched (D-CHANGEPLAN-RESOLVES).
+    static func annotateHandEdited(_ base: ChangeClassification, provenance: Provenance,
+                                   homeDirectory: URL) -> ChangeClassification {
+        let repoRoot = homeDirectory.deletingLastPathComponent()
+        let artifactURL = repoRoot.appendingPathComponent(base.path)
+        guard provenance.status(of: base.path, artifactURL: artifactURL) == .handEdited else { return base }
+        var annotated = base
+        annotated.handEdited = true
+        return annotated
     }
 
     /// The highest tier across all changes, backing the later CLI exit code (contract when any

@@ -155,6 +155,9 @@ public enum PlanReport {
         var labels: [String] = []
         if let blastRadius = change.blastRadius { labels.append(blastRadius) }
         for flag in change.flags { labels.append(flag.rawValue) }
+        // The `hand-edited` annotation (ADR-0032) composes after blastRadius/flags in the single label
+        // list, so it renders alongside the tier labels rather than as a separate site (D-RENDER-LABEL).
+        if change.handEdited { labels.append("hand-edited") }
         if !labels.isEmpty { head += " [\(labels.joined(separator: ", "))]" }
 
         var lines = [head]

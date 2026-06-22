@@ -1,0 +1,105 @@
+schema: feature-plan.v1
+program: guardrails
+feature: provenance
+slice: plan-annotation
+stack: swift
+
+summary: >
+  Teach `ai-sdd plan` to mark a changed factory artifact as `hand-edited` when its pre-change
+  on-disk content already diverged from the baseline recorded in `.ai-sdd/provenance.json` (the
+  manifest + APIs shipped by the `provenance-manifest` slice, ADR-0032). The annotation is
+  orthogonal to the blast-radius tier — a `hand-edited` contract change renders both its tier
+  grouping and the annotation. Provenance status is resolved upstream in `ChangePlan.init` (which
+  already owns `homeDirectory` and does file-grounded lock loading) and carried as a new
+  `handEdited: Bool` on `ChangeClassification`, so `PlanReport.make` stays pure over in-memory
+  classifications (parent D1: no loader, no content reads). One representative engine-side
+  generator emit is wired through a `Provenance` write-through helper to prove the manifest write
+  path end-to-end; full bootstrap/compile-schema wiring is an explicit FOLLOW-UP (ADR-0032 P2).
+
+scope:
+  in:
+    - "Add a `handEdited: Bool` field (default false) to `ChangeClassification` in `ChangePlan.swift`, mirroring how `blastRadius`/`lockReason` ride on the classification and how `frozen` promotion is layered as a post-pass."
+    - "In `ChangePlan.init`, load the manifest via `Provenance.load(from: Layout.provenanceURL(homeDirectory:))` and set `handEdited` per change from `Provenance.status(of: change.path, artifactURL: <home-relative file URL>) == .handEdited`; an absent manifest loads empty => all changes untracked => unmarked."
+    - "Render the annotation in `PlanReport.render`: append a `hand-edited` token to the existing inline `[...]` label list (after `blastRadius` and flags) for any non-frozen item whose classification is `handEdited`. `PlanReport.make` keeps its current signature and stays pure over in-memory classifications."
+    - "Add a representative write-through helper on `Provenance` (e.g. `emit(artifact:generator:generatedAt:data:into:)`) that performs the existing atomic byte write AND records + saves the manifest entry deterministically (timestamp passed in, hash content-addressed), and wire it at the smallest clean engine artifact-emit seam as the single representative generator hook."
+    - "Unit tests in `EngineTests.swift`: a changed diverged-from-baseline artifact renders `hand-edited`; a pristine changed artifact (and an untracked one) does not; a hand-edited contract change shows both tier and annotation; the wired generator records a correct entry (contentHash matches emitted bytes), using the existing temp-fixture + Swift Testing patterns."
+  out:
+    - "Wiring every real generator (ai-sdd-bootstrap, ai-sdd-compile-schema) to record provenance on emit — explicit FOLLOW-UP per ADR-0032 P2; this slice ships exactly ONE representative engine hook."
+    - "Any change to the `Provenance` read/write/clobber/serialization APIs shipped by `provenance-manifest`."
+    - "Locks / `frozen` tier behavior (ADR-0031), drift detection (ADR-0033), and any three-way merge / re-bootstrap confirmation UI."
+    - "Changing the `PlanReport.make` signature, or threading a factory dir / injected `Provenance` into the pure render layer."
+
+acceptance:
+  - id: AC-HANDEDITED-MARKED
+    description: >
+      `ai-sdd plan` marks a changed artifact whose pre-change content diverged from its recorded
+      provenance baseline as `hand-edited` in the grouped output.
+  - id: AC-PRISTINE-UNMARKED
+    description: >
+      A changed artifact whose pre-change content still matches its recorded baseline (pristine),
+      and an artifact with no recorded entry (untracked), are NOT marked `hand-edited`.
+  - id: AC-ANNOTATION-ORTHOGONAL
+    description: >
+      The `hand-edited` annotation is independent of tier — a hand-edited contract change renders
+      both its tier grouping/labels and the `hand-edited` annotation.
+  - id: AC-GENERATOR-RECORDS
+    description: >
+      The representative wired generator writes a valid provenance entry on emit: the artifact
+      path is recorded with a `contentHash` matching the emitted bytes, saved deterministically to
+      `provenance.json`.
+  - id: AC-BUILD-TEST-VALIDATE-GREEN
+    description: "`swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` all succeed."
+
+decisions:
+  - id: D-PLANREPORT-ACCESS
+    question: "How does `PlanReport` access provenance status without losing its purity?"
+    decision: >
+      `PlanReport.make` does NOT change signature and stays pure over the in-memory classification
+      list (parent D1: no loader, no content reads). Provenance status is resolved upstream and
+      carried as a new `handEdited: Bool` on `ChangeClassification` (defaulting to false). This
+      mirrors how `blastRadius`/`lockReason` already ride on the classification and how `frozen`
+      promotion is layered as a `ChangePlan` post-pass, and avoids threading a factory dir or an
+      injected `Provenance` into the pure render layer.
+    status: closed
+  - id: D-CHANGEPLAN-RESOLVES
+    question: "Where is the provenance lookup performed, and is on-disk content the right baseline?"
+    decision: >
+      `ChangePlan.init` (which already takes `homeDirectory` and loads locks from disk) loads the
+      manifest via `Provenance.load(from: Layout.provenanceURL(homeDirectory:))` and sets
+      `handEdited` per change from `Provenance.status(of: change.path, artifactURL:) == .handEdited`.
+      During `plan` the working-tree file IS the pre-change content (changes are pending against
+      `--since`, not yet applied), so reading the on-disk file gives the correct pre-change vs
+      recorded-baseline comparison. A missing manifest loads empty => everything untracked =>
+      unmarked, so the field is purely additive and back-compatible.
+    status: closed
+  - id: D-RENDER-LABEL
+    question: "How is `hand-edited` rendered, and does it apply to frozen items?"
+    decision: >
+      Append `hand-edited` to the existing inline `[...]` label list in `PlanReport.render` (after
+      `blastRadius` and flags), keeping a single label-rendering site so the annotation composes
+      with tier labels. The frozen branch keeps its dedicated `✗ ... [frozen: reason]` form and
+      does not gain the label this slice — frozen items hard-block regardless; the annotation is
+      additive and can extend to that branch later if a need arises.
+    status: closed
+  - id: D-GENERATOR-WIRED
+    question: "Which generator is wired, and how, to prove the write path end-to-end?"
+    decision: >
+      The representative hook is an engine-side write-through helper on `Provenance`
+      (`emit(artifact:generator:generatedAt:data:into:)`) that performs the existing atomic byte
+      write AND records + saves the manifest entry in one deterministic step (timestamp passed in,
+      hash content-addressed — ADR-0032 P3 / determinism). It is wired at the smallest clean engine
+      artifact-emit seam as the single representative call and covered by a test asserting the
+      recorded entry's hash matches the emitted bytes. Full bootstrap/compile-schema generator
+      wiring is a FOLLOW-UP (ADR-0032 P2), recorded in scope `out`, not inlined here.
+    status: closed
+
+files:
+  - Sources/AISDDEngine/ChangePlan.swift
+  - Sources/AISDDEngine/PlanReport.swift
+  - Sources/AISDDEngine/Provenance.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd

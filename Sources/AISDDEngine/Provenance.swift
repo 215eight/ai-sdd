@@ -116,4 +116,26 @@ public struct Provenance: Equatable, Sendable {
     public func save(to url: URL) throws {
         try encoded().write(to: url, options: .atomic)
     }
+
+    // MARK: - Generator emit (write-through)
+
+    /// The single representative generator hook (D-GENERATOR-WIRED / ADR-0032 P2): atomically write
+    /// `data` to `artifactURL` AND record + save the manifest entry for `artifactPath`, in one
+    /// deterministic step. `generatedAt` is the caller-supplied ISO-8601 timestamp (the engine never
+    /// reads the clock — ADR-0032 P1/P3) and the recorded `contentHash` is content-addressed over the
+    /// emitted bytes, so the recorded hash always matches what landed on disk. `manifestURL` is loaded
+    /// (absent ⇒ empty), updated for `artifactPath`, and saved with the deterministic byte-stable JSON.
+    ///
+    /// `artifactPath` is the manifest key (the repo-relative `.ai-sdd/...` path); `artifactURL` is where
+    /// the bytes are written. They are passed separately so the manifest key stays stable regardless of
+    /// the absolute write location (matching how `status(of:artifactURL:)` already splits them).
+    @discardableResult
+    public static func emit(artifactPath: String, artifactURL: URL, generator: String,
+                            generatedAt: String, data: Data, manifestURL: URL) throws -> Provenance {
+        try data.write(to: artifactURL, options: .atomic)
+        var manifest = try Provenance.load(from: manifestURL)
+        manifest.record(path: artifactPath, generator: generator, generatedAt: generatedAt, data: data)
+        try manifest.save(to: manifestURL)
+        return manifest
+    }
 }

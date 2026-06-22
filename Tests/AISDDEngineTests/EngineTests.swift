@@ -2175,6 +2175,150 @@ struct PlanReportTests {
         #expect(out.result.frozenPresent == true)
     }
 
+    // MARK: - hand-edited annotation (ADR-0032: provenance-grounded `hand-edited` label)
+
+    /// Build a temp *repo root* containing a real `.ai-sdd/` home with one schema + a single-consumer
+    /// worker/pipeline, then write each named artifact's current bytes and seed `provenance.json` with
+    /// a recorded baseline per artifact. `recorded[path]` is the baseline bytes (what the generator
+    /// emitted); the on-disk bytes are `onDisk[path]`. A path present in `onDisk` but absent from
+    /// `recorded` is untracked. Returns the `.ai-sdd/` home `ChangePlan.init` takes — its parent is the
+    /// repo root, so a `.ai-sdd/...` change path resolves to the real on-disk file (D-CHANGEPLAN-RESOLVES).
+    private func makeHandEditedFixture(
+        schemas: [String],
+        workers: [(name: String, consumes: [String])],
+        recorded: [String: String],
+        onDisk: [String: String]
+    ) throws -> URL {
+        let fm = FileManager.default
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("handedited-\(UUID().uuidString)", isDirectory: true)
+        let home = root.appendingPathComponent(".ai-sdd", isDirectory: true)
+        try fm.createDirectory(at: home.appendingPathComponent("schemas"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appendingPathComponent("workers"), withIntermediateDirectories: true)
+
+        for stem in schemas {
+            let yaml = """
+            apiVersion: ai-sdd/v1
+            kind: Schema
+            metadata: { name: \(stem), version: 1 }
+            spec: { handle: file, format: yaml, scope: internal }
+            """
+            try yaml.write(to: home.appendingPathComponent("schemas/\(stem).schema.yaml"),
+                           atomically: true, encoding: .utf8)
+        }
+        for worker in workers {
+            let consumesList = worker.consumes.map { "{ schema: \($0), required: true }" }.joined(separator: ", ")
+            let yaml = """
+            apiVersion: ai-sdd/v1
+            kind: Worker
+            metadata: { name: \(worker.name) }
+            spec:
+              workerKind: transform
+              consumes: [\(consumesList)]
+            """
+            try yaml.write(to: home.appendingPathComponent("workers/\(worker.name).worker.yaml"),
+                           atomically: true, encoding: .utf8)
+        }
+        let nodeLines = workers.map { "    - { id: \($0.name)-node, worker: \($0.name) }" }.joined(separator: "\n")
+        let pipeline = """
+        apiVersion: ai-sdd/v1
+        kind: Pipeline
+        metadata: { name: fixture, version: 1 }
+        spec:
+          semantics: enabler
+          nodes:
+        \(nodeLines)
+          edges: []
+        """
+        try pipeline.write(to: home.appendingPathComponent("pipeline.yaml"), atomically: true, encoding: .utf8)
+
+        // Write each artifact's *current on-disk* bytes (the pre-change content the planner reads).
+        for (repoRelPath, bytes) in onDisk {
+            let url = root.appendingPathComponent(repoRelPath)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try bytes.write(to: url, atomically: true, encoding: .utf8)
+        }
+        // Seed provenance.json with the recorded baseline per recorded path.
+        var manifest = Provenance()
+        for (repoRelPath, bytes) in recorded {
+            manifest.record(path: repoRelPath, generator: "fixture",
+                            generatedAt: "2026-06-22T00:00:00Z", data: Data(bytes.utf8))
+        }
+        try manifest.save(to: Layout.provenanceURL(homeDirectory: home))
+        return home
+    }
+
+    // AC-HANDEDITED-MARKED: a changed artifact whose pre-change on-disk content diverged from its
+    // recorded baseline renders `hand-edited` in the grouped output.
+    @Test func divergedArtifactRendersHandEdited() throws {
+        let path = repoPath("conventions/swift.md")
+        let home = try makeHandEditedFixture(
+            schemas: [], workers: [],
+            recorded: [path: "generated baseline"],
+            onDisk:   [path: "generated baseline — then hand tweaked"])   // diverged
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: path, status: .modified)], homeDirectory: home)
+        #expect(plan.classifications.first?.handEdited == true)
+
+        let text = PlanReport.make(plan: plan, requireAck: .contract).renderedText
+        #expect(text.contains(".ai-sdd/conventions/swift.md (modified) [hand-edited]"))
+    }
+
+    // AC-PRISTINE-UNMARKED: a pristine changed artifact (on-disk bytes still match the baseline) and
+    // an untracked one (no recorded entry) are NOT marked `hand-edited`.
+    @Test func pristineAndUntrackedDoNotRenderHandEdited() throws {
+        let pristine = repoPath("conventions/swift.md")
+        let untracked = repoPath("workers/w.worker.yaml")
+        let home = try makeHandEditedFixture(
+            schemas: [], workers: [("w", [])],
+            recorded: [pristine: "same bytes"],                       // untracked has no recorded entry
+            onDisk:   [pristine: "same bytes", untracked: "anything"])
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: pristine, status: .modified),
+            ArtifactChange(path: untracked, status: .modified)
+        ], homeDirectory: home)
+
+        let byPath = Dictionary(uniqueKeysWithValues: plan.classifications.map { ($0.path, $0) })
+        #expect(byPath[pristine]?.handEdited == false, "pristine: bytes match baseline")
+        #expect(byPath[untracked]?.handEdited == false, "untracked: no recorded entry")
+
+        let text = PlanReport.make(plan: plan, requireAck: .contract).renderedText
+        #expect(!text.contains("hand-edited"))
+    }
+
+    // AC-ANNOTATION-ORTHOGONAL: a hand-edited *contract* change renders BOTH its tier grouping/labels
+    // (contract + consumers) AND the `hand-edited` annotation — the annotation is independent of tier.
+    @Test func handEditedContractShowsBothTierAndAnnotation() throws {
+        let path = repoPath("schemas/feature-plan.schema.yaml")
+        // The on-disk schema bytes must parse as a valid schema (the bundle loads for consumer
+        // resolution) yet still diverge from the recorded baseline.
+        let onDiskSchema = """
+        apiVersion: ai-sdd/v1
+        kind: Schema
+        metadata: { name: feature-plan, version: 1 }
+        spec: { handle: file, format: yaml, scope: internal }
+        # hand-tweaked comment that diverges from the recorded baseline
+        """
+        let home = try makeHandEditedFixture(
+            schemas: ["feature-plan"],
+            workers: [("implementer", ["feature-plan.v1"]), ("reviewer", ["feature-plan.v1"])],
+            recorded: [path: "an earlier recorded baseline"],
+            onDisk:   [path: onDiskSchema])
+        // makeFixture already wrote a canonical schema at schemas/...; overwrite below kept it valid.
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: path, status: .modified)], homeDirectory: home)
+
+        let result = try #require(plan.classifications.first)
+        #expect(result.tier == .contract, "tier classification is unaffected by the annotation")
+        #expect(result.handEdited == true)
+
+        let text = PlanReport.make(plan: plan, requireAck: .contract).renderedText
+        #expect(text.contains("contract:"), "renders under its tier group")
+        #expect(text.contains(".ai-sdd/schemas/feature-plan.schema.yaml (modified) [hand-edited]"))
+        #expect(text.contains("consumer: implementer-node (implementer)"), "tier labels/consumers still render")
+        #expect(text.contains("consumer: reviewer-node (reviewer)"))
+    }
+
     // MARK: - skill surface (ai-sdd surface)
 
     /// A two-agent table mirroring `Layout.agentSkillSurfaces` but pinned here so the tests don't
@@ -2432,5 +2576,29 @@ struct PlanReportTests {
         let entry = manifest.entries["p"]
         #expect(entry?.generatedAt == stamp)
         #expect(entry?.contentHash == expected)
+    }
+
+    // AC-GENERATOR-RECORDS: the representative wired generator (`Provenance.emit`) writes the bytes AND
+    // records an entry whose `contentHash` matches the emitted bytes, saved deterministically to the
+    // manifest — one write-through step (D-GENERATOR-WIRED / ADR-0032 P2).
+    @Test func emitWritesBytesAndRecordsMatchingHash() throws {
+        let (manifestURL, artifactURL) = try makeProvenanceFixture(artifact: "out.json", bytes: "old")
+        let path = ".ai-sdd/artifacts/out.json"
+        let bytes = Data("emitted payload".utf8)
+
+        let returned = try Provenance.emit(
+            artifactPath: path, artifactURL: artifactURL, generator: "compile-schema",
+            generatedAt: "2026-06-22T09:00:00Z", data: bytes, manifestURL: manifestURL)
+
+        // The bytes actually landed on disk.
+        #expect(try Data(contentsOf: artifactURL) == bytes)
+
+        // The persisted manifest carries an entry whose contentHash matches the emitted bytes.
+        let loaded = try Provenance.load(from: manifestURL)
+        let entry = try #require(loaded.entries[path])
+        #expect(entry.generator == "compile-schema")
+        #expect(entry.generatedAt == "2026-06-22T09:00:00Z")
+        #expect(entry.contentHash == Provenance.contentHash(of: bytes), "recorded hash matches emitted bytes")
+        #expect(loaded == returned, "the returned manifest equals what was saved")
     }
 }
