@@ -1,0 +1,16 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata:
+  name: plan-command
+  version: 1
+  correlation: ai-sdd/plan-command
+  factory: code
+spec:
+  semantics: enabler
+  nodes:
+    - { id: diff-source, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: classifier, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: cli-command, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: diff-source, to: classifier }
+    - { from: classifier, to: cli-command }
