@@ -3,8 +3,11 @@ kind: Pipeline
 metadata: { name: drift, version: 1 }
 spec:
   semantics: enabler
+  # drift-conventions (Kind 3, convention-citation) was DEFERRED at plan time (Dr1): the convention
+  # Discovery Record's evidence column is free-form prose that can't be parsed into citations
+  # deterministically without the NLP judgment ADR-0033 forbids. It needs a machine-readable evidence
+  # schema first. Tracked as a follow-up; node removed from the graph so the feature completes on the
+  # two shipped deterministic kinds.
   nodes:
     - { id: drift-deterministic, kind: pipeline, pipeline: ../.., stack: swift }
-    - { id: drift-conventions, kind: pipeline, pipeline: ../.., stack: swift }
-  edges:
-    - { from: drift-deterministic, to: drift-conventions }
+  edges: []
