@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: compile-schema, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: extract-compiler, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: dedupe-drift, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: extract-compiler, to: dedupe-drift }   # dedupe needs SchemaCompiler to exist first
