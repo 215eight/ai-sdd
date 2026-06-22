@@ -1795,3 +1795,150 @@ struct ChangePlanTests {
         }
     }
 }
+
+// MARK: - PlanReport (tier-grouped render + ack/exit decision over a classified plan)
+
+struct PlanReportTests {
+    /// Build a temp `.ai-sdd/` fixture (same shape as ChangePlanTests): `schemas/<each>.schema.yaml`,
+    /// a `workers/` dir, and a `pipeline.yaml` with one node per worker running it.
+    private func makeFixture(
+        schemas: [String],
+        workers: [(name: String, consumes: [String])]
+    ) throws -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("planreport-\(UUID().uuidString)", isDirectory: true)
+        let fm = FileManager.default
+        try fm.createDirectory(at: home.appendingPathComponent("schemas"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appendingPathComponent("workers"), withIntermediateDirectories: true)
+
+        for stem in schemas {
+            let yaml = """
+            apiVersion: ai-sdd/v1
+            kind: Schema
+            metadata: { name: \(stem), version: 1 }
+            spec: { handle: file, format: yaml, scope: internal }
+            """
+            try yaml.write(to: home.appendingPathComponent("schemas/\(stem).schema.yaml"),
+                           atomically: true, encoding: .utf8)
+        }
+        for worker in workers {
+            let consumesList = worker.consumes.map { "{ schema: \($0), required: true }" }.joined(separator: ", ")
+            let yaml = """
+            apiVersion: ai-sdd/v1
+            kind: Worker
+            metadata: { name: \(worker.name) }
+            spec:
+              workerKind: transform
+              consumes: [\(consumesList)]
+            """
+            try yaml.write(to: home.appendingPathComponent("workers/\(worker.name).worker.yaml"),
+                           atomically: true, encoding: .utf8)
+        }
+        let nodeLines = workers.map { "    - { id: \($0.name)-node, worker: \($0.name) }" }.joined(separator: "\n")
+        let pipeline = """
+        apiVersion: ai-sdd/v1
+        kind: Pipeline
+        metadata: { name: fixture, version: 1 }
+        spec:
+          semantics: enabler
+          nodes:
+        \(nodeLines)
+          edges: []
+        """
+        try pipeline.write(to: home.appendingPathComponent("pipeline.yaml"),
+                           atomically: true, encoding: .utf8)
+        return home
+    }
+
+    private func repoPath(_ subpath: String) -> String { ".ai-sdd/\(subpath)" }
+
+    // ACC-no-changes-exit0: an empty plan renders "no changes" and ackRequired is false (exit 0).
+    @Test func noChangesIsNoAck() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let plan = ChangePlan(changes: [], homeDirectory: home)
+        let report = PlanReport.make(plan: plan, requireAck: .contract)
+        #expect(report.renderedText == "no changes")
+        #expect(report.ackRequired == false)
+    }
+
+    // ACC-refresh-and-local-exit0: refresh + local at the default contract threshold -> no ack.
+    @Test func refreshAndLocalDoNotTripAtContract() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),
+            ArtifactChange(path: repoPath("workers/implementer.worker.yaml"), status: .modified)
+        ], homeDirectory: home)
+        let report = PlanReport.make(plan: plan, requireAck: .contract)
+        #expect(report.ackRequired == false)
+    }
+
+    // ACC-contract-exit2-with-consumers: a contract change with >=2 consumers trips the default.
+    @Test func contractTripsAtDefaultAndListsConsumers() throws {
+        let home = try makeFixture(
+            schemas: ["feature-plan"],
+            workers: [("implementer", ["feature-plan.v1"]), ("reviewer", ["feature-plan.v1"])])
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("schemas/feature-plan.schema.yaml"), status: .modified)],
+            homeDirectory: home)
+        let report = PlanReport.make(plan: plan, requireAck: .contract)
+        #expect(report.ackRequired == true)
+        #expect(report.renderedText.contains("contract:"))
+        #expect(report.renderedText.contains("consumer: implementer-node (implementer)"))
+        #expect(report.renderedText.contains("consumer: reviewer-node (reviewer)"))
+    }
+
+    // ACC-require-ack-local-trips-local: a local-only change is exit 0 at contract but exit 2 at local.
+    @Test func localTripsOnlyWhenThresholdLowered() throws {
+        let home = try makeFixture(schemas: [], workers: [])
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("workers/w.worker.yaml"), status: .modified)],
+            homeDirectory: home)
+        #expect(PlanReport.make(plan: plan, requireAck: .contract).ackRequired == false)
+        #expect(PlanReport.make(plan: plan, requireAck: .local).ackRequired == true)
+    }
+
+    // ACC-added-zero-consumer-not-blocking: an added 0-consumer schema does not trip at contract
+    // (parent D3) but does once the threshold is lowered to reach it; it is still rendered under
+    // contract with its flag.
+    @Test func addedZeroConsumerDoesNotTripAtDefault() throws {
+        let home = try makeFixture(
+            schemas: ["brand-new"],
+            workers: [("implementer", ["feature-plan.v1"])])   // nothing consumes brand-new
+        let plan = ChangePlan(
+            changes: [ArtifactChange(path: repoPath("schemas/brand-new.schema.yaml"), status: .added)],
+            homeDirectory: home)
+
+        let atContract = PlanReport.make(plan: plan, requireAck: .contract)
+        #expect(atContract.ackRequired == false)
+        #expect(atContract.renderedText.contains("contract:"))
+        #expect(atContract.renderedText.contains("nonAckBlocking"))
+        #expect(atContract.renderedText.contains("0 consumers (new)"))
+
+        // Lowered threshold reaches it -> trips.
+        #expect(PlanReport.make(plan: plan, requireAck: .local).ackRequired == true)
+        #expect(PlanReport.make(plan: plan, requireAck: .refresh).ackRequired == true)
+    }
+
+    // ACC-grouped-output-blast-radius: groups render in the order contract -> local -> refresh, each
+    // item showing its path + status; contract items list consumers; flags render inline.
+    @Test func groupedOutputShape() throws {
+        let home = try makeFixture(schemas: ["s"], workers: [("w", ["s.v1"])])
+        let plan = ChangePlan(changes: [
+            ArtifactChange(path: repoPath("conventions/swift.md"), status: .modified),
+            ArtifactChange(path: repoPath("workers/w.worker.yaml"), status: .modified),
+            ArtifactChange(path: repoPath("schemas/s.schema.yaml"), status: .modified)
+        ], homeDirectory: home)
+        let text = PlanReport.make(plan: plan, requireAck: .contract).renderedText
+
+        let contractIdx = try #require(text.range(of: "contract:"))
+        let localIdx = try #require(text.range(of: "local:"))
+        let refreshIdx = try #require(text.range(of: "refresh:"))
+        #expect(contractIdx.lowerBound < localIdx.lowerBound)
+        #expect(localIdx.lowerBound < refreshIdx.lowerBound)
+
+        #expect(text.contains(".ai-sdd/schemas/s.schema.yaml (modified)"))
+        #expect(text.contains(".ai-sdd/workers/w.worker.yaml (modified)"))
+        #expect(text.contains(".ai-sdd/conventions/swift.md (modified)"))
+        #expect(text.contains("consumer: w-node (w)"))
+    }
+}

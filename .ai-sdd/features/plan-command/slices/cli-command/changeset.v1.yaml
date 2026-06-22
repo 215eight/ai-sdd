@@ -1,0 +1,32 @@
+summary: >-
+  Added the read-only `ai-sdd plan` command (ADR-0030) wiring ArtifactDiff (changed .ai-sdd/
+  artifacts) and ChangePlan (blast-radius classification) into a user-facing surface. Introduced a
+  pure engine helper PlanReport (Sources/AISDDEngine/PlanReport.swift) that maps a classified
+  ChangePlan + a --require-ack Tier threshold to (renderedText, ackRequired): output grouped in the
+  order contract -> local -> refresh, each item showing path + status, contract items listing their
+  consuming workers (node + worker), with breakingRemoval / nonAckBlocking flags and any blast-radius
+  label rendered inline, and "no changes" for an empty plan. ackRequired is true when any change's
+  tier meets-or-exceeds the threshold, except a nonAckBlocking added 0-consumer contract change does
+  not trip at the default contract threshold (parent D3) and only counts when the threshold is
+  lowered below contract. Added the thin `Plan` ParsableCommand in Sources/AISDDCLI/main.swift
+  (registered in subcommands:) with the .ai-sdd dir @Argument, --since <ref> (default HEAD), and
+  --require-ack <tier> (default contract, parsed to Tier with a usage error on an unknown name). It
+  runs the existing loadValidated path FIRST (invalid graph -> ExitCode.failure / 1, no
+  classification), computes changes via ArtifactDiff.changedArtifacts(baseline:), classifies via
+  ChangePlan, prints PlanReport's text, and throws ExitCode(2) when ack is required (distinct from
+  validate's exit 1). Added Swift Testing coverage (PlanReportTests in
+  Tests/AISDDEngineTests/EngineTests.swift) over the pure function with synthetic ChangePlan inputs
+  and a fixture factory dir. ChangePlan.swift was left unmodified (no accessor needed). swift build,
+  swift test (104 tests), and swift run ai-sdd validate .ai-sdd all pass.
+satisfies:
+  - ACC-no-changes-exit0
+  - ACC-refresh-and-local-exit0
+  - ACC-contract-exit2-with-consumers
+  - ACC-require-ack-local-trips-local
+  - ACC-added-zero-consumer-not-blocking
+  - ACC-since-baseline
+  - ACC-grouped-output-blast-radius
+  - ACC-validate-first-invalid-graph
+  - ACC-help-documents-options
+  - ACC-read-only
+  - ACC-build-test-validate-green

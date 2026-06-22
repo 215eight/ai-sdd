@@ -1,0 +1,86 @@
+verdict: approve
+items:
+  - id: ACC-no-changes-exit0
+    verdict: pass
+    notes: >-
+      Verified against the real CLI: `ai-sdd plan .ai-sdd` on a clean tree prints "no changes" and
+      exits 0. PlanReportTests.noChangesIsNoAck asserts the same over an empty classified plan
+      (renderedText == "no changes", ackRequired == false). render() short-circuits to "no changes"
+      for an empty classifications list.
+  - id: ACC-refresh-and-local-exit0
+    verdict: pass
+    notes: >-
+      Real CLI: a conventions/swift.md edit renders under "refresh:" and exits 0; a workers/* edit
+      renders under "local:" and exits 0 at the default contract threshold. PlanReportTests
+      .refreshAndLocalDoNotTripAtContract asserts ackRequired == false for both at the contract
+      threshold.
+  - id: ACC-contract-exit2-with-consumers
+    verdict: pass
+    notes: >-
+      Real CLI: editing schemas/feature-plan.schema.yaml renders under "contract:" with both
+      consumers listed (implementer, reviewer) and exits 2. PlanReportTests
+      .contractTripsAtDefaultAndListsConsumers asserts ackRequired == true and the consumer lines
+      over a >=2-consumer fixture. ExitCode(2) thrown from the command when ackRequired.
+  - id: ACC-require-ack-local-trips-local
+    verdict: pass
+    notes: >-
+      Real CLI: a workers/* edit exits 0 at the default contract threshold but exits 2 with
+      `--require-ack local`. PlanReportTests.localTripsOnlyWhenThresholdLowered asserts ackRequired
+      false at contract, true at local. trips() requires tier >= threshold.
+  - id: ACC-added-zero-consumer-not-blocking
+    verdict: pass
+    notes: >-
+      Real CLI (staged added schema so git diff sees it): an added 0-consumer schema renders under
+      "contract:" with "[0 consumers (new), nonAckBlocking]" and "consumers: none", does NOT trip at
+      the default contract threshold (exit 0, parent D3 carve-out), but trips (exit 2) when the
+      threshold is lowered to local. PlanReportTests.addedZeroConsumerDoesNotTripAtDefault asserts
+      the same. trips() exempts nonAckBlocking only when threshold == .contract.
+  - id: ACC-since-baseline
+    verdict: pass
+    notes: >-
+      Real CLI: `plan --since HEAD~1` diffs against that ref and surfaces a different change set than
+      HEAD. The command passes `since` straight through as ArtifactDiff.changedArtifacts(baseline:),
+      defaulting to HEAD when omitted.
+  - id: ACC-grouped-output-blast-radius
+    verdict: pass
+    notes: >-
+      Output renders groups in the fixed order contract -> local -> refresh (empty groups omitted),
+      each item showing "  <path> (<status>)", contract items listing "    consumer: <node>
+      (<worker>)", and breakingRemoval / nonAckBlocking / blastRadius labels inline in "[...]".
+      Confirmed on the real CLI and by PlanReportTests.groupedOutputShape (asserts the
+      contract<local<refresh ordering and the consumer/path/status lines).
+  - id: ACC-validate-first-invalid-graph
+    verdict: pass
+    notes: >-
+      Real CLI: with an invalid worker spec, `plan` surfaces the validation error and exits 1
+      (ExitCode.failure via the shared loadValidated path) without classifying or rendering a plan.
+      loadValidated runs first in run(), before ArtifactDiff/ChangePlan/PlanReport.
+  - id: ACC-help-documents-options
+    verdict: pass
+    notes: >-
+      `ai-sdd plan --help` documents the <dir> argument, `--since` (default HEAD), and
+      `--require-ack` (refresh | local | contract, default contract). Verified directly.
+  - id: ACC-read-only
+    verdict: pass
+    notes: >-
+      The command only reads: loadValidated (read), ArtifactDiff (read-only `git diff`), ChangePlan
+      (in-memory), PlanReport (pure), and print. No write/stage path. After every scratch exercise
+      the working tree was restored to exactly the three slice files — no stray .ai-sdd writes
+      observed.
+  - id: ACC-build-test-validate-green
+    verdict: pass
+    notes: >-
+      Reviewer ran them directly: `swift build` (Build complete), `swift test` (104 tests, 3 suites,
+      all passed including PlanReportTests), and `swift run ai-sdd validate .ai-sdd` (valid — 3
+      nodes, 3 edges, 4 workers, 8 checks; exit 0).
+rework: []
+notes: >-
+  All 11 acceptance ids pass against the real `ai-sdd plan` command, not merely the changeset
+  claims. The load-bearing ADR-0030 exit-code behavior was exercised with throwaway scratch changes
+  (cleaned up afterward): refresh -> 0, contract -> 2 with consumers, --require-ack local -> 2,
+  added 0-consumer contract -> 0 at default / 2 when lowered (D3), invalid graph -> 1 (distinct from
+  2). Conventions hold: the engine (Tier, PlanReport) is CLI-free (no ArgumentParser import); the
+  exit/threshold/render decision is the pure PlanReport unit, tested directly in PlanReportTests
+  without driving ParsableCommand exit paths; path literals stay centralized in Layout.swift (no
+  hardcoded ".ai-sdd/" in the Plan command); exit 2 is distinct from validate's exit 1; Swift Testing
+  style throughout. Working tree left clean.

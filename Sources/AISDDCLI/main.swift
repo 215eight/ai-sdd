@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd 0.2.0",
-        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self]
+        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self, Plan.self]
     )
 }
 
@@ -533,6 +533,46 @@ struct Graph: ParsableCommand {
             throw ValidationError("no graphs at '\(dir)' — expected a pipeline.yaml and/or a features/ folder")
         }
         return GraphRenderer.projectIndex(title: title, sections: sections) + "\n"
+    }
+}
+
+// MARK: - plan
+
+struct Plan: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show the blast radius of pending .ai-sdd/ changes by tier, and whether an ack is required (ADR-0030)."
+    )
+    @Argument(help: "Directory containing pipeline.yaml and a workers/ folder (the .ai-sdd dir).")
+    var dir: String
+    @Option(name: .long, help: "Baseline git ref to diff against (default: HEAD).")
+    var since: String = "HEAD"
+    @Option(name: .long, help: "Tier threshold that requires an ack: refresh | local | contract (default: contract).")
+    var requireAck: String = "contract"
+
+    func run() throws {
+        // Validate-first (D3): on an invalid graph this throws ExitCode.failure (1) and we never
+        // classify. Distinct from this command's own ExitCode(2) "ack required" signal.
+        _ = try loadValidated(dir)
+
+        let threshold = try Plan.parseTier(requireAck)
+        let home = URL(fileURLWithPath: dir, isDirectory: true)
+        let changes = ArtifactDiff(workingDirectory: workspace()).changedArtifacts(baseline: since)
+        let plan = ChangePlan(changes: changes, homeDirectory: home)
+        let report = PlanReport.make(plan: plan, requireAck: threshold)
+
+        print(report.renderedText)
+        if report.ackRequired { throw ExitCode(2) }
+    }
+
+    /// Parse a `--require-ack` value into a `Tier`, failing with a usage error naming the valid tiers.
+    static func parseTier(_ raw: String) throws -> Tier {
+        switch raw {
+        case "refresh":  return .refresh
+        case "local":    return .local
+        case "contract": return .contract
+        default:
+            throw ValidationError("unknown --require-ack tier '\(raw)' — expected one of: refresh, local, contract")
+        }
     }
 }
 

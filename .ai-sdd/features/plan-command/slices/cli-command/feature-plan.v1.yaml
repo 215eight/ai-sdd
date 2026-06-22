@@ -1,0 +1,158 @@
+summary: >-
+  Add a read-only `Plan` ParsableCommand to Sources/AISDDCLI/main.swift, registered in the
+  `subcommands:` list, that wires together the two already-shipped engine pieces — ArtifactDiff
+  (changed `.ai-sdd/` artifacts via git) and ChangePlan (deterministic blast-radius classification)
+  — into the user-facing `ai-sdd plan` (ADR-0030). It takes the `.ai-sdd` dir @Argument (like
+  `validate`) plus `--since <ref>` (baseline, default HEAD) and `--require-ack <tier>` (threshold,
+  default contract). It runs the existing validate/load path FIRST: on an invalid graph it fails
+  with that validation error and does NOT classify. Otherwise it computes the change list via
+  ArtifactDiff.changedArtifacts(baseline:) and classifies it via ChangePlan, then prints output
+  grouped by tier (contract -> local -> refresh), each item showing path + status and — for
+  contract — the consuming workers, with breakingRemoval / nonAckBlocking flags rendered inline;
+  with no changes it prints "no changes". Exit code is 0 normally and 2 (parent D1) when any change
+  meets or exceeds the --require-ack threshold; a newly added 0-consumer contract (nonAckBlocking,
+  parent D3) does NOT trip the exit at the default threshold, only if the threshold is lowered to
+  reach it. `ai-sdd plan --help` documents the argument and both options. The command is read-only
+  end to end — it writes and stages nothing. To make the exit-code/threshold/grouping behavior
+  unit-testable without invoking ParsableCommand exit paths, the render + exit-code decision is
+  factored into a pure engine function (PlanReport) over a classified plan + threshold; the thin
+  Plan command parses the threshold, runs validate, builds the ChangePlan, calls PlanReport, prints
+  its text, and throws ExitCode(2) when PlanReport says ack is required.
+scope:
+  in:
+    - New read-only `Plan` ParsableCommand in Sources/AISDDCLI/main.swift, registered in the AISDD `subcommands:` array, with the `.ai-sdd` dir @Argument (like `validate`) and @Option `--since <ref>` (default HEAD) and `--require-ack <tier>` (default contract).
+    - Validate-first wiring - the command calls the existing loadValidated(...) path (the same load + SpecValidator.validate the `validate` subcommand uses) and, on an invalid graph, surfaces that validation error to stderr and exits without classifying.
+    - Computing the change list via ArtifactDiff.changedArtifacts(baseline:) (default HEAD, --since overrides the baseline) and classifying it via ChangePlan over the same `.ai-sdd` dir.
+    - A pure engine render+decision function (new PlanReport type/namespace in Sources/AISDDEngine) mapping a classified ChangePlan + a require-ack Tier threshold to (renderedText, ackRequired Bool / exit code), so behavior is unit-testable without driving ParsableCommand exit paths. The thin Plan command calls it and throws ExitCode(2) when ackRequired.
+    - Tier-grouped output (contract -> local -> refresh) with per-item path + status; contract items additionally list consuming workers (node id + worker name); breakingRemoval and nonAckBlocking flags rendered inline; "no changes" printed for an empty change list.
+    - Exit code 0 normally, 2 (parent D1) when any change's tier meets-or-exceeds the --require-ack threshold (default contract); a nonAckBlocking added 0-consumer contract does not trip the exit at the default threshold (parent D3) unless the threshold is lowered to include it.
+    - Parsing/validating the `--require-ack <tier>` value into a Tier (contract | local | refresh); an unrecognized tier name fails with a clear usage error.
+    - Swift Testing unit tests in Tests/AISDDEngineTests/EngineTests.swift covering the PlanReport exit-code threshold (contract trips at default; local trips only when --require-ack local; nonAckBlocking added schema does not trip at default but does when threshold reaches it), the no-changes case, and the tier-grouped render shape, driven by injected/synthetic ArtifactChange lists and a fixture factory dir (no git, no real ParsableCommand exit).
+  out:
+    - The ArtifactDiff git substrate and the ChangePlan classifier themselves (both already shipped - this slice only wires and renders them; their behavior is reused, not re-implemented).
+    - Any write/stage/auto-commit/auto-fix - plan is read-only.
+    - Enforced freeze/locks and `frozen`-tier rendering; the judge/intent-check re-eval flag (ADR-0007); provenance/drift detection; a no-write dry-run of the bootstrap skill.
+    - Machine/JSON output for `plan`, non-git baselines, and richer checks/* blast radius (parent D4 keeps checks/* at local).
+    - Transitive/cross-schema blast radius beyond the direct `consumes` edges ChangePlan already resolves.
+acceptance:
+  - id: ACC-no-changes-exit0
+    description: >-
+      `ai-sdd plan .ai-sdd` with no `.ai-sdd/` changes (empty change list) prints "no changes" and
+      exits 0. Verified via PlanReport over an empty classified plan: rendered text is the no-changes
+      message and ackRequired is false (exit 0).
+  - id: ACC-refresh-and-local-exit0
+    description: >-
+      A conventions/* edit classifies as refresh and a workers/* edit classifies as local; with the
+      default --require-ack contract threshold, neither trips the ack, so PlanReport reports exit 0.
+  - id: ACC-contract-exit2-with-consumers
+    description: >-
+      A schemas/*.schema.yaml change classifies as contract with its consuming workers listed, meets
+      the default contract threshold, and PlanReport reports ack required -> the Plan command exits 2
+      (parent D1). Verified against a fixture whose graph gives the changed schema >=2 consumers.
+  - id: ACC-require-ack-local-trips-local
+    description: >-
+      With `--require-ack local`, a local-only change (e.g. a workers/* edit) meets-or-exceeds the
+      lowered threshold and PlanReport reports ack required -> exit 2, whereas at the default contract
+      threshold the same change would have been exit 0.
+  - id: ACC-added-zero-consumer-not-blocking
+    description: >-
+      An added 0-consumer schema (contract tier, nonAckBlocking flag, "0 consumers (new)" blast
+      radius) does NOT trip the exit at the default contract threshold (parent D3) -> exit 0; it is
+      still rendered under contract with its flag. If the threshold is lowered such that it is
+      reached, it does trip (exit 2).
+  - id: ACC-since-baseline
+    description: >-
+      `--since <ref>` makes the command diff against `<ref>` instead of HEAD - the ref value is
+      passed through as the ArtifactDiff baseline (default HEAD when --since is omitted).
+  - id: ACC-grouped-output-blast-radius
+    description: >-
+      Output is grouped by tier in the order contract -> local -> refresh, each item showing its path
+      and status, contract items showing their consuming workers (node id + worker name), and
+      breakingRemoval / nonAckBlocking flags rendered inline.
+  - id: ACC-validate-first-invalid-graph
+    description: >-
+      `plan` against an invalid graph prints the validation error (via the existing validate/load
+      path) and does NOT classify or render a plan - the validation failure short-circuits before
+      ArtifactDiff/ChangePlan run.
+  - id: ACC-help-documents-options
+    description: >-
+      `ai-sdd plan --help` documents the `.ai-sdd` dir argument, `--since`, and `--require-ack`,
+      including their defaults (HEAD and contract).
+  - id: ACC-read-only
+    description: >-
+      The command writes and stages nothing - it only reads the working tree (via the read-only
+      ArtifactDiff git diff) and prints; no file under or outside `.ai-sdd/` is created or modified.
+  - id: ACC-build-test-validate-green
+    description: >-
+      `swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` all succeed (the factory
+      surface changes, so the validate gate must stay green).
+decisions:
+  - id: D1
+    status: closed
+    question: How is the exit-code / threshold / render behavior made unit-testable given ParsableCommand exit paths are awkward to test directly?
+    decision: >-
+      Factor the decision out of the command into a pure engine function (a new PlanReport type or
+      static helper in Sources/AISDDEngine) that takes the classified ChangePlan plus a require-ack
+      Tier threshold and returns (renderedText, ackRequired). ackRequired is true iff the plan's
+      highestTier is non-nil and >= the threshold (using Tier's existing Comparable), with the parent
+      D3 carve-out that a contract change consisting solely of nonAckBlocking (added 0-consumer)
+      changes does not by itself meet the contract threshold - only a change whose own tier reaches
+      the threshold and is not nonAckBlocking-exempt trips it. Tests assert PlanReport directly with
+      synthetic classified inputs; the thin Plan command parses inputs, runs validate, builds the
+      ChangePlan, calls PlanReport, prints renderedText, and throws ExitCode(2) when ackRequired -
+      no ParsableCommand exit path is exercised in tests.
+  - id: D2
+    status: closed
+    question: Where do the tests live?
+    decision: >-
+      In Tests/AISDDEngineTests/EngineTests.swift (Swift Testing - @Test/#expect, typed errors), per
+      the conventions and slice brief. The repo has no CLI test target (confirmed: only
+      Tests/AISDDEngineTests exists), and because the exit-code/threshold/grouping logic is the pure
+      PlanReport engine function, it is tested there over injected ArtifactChange lists and a fixture
+      factory dir - no git, no CLI process spawn.
+  - id: D3
+    status: closed
+    question: How is the exit code 2 emitted from the command, and how does it stay distinct from validate's failure code?
+    decision: >-
+      The Plan command throws ExitCode(2) (ArgumentParser's ExitCode is an Int32-backed exit code)
+      when PlanReport reports ackRequired. This is distinct from the validate path, which throws
+      ExitCode.failure (exit 1) via the existing loadValidated(...) - so per parent D1 CI/agents can
+      tell "contract change pending" (2) from "invalid graph" (1). Validate runs FIRST, so an invalid
+      graph yields 1 and never reaches classification/ackRequired.
+  - id: D4
+    status: closed
+    question: How is the `--require-ack <tier>` option parsed and defaulted, and how is the baseline taken?
+    decision: >-
+      `--require-ack` is an @Option defaulting to contract, parsed into the engine Tier (accepting the
+      ADR-0030 tier names refresh | local | contract; an unrecognized value fails with a usage error
+      naming the valid tiers). `--since` is an @Option String defaulting to HEAD, passed straight
+      through as the ArtifactDiff.changedArtifacts(baseline:) argument. The `.ai-sdd` dir is an
+      @Argument like `validate`, used both for loadValidated(...) and as the ChangePlan/ArtifactDiff
+      home directory.
+  - id: D5
+    status: closed
+    question: How is the tier-grouped output rendered, including flags and consumers?
+    decision: >-
+      PlanReport renders groups in the fixed order contract -> local -> refresh, omitting empty
+      groups; within a group each change prints its path and status, contract items append their
+      consumers as (node id, worker name) entries, and the breakingRemoval / nonAckBlocking flags plus
+      any blastRadius label (e.g. "0 consumers (new)") render inline on the item. An empty plan renders
+      the single line "no changes". Rendering reads only the already-classified ChangeClassification
+      values - no re-classification, no content reads, no second loader.
+  - id: D6
+    status: closed
+    question: Does this slice add new spec types or persisted artifacts?
+    decision: >-
+      No. Per parent D5 and the shipped ChangePlan, no new AISDDModels spec type and no persisted
+      artifact are introduced. PlanReport is a transient AISDDEngine render/decision helper over the
+      in-memory classified plan. The CLI surface change is confined to Sources/AISDDCLI/main.swift and
+      the engine helper to Sources/AISDDEngine.
+files:
+  - Sources/AISDDCLI/main.swift
+  - Sources/AISDDEngine/ChangePlan.swift
+  - Sources/AISDDEngine/PlanReport.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd
