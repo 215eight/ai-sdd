@@ -1,0 +1,22 @@
+summary: >-
+  Added a read-only ArtifactDiff engine type plus an ArtifactChange value type
+  (path + added/modified/deleted status) in Sources/AISDDEngine/ArtifactChange.swift.
+  changedArtifacts(baseline:) builds the git arg vector
+  `git diff --name-status <baseline> -- .ai-sdd/` (baseline defaults to HEAD, override
+  ref threaded into the baseline position), runs it through an injectable @Sendable
+  executor whose signature takes the argument vector (mirroring CheckRunner.execute/shell)
+  with a default real-git implementation over Process, parses --name-status lines
+  (A/M/D -> added/modified/deleted; R/C/T and blanks skipped), and returns repo-relative
+  paths under .ai-sdd/ excluding the gitignored runtime subdirs. Layout.swift gained
+  homePathspec, runtimeExcludedPrefixes, and isExcludedArtifactPath, all derived from the
+  existing Layout names so no path literal is repeated. Swift Testing cases were added to
+  Tests/AISDDEngineTests/EngineTests.swift covering the canned status set, runtime-path
+  exclusion, non-home exclusion, override-ref threading (asserting the ref appears in the
+  captured arg vector), and read-only behavior. Writes/stages nothing.
+satisfies:
+  - ACC-canned-status-set
+  - ACC-exclude-runtime-paths
+  - ACC-exclude-non-home
+  - ACC-override-baseline-ref
+  - ACC-read-only
+  - ACC-build-test-green

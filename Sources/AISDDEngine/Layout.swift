@@ -7,6 +7,21 @@ enum Layout {
     static let runsDir = "runs"
     static let artifactsDir = "artifacts"
 
+    /// The factory home as a git pathspec — scopes `git diff` to `.ai-sdd/`.
+    static let homePathspec = "\(homeDir)/"
+
+    /// The gitignored runtime subdirs under the home, as repo-relative path prefixes. Derived from
+    /// the names above so no path literal is repeated. `changedArtifacts` drops anything under these.
+    static let runtimeExcludedPrefixes = [
+        "\(homeDir)/\(runsDir)/",
+        "\(homeDir)/\(artifactsDir)/"
+    ]
+
+    /// Whether a repo-relative path lives under a runtime-excluded prefix and must be dropped.
+    static func isExcludedArtifactPath(_ path: String) -> Bool {
+        runtimeExcludedPrefixes.contains { path.hasPrefix($0) }
+    }
+
     /// Names within a single run directory.
     enum Run {
         static let metaFile = "run.json"

@@ -1491,6 +1491,94 @@ struct EngineTests {
         #expect(state.completedNodes == ["architect", "coder"])
         #expect(state.readyArtifacts == ["plan.v1", "code.v1"])
     }
+
+    // MARK: - ArtifactDiff (changed .ai-sdd/ files between a baseline and the working tree)
+
+    // An ArtifactDiff whose git execution is stubbed: returns canned --name-status output and records
+    // the exact argument vector it was handed, so tests need no real repo.
+    private final class CapturingGit: @unchecked Sendable {
+        var arguments: [String] = []
+        let output: String
+        init(_ output: String) { self.output = output }
+        func diff(workingDirectory: URL = URL(fileURLWithPath: "/")) -> ArtifactDiff {
+            ArtifactDiff(workingDirectory: workingDirectory) { arguments, _ in
+                self.arguments = arguments
+                return (0, self.output)
+            }
+        }
+    }
+
+    // ACC-canned-status-set: A/M/D lines under .ai-sdd/ map to added/modified/deleted exactly.
+    @Test func artifactDiffMapsCannedStatusSet() {
+        let git = CapturingGit("""
+        A\t.ai-sdd/skills/new-skill/SKILL.md
+        M\t.ai-sdd/conventions/swift.md
+        D\t.ai-sdd/schemas/old.schema.yaml
+        """)
+        let changes = git.diff().changedArtifacts()
+        #expect(changes == [
+            ArtifactChange(path: ".ai-sdd/skills/new-skill/SKILL.md", status: .added),
+            ArtifactChange(path: ".ai-sdd/conventions/swift.md", status: .modified),
+            ArtifactChange(path: ".ai-sdd/schemas/old.schema.yaml", status: .deleted)
+        ])
+    }
+
+    // ACC-exclude-runtime-paths: changes under .ai-sdd/runs/ and .ai-sdd/artifacts/ are dropped.
+    @Test func artifactDiffExcludesRuntimePaths() {
+        let git = CapturingGit("""
+        M\t.ai-sdd/conventions/swift.md
+        M\t.ai-sdd/runs/abc/run.json
+        A\t.ai-sdd/artifacts/changeset.v1.yaml
+        """)
+        #expect(git.diff().changedArtifacts() == [
+            ArtifactChange(path: ".ai-sdd/conventions/swift.md", status: .modified)
+        ])
+    }
+
+    // ACC-exclude-non-home: a changed path outside .ai-sdd/ is not returned.
+    @Test func artifactDiffExcludesNonHomePaths() {
+        let git = CapturingGit("""
+        M\tSources/AISDDEngine/ArtifactChange.swift
+        M\tREADME.md
+        A\t.ai-sdd/skills/x/SKILL.md
+        """)
+        #expect(git.diff().changedArtifacts() == [
+            ArtifactChange(path: ".ai-sdd/skills/x/SKILL.md", status: .added)
+        ])
+    }
+
+    // ACC-override-baseline-ref: an override ref (not HEAD) is the one threaded into the git args.
+    @Test func artifactDiffThreadsOverrideBaselineRef() {
+        let git = CapturingGit("M\t.ai-sdd/conventions/swift.md")
+
+        // Default baseline is HEAD.
+        _ = git.diff().changedArtifacts()
+        #expect(git.arguments == ["diff", "--name-status", "HEAD", "--", ".ai-sdd/"])
+
+        // An override ref is substituted into the baseline position.
+        _ = git.diff().changedArtifacts(baseline: "main~3")
+        #expect(git.arguments == ["diff", "--name-status", "main~3", "--", ".ai-sdd/"])
+        #expect(git.arguments.contains("main~3"))
+        #expect(!git.arguments.contains("HEAD"))
+    }
+
+    // ACC-read-only: only the executor is invoked (a read); R/C/T codes are skipped not misclassified.
+    @Test func artifactDiffIsReadOnlyAndSkipsRenameCopyTypechange() {
+        let git = CapturingGit("""
+        R100\t.ai-sdd/old.md\t.ai-sdd/new.md
+        C75\t.ai-sdd/a.md\t.ai-sdd/b.md
+        T\t.ai-sdd/c.md
+        M\t.ai-sdd/conventions/swift.md
+        """)
+        // Only the M line survives — R/C/T are out of scope and dropped, not misclassified.
+        #expect(git.diff().changedArtifacts() == [
+            ArtifactChange(path: ".ai-sdd/conventions/swift.md", status: .modified)
+        ])
+        // The only invocation was the read-only `git diff` — no write/stage command issued.
+        #expect(git.arguments.first == "diff")
+        #expect(!git.arguments.contains("add"))
+        #expect(!git.arguments.contains("commit"))
+    }
 }
 
 private extension SpecLoadError {

@@ -1,0 +1,41 @@
+verdict: approve
+items:
+  - id: ACC-canned-status-set
+    verdict: pass
+    notes: >-
+      artifactDiffMapsCannedStatusSet feeds canned A/M/D --name-status lines under .ai-sdd/ and
+      asserts the exact ordered set of (path, status) pairs maps to added/modified/deleted.
+      ArtifactDiff.parse switches A->added, M->modified, D->deleted.
+  - id: ACC-exclude-runtime-paths
+    verdict: pass
+    notes: >-
+      artifactDiffExcludesRuntimePaths includes .ai-sdd/runs/abc/run.json and
+      .ai-sdd/artifacts/changeset.v1.yaml and asserts only the convention file survives. Exclusion
+      is via Layout.isExcludedArtifactPath, whose runtimeExcludedPrefixes are derived from
+      Layout.homeDir/runsDir/artifactsDir (no path literal repeated).
+  - id: ACC-exclude-non-home
+    verdict: pass
+    notes: >-
+      artifactDiffExcludesNonHomePaths includes Sources/AISDDEngine/ArtifactChange.swift and
+      README.md and asserts only .ai-sdd/skills/x/SKILL.md is returned. parse guards on
+      path.hasPrefix(Layout.homePathspec).
+  - id: ACC-override-baseline-ref
+    verdict: pass
+    notes: >-
+      artifactDiffThreadsOverrideBaselineRef asserts the captured git arg vector is
+      [diff, --name-status, main~3, --, .ai-sdd/] when baseline: "main~3" is passed, that it
+      contains "main~3" and does not contain "HEAD"; the default HEAD vector is also asserted. The
+      override ref genuinely appears in the captured argument vector, per the plan requirement and D2.
+  - id: ACC-read-only
+    verdict: pass
+    notes: >-
+      ArtifactDiff has no write path — the default git executor only runs `git diff` and captures
+      stdout via Process; no Process writes, no filesystem mutation. artifactDiffIsReadOnlyAndSkips...
+      asserts arguments.first == "diff" and that no add/commit command is issued. The same test
+      confirms R/C/T (rename/copy/typechange) lines are skipped (parse default: return nil), not
+      misclassified.
+  - id: ACC-build-test-green
+    verdict: pass
+    notes: >-
+      Reviewer ran `swift build` (Build complete) and `swift test` (90 tests, 1 suite passed),
+      including all 5 new ArtifactDiff cases. Green.

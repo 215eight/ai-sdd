@@ -1,0 +1,102 @@
+summary: >-
+  Add a read-only AISDDEngine type that lists the factory artifact files changed under
+  `.ai-sdd/` between the git working tree and a baseline ref. It shells out to
+  `git diff --name-status <baseline> -- .ai-sdd/` through an injectable executor (mirroring
+  CheckRunner's `execute`/`shell` pattern), parses the name-status lines into
+  `(path, status)` pairs with status added/modified/deleted, normalizes paths relative to
+  the repo root, and excludes the gitignored runtime paths (`.ai-sdd/runs/`,
+  `.ai-sdd/artifacts/`). Baseline defaults to `HEAD` and accepts an override ref (the
+  future `--since` value). This is the deterministic change-list substrate the later
+  classifier consumes; it writes/stages nothing.
+scope:
+  in:
+    - New engine type/function in Sources/AISDDEngine (e.g. an ArtifactChange value type plus a changedArtifacts(...) entry point) returning the changed .ai-sdd/ paths with status.
+    - Injectable shell execution closure (default real-git executor plus tests inject canned output), following the CheckRunner.execute / CheckRunner.shell convention exactly.
+    - Build the git argument vector git diff --name-status <baseline> -- .ai-sdd/ with a baseline defaulting to HEAD and an override ref threaded through.
+    - Parse --name-status output into (path, status) for added (A) / modified (M) / deleted (D).
+    - Scope filtering to .ai-sdd/ and exclusion of .ai-sdd/runs/ and .ai-sdd/artifacts/.
+    - Path-prefix constants for the runtime-excluded dirs centralized in Layout.swift.
+    - Swift Testing unit tests in Tests/AISDDEngineTests using injected canned git output.
+  out:
+    - The ChangePlan classifier / tier mapping and consumer resolution (later slices of this feature).
+    - Any AISDDCLI plan subcommand, --since / --require-ack CLI flags, output rendering, and exit-code thresholding.
+    - SpecLoader / validate graph-wiring integration (the classifier slice's concern, not this one).
+    - Renamed/copied/typechange git statuses (R/C/T) beyond A/M/D — not required by the slice brief.
+    - Any non-git baseline, JSON/machine output, writing, staging, or committing.
+acceptance:
+  - id: ACC-canned-status-set
+    description: >-
+      Given canned `git diff --name-status` output containing added, modified, and deleted
+      lines under .ai-sdd/, changedArtifacts(...) returns exactly the expected set of
+      (path, status) pairs with statuses added/modified/deleted.
+  - id: ACC-exclude-runtime-paths
+    description: >-
+      Paths under .ai-sdd/runs/ and .ai-sdd/artifacts/ present in the canned output are
+      excluded from the returned change list.
+  - id: ACC-exclude-non-home
+    description: >-
+      A changed path outside .ai-sdd/ (e.g. Sources/... or a repo-root file) present in the
+      canned output is not returned.
+  - id: ACC-override-baseline-ref
+    description: >-
+      When an override baseline ref is supplied, that ref (not HEAD) is the one passed to the
+      git invocation; a test asserts the override ref appears in the captured git argument vector.
+  - id: ACC-read-only
+    description: >-
+      The operation writes and stages nothing — it only reads via the executor; no filesystem
+      mutation occurs (verified by the injected executor capturing the command and the type
+      having no write path).
+  - id: ACC-build-test-green
+    description: swift build and swift test both succeed.
+decisions:
+  - id: D1
+    status: closed
+    question: Where does the new behavior live and what is it named?
+    decision: >-
+      A new file Sources/AISDDEngine/ArtifactChange.swift holding a public ArtifactChange value
+      type (path: String, status enum with added/modified/deleted) and the public entry point
+      changedArtifacts(...). Engine behavior belongs in AISDDEngine (AGENTS.md layout); no
+      AISDDModels spec type is added because this is transient runtime data, not a persisted/edge
+      artifact (consistent with the parent feature's D5 keeping ChangePlan out of AISDDModels).
+  - id: D2
+    status: closed
+    question: How is shell execution injected so tests need no real repo?
+    decision: >-
+      Reuse the established CheckRunner convention: the type exposes a public injectable @Sendable
+      executor closure with a default real-git implementation (a static let that runs git via
+      Process, capturing stdout). To make the baseline ref assertable, the executor signature takes
+      the git argument vector (e.g. (_ arguments: [String], _ cwd: URL) -> (Int32, String)) rather
+      than a single pre-joined command string, so tests can inspect the exact args passed and
+      return canned --name-status output.
+  - id: D3
+    status: closed
+    question: What is the git invocation and how is the baseline threaded?
+    decision: >-
+      git diff --name-status <baseline> -- .ai-sdd/, with baseline a parameter defaulting to HEAD.
+      The override ref (future CLI --since) is the same parameter; it is substituted into the
+      <baseline> argument position. The pathspec -- .ai-sdd/ scopes git itself to the factory home;
+      engine-side filtering still drops the excluded runtime subdirs.
+  - id: D4
+    status: closed
+    question: How are runtime/gitignored paths excluded, and where do those prefixes live?
+    decision: >-
+      After parsing, drop any path whose normalized value is under .ai-sdd/runs/ or
+      .ai-sdd/artifacts/. The prefix strings are derived from existing Layout names (Layout.homeDir,
+      Layout.runsDir, Layout.artifactsDir); add a small Layout helper or constants for the two
+      excluded prefixes so no path literal is repeated (AGENTS.md: path names live in Layout.swift).
+      Paths are returned repo-relative and normalized as git emits them.
+  - id: D5
+    status: closed
+    question: Which --name-status codes are handled?
+    decision: >-
+      Map A -> added, M -> modified, D -> deleted. Each output line is <code>TAB<path>; split on
+      tab, trim, and ignore blank lines. Rename/copy/typechange codes (R/C/T) are out of scope for
+      this slice (the brief specifies only added/modified/deleted); any such line is skipped rather
+      than misclassified.
+files:
+  - Sources/AISDDEngine/ArtifactChange.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
