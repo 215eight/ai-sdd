@@ -1,0 +1,14 @@
+milestone: m1-guardrails-integrated
+outcome: pass
+criteria:
+  - id: build
+    status: pass
+  - id: test
+    status: pass
+  - id: validate
+    status: pass
+evidence: >-
+  m1.integration command run on merged tree (locks + provenance). swift build:
+  complete. swift test: 136 tests in 3 suites passed (transitively covers locks
+  exit-3 and provenance hand-edited behaviors). swift run ai-sdd validate .ai-sdd:
+  ai-sdd-feature valid — 3 nodes, 3 edges, 4 workers, 8 checks.
