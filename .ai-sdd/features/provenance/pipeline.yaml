@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: provenance, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: provenance-manifest, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: plan-annotation, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: provenance-manifest, to: plan-annotation }

@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: drift, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: drift-deterministic, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: drift-conventions, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: drift-deterministic, to: drift-conventions }

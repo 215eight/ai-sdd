@@ -1,0 +1,15 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: milestone-gate }
+spec:
+  # AUTOMATED milestone (D5) — the m1-guardrails-integrated gate. A process validates that `locks` and
+  # `provenance` integrate cleanly before `drift` builds on them: it runs the integration command and
+  # records validation-result.v1. The deterministic `m1.integration` check is the hard gate (re-runs the
+  # command, gated on exit code); `validation-result.structure` enforces `outcome == pass`. Manual ↔
+  # automated swaps only this kind/checks — inputs/outputs (validation-result.v1) are unchanged.
+  # The locks (plan→exit 3) and provenance (hand-edited annotation) behaviours are asserted by those
+  # features' own tests, so `swift test` in the integration command transitively covers the smokes.
+  workerKind: transform
+  produces: [{ schema: validation-result.v1 }]
+  task: { skill: validate-milestone }
+  checks: [validation-result.structure, m1.integration]

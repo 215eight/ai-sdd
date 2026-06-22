@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: locks, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: frozen-tier, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: cli-locks, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: frozen-tier, to: cli-locks }

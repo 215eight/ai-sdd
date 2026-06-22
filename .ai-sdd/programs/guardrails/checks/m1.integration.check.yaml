@@ -1,0 +1,12 @@
+apiVersion: ai-sdd/v1
+kind: Check
+metadata: { name: m1.integration }
+spec:
+  # The m1-guardrails-integrated gate (automated, D5). The integration check: locks + provenance, built
+  # independently, must coexist — full build + test + spec-validation green on the merged tree. The
+  # per-feature behaviours (locks: `ai-sdd plan` exits 3 on a locked edit; provenance: `hand-edited`
+  # annotation) are asserted by those features' own tests, so `swift test` here transitively covers the
+  # smokes. Trusted-by-construction (engine-tested commands), so blocking.
+  checkKind: deterministic
+  command: "swift build && swift test && swift run ai-sdd validate .ai-sdd"
+  required: true

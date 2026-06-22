@@ -1,0 +1,17 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: guardrails, version: 1 }
+spec:
+  # Factory safety guardrails program (ADR-0031/0032/0033) on the shipped `ai-sdd plan` substrate.
+  # locks ∥ provenance → m1-guardrails-integrated (automated) → drift. Single-owner; the milestone
+  # is the integration gate that holds `drift` until `locks` + `provenance` land and verify together.
+  semantics: enabler
+  nodes:
+    - { id: locks, kind: pipeline, pipeline: ../../features/locks, stack: swift, owner: [maintainer] }
+    - { id: provenance, kind: pipeline, pipeline: ../../features/provenance, stack: swift, owner: [maintainer] }
+    - { id: m1-guardrails-integrated, worker: milestone-gate, owner: [maintainer] }
+    - { id: drift, kind: pipeline, pipeline: ../../features/drift, stack: swift, owner: [maintainer] }
+  edges:
+    - { from: locks, to: m1-guardrails-integrated }
+    - { from: provenance, to: m1-guardrails-integrated }
+    - { from: m1-guardrails-integrated, to: drift }
