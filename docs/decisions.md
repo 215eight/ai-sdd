@@ -763,6 +763,136 @@ Phase 3 (program-tier planning) built and committed:
 
 ---
 
+## ADR-0029 — Greenfield bootstrap: brief + stack as the evidence substitute, then hand off to discovery
+**Status:** Accepted (implementation pending) · 2026-06-20
+
+**Context.** `ai-sdd-bootstrap` is brownfield-only by construction. Its discovery contract is
+**evidence-first** (the manifest, the file tree, and *how it was last done* — git history of a
+representative change), and every convention must **cite its evidence**; synthesis may only abstract a
+pattern a real exemplar supports. A greenfield repo has no exemplars, no representative change, no
+established manifest patterns — so for essentially every change-type discovery hits the same branch
+("no evidence → flag → fill from ecosystem priors") and bootstrap degenerates into hand-authoring
+conventions, which the skill explicitly warns against ("bootstrapped FROM the codebase, not
+hand-invented"). The target case that forces the issue is a **monorepo with multiple verticals, each on
+its own stack** — there is no single repo convention to discover even in principle, and nothing to
+discover *from* on day zero. The temptation is a bespoke greenfield path that invents conventions from a
+brief; but the model already owns the abstraction that replaces code-evidence — **Traits/Stacks**
+(ADR-0024): conventions + checks + resources as composable, repo-independent, versioned modules.
+
+**Decision.**
+
+- **Add a bootstrap `seed` mode, engaged only when there is no buildable evidence and a brief is
+  supplied.** It is the *same* three-step contract (deterministic input → synthesis → grounded-or-flagged)
+  with a **different evidence source**, not a parallel mechanism. The substitution is exact: the **project
+  brief** replaces "git history of a representative change"; **resolving a Stack → Trait composition** from
+  the trait library replaces "discover conventions from exemplars"; a **stack manifest** (verticals ×
+  stacks) replaces the brownfield repo's single stack.
+
+- **Conventions are *resolved*, never invented.** Each vertical's declared stack expands to its Trait
+  composition (ADR-0024: union conventions ordered, union/de-dupe checks, union resources). Conventions
+  come from the Traits — curated, eval-gated ecosystem priors — not from per-run synthesis. Anything the
+  trait library does not cover is **flagged and confirmed with the user**, identically to §1 of the skill.
+  This keeps "grounded, not guessed" meaningful: the grounding is a versioned library, not a guess.
+
+- **One Factory per vertical; the monorepo is the Plant.** Each vertical is a domain-bounded Factory
+  (ADR-0012: decompose by domain/ownership, not by repo); the monorepo Plant aggregates them, reusing the
+  multi-repo/Plant aggregation already built for observability (ADR-0027).
+
+- **Seed a walking skeleton, then hand off to brownfield discovery.** Seed mode scaffolds the minimal
+  exemplar per vertical (one module / model / endpoint / test / migration) from brief + traits and commits
+  it. The **next** bootstrap is ordinary brownfield: discovery now finds real evidence. Greenfield mode is
+  a one-time *seed*, not a permanent replacement for discovery — which restores the code-grounded
+  guarantee on the very next run.
+
+- **Do not freeze per-stack specs (ADR-0023 still holds).** Seed mode scaffolds *code*, but conventions
+  stay **late-bound and trait-resolved at run time**. The brief and the resolved trait selections are
+  recorded as snapshot inputs (the brief also becomes the first `ai-sdd-plan` input); no pre-generated
+  per-stack convention files. This is the line that keeps seed mode from being the codegen-of-specs
+  ADR-0023 rejected.
+
+**Consequences.** Greenfield (and the multi-vertical monorepo specifically) becomes bootstrappable through
+one added mode, no new primitive. **Gating dependency:** this is unbuildable until Traits are real —
+ADR-0024 is "Accepted (implementation pending)" and `.ai-sdd/{traits,stacks,resources}/` are empty
+placeholders today; a minimal trait library (even one stack's traits) is the prerequisite, and without it
+seed mode degrades straight back to invention. The grounding is weaker than brownfield's (the trait
+library + brief, not the user's own code), mitigated two ways: the trait library is curated and eval-gated
+(conventions are versioned modules, not per-run inventions), and the walking-skeleton handoff converts the
+factory to code-grounded discovery immediately after seeding. Re-bootstrap semantics are unchanged: it is
+brownfield from the second run on.
+
+**Alternatives rejected.** Invent conventions from the brief with no trait library (reintroduces the
+"guessed, not grounded" failure the skill exists to prevent). Pre-generate per-stack specs from the brief
+(the codegen-of-specs path ADR-0023 rejected — derived specs drift). A permanent standalone greenfield
+path that never hands off to discovery (keeps the factory on weaker priors-only grounding forever instead
+of converging to the user's real, evolving conventions). A new top-level "greenfield" primitive (defeats
+the self-similar model, ADR-0002 — seed mode is a mode of bootstrap, not a new kind).
+
+---
+
+## ADR-0030 — `ai-sdd plan`: risk-tiered preview of factory-artifact changes before commit
+**Status:** Accepted (implementation pending) · 2026-06-21
+
+**Context.** Bootstrap/re-bootstrap (ADR-0029) and hand-edits to `.ai-sdd/` change artifacts of wildly
+different blast radius — refreshing a `conventions/<stack>.md` is local and safe, but editing a schema is
+a **contract change that ripples to every consumer worker** (ADR-0009: artifacts are typed handles on
+edges). The framework surfaces none of this. The CLI is `guide · validate · start · status · next ·
+submit · check · scope · cover · graph` — **no `plan`, no `diff`, no `lock`, no drift**. The only safety
+net is `git diff` plus operator discipline, which carries **no blast-radius semantics**: an adopter
+re-bootstrapping or editing cannot tell a safe convention refresh from a contract break, and nothing
+flags an unintended high-blast change before it is committed. Idempotent mechanical output (the skill's
+re-bootstrap note) keeps a *no-op* re-run clean, but that does nothing when changes are actually present.
+The adopter is left holding the entire "what's fragile" discipline in their head — the framework does not
+help prevent unintended modification.
+
+**Decision.**
+
+- **Add a deterministic `ai-sdd plan [<dir>]`** that diffs the working tree of `.ai-sdd/` against the
+  committed baseline (`HEAD`; `--since <ref>` to override) and **classifies every changed artifact by
+  blast radius computed from the spec graph** — not guessed. This is the IaC `terraform plan` for the
+  factory: see the classified impact *before* you commit.
+
+- **Tiers, low → high:** **refresh** (conventions, worker skills — prose specialization, no consumer
+  contract; regenerable) · **local** (worker specs, pipeline edits, recompiled checks — change execution
+  inside one factory) · **contract** (schema changes — the blast radius is **every worker that consumes
+  that schema, listed explicitly**) · plus a reserved **frozen** tier for artifacts a future lock declares
+  protected (enforced locks are a separate decision; `plan` renders a change to a frozen artifact as a
+  hard ✗).
+
+- **Classification is engine logic over the loaded specs (ADR-0001), grounded and reproducible.** A schema
+  change resolves its consumers through the edge graph; a convention/check change resolves the workers
+  that reference it. No model in the loop — blast radius is a graph computation the engine owns, reusing
+  the existing spec loader/validator.
+
+- **Output + exit code drive approval.** Changes are grouped by tier with the computed blast radius per
+  item; `plan` exits **non-zero when any change is `contract` or higher**, so an agent or CI must obtain
+  explicit human acknowledgement before committing. `--require-ack <tier>` sets the threshold. A changed
+  **judge/intent check** is additionally flagged as needing re-eval before it can block again (ADR-0007),
+  even though its tier is `local`.
+
+- **Re-bootstrap and hand-edits both route through it.** The bootstrap skill's final step changes from
+  "review the diff" to "run `ai-sdd plan`, approve, commit." Because `plan` works off the git working
+  tree, it is **agnostic to how the change was produced** (agent re-bootstrap or manual edit) and
+  provider-neutral — the safety layer lives in the **engine**, not the skill or a prompt.
+
+**Consequences.** Adopters get the `plan` experience — classified blast radius in front of them at commit
+time — instead of carrying the fragility map in their heads; this is the direct answer to "the framework
+doesn't help prevent unintended modification." It adds a command, not a subsystem (it rides the existing
+loader). It gates on **commit, not write** — the meaningful boundary, since `.gitignore` commit-scope is
+what marks team adoption (ADR-0029 §7); a true no-write dry-run is unnecessary and would couple the safety
+layer to the agent-driven skill. It leaves a clean seam for the follow-on guardrails the adopter also
+needs: **enforced freeze/locks** (the reserved `frozen` tier) and **drift detection** (`conventions` no
+longer matching code; a fixture violating a frozen contract). For marker-managed shared files
+(`AGENTS.md`/`.gitignore`) `plan` reports only the managed block, consistent with the upsert contract.
+
+**Alternatives rejected.** Status quo — `git diff` + operator discipline (no blast-radius semantics; the
+gap this ADR closes). A no-write dry-run baked into the bootstrap skill (agent/skill-specific, misses
+hand-edits, not provider-neutral — the engine-owned git classifier covers every change source).
+Prohibiting schema changes outright (schemas must evolve; the goal is **informed approval + versioning**
+per ADR-0017, not prohibition). Putting classification in the skill/prompt (non-deterministic and
+ungrounded — violates ADR-0001; blast radius must be an engine graph computation).
+
+---
+
 ## Open decisions
 
 _None — all decisions above are resolved. New questions will be appended here as they arise._
