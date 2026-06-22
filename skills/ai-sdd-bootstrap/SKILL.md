@@ -98,8 +98,10 @@ convention. Each agent reads `SKILL.md` frontmatter (`name` + `description`) for
   Codex's documented repo skill scope (`$REPO_ROOT/.agents/skills`, symlinks followed); it's the
   **committed, team-shared** surface, so a fresh clone has the skills with no re-bootstrap. Invoked
   with `$<name>` or `/skills`.
-- **Claude Code** (local): `.claude/skills/<name>` → `../../.ai-sdd/skills/<name>`. Recreated by
-  re-bootstrap; `.claude/` stays gitignored (local state — §7).
+- **Claude Code** (repo-level, committed): `.claude/skills/<name>` → `../../.ai-sdd/skills/<name>`.
+  Like Codex, `.claude/skills/` is the **committed, team-shared** surface so a fresh clone has the
+  slash commands with no re-bootstrap; the *rest* of `.claude/` stays local (§7). Refreshed by
+  re-bootstrap. (Both agent surfaces are committed and updated together — they cannot drift.)
 - add other agents the same way as supported, each into its own native skill dir.
 
 - **`AGENTS.md`** stays a **general repo guide** (what the project is, how to build/test, the
@@ -126,15 +128,19 @@ The engine itself is already neutral: `ai-sdd` is a CLI any agent calls over a s
 
 The `.gitignore` is the **one place** that declares what stays out of git — so a commit never has to
 *ask* what to include. The managed block ignores the factory runtime and each agent's **local** state
-folder — but **not** `.agents/skills/`, which is the committed repo-level skill surface (§6):
+folder — but **not** each agent's `skills/` subfolder (`.agents/skills/`, `.claude/skills/`), the
+committed repo-level skill surfaces (§6). Ignore `.claude/`'s contents but **re-include**
+`.claude/skills/` (a parent-dir exclude can't be undone, so exclude `.claude/*` and negate the
+subfolder):
 
 ```gitignore
 # ai-sdd:begin — managed by ai-sdd-bootstrap; edits between these markers are overwritten on re-bootstrap
 # Software factory runtime (the rest of .ai-sdd/ is committed)
 .ai-sdd/runs/
 .ai-sdd/artifacts/
-# Agent-local state (NOT .agents/skills/ — that's the committed Codex repo-level skill surface)
-.claude/
+# Agent-local state — EXCEPT each agent's committed repo-level skill surface (.agents/skills/, .claude/skills/)
+.claude/*
+!.claude/skills/
 .codex/
 # ai-sdd:end
 ```
@@ -142,8 +148,8 @@ folder — but **not** `.agents/skills/`, which is the committed repo-level skil
 - Write this with the **same marker upsert** as AGENTS.md (`# ai-sdd:begin` / `# ai-sdd:end`,
   `#` comments) so an existing `.gitignore` is extended, not clobbered, and a re-run doesn't
   duplicate the block. The committed set is therefore `.ai-sdd/` (minus runtime) + `.agents/skills/`
-  + `AGENTS.md` + `.gitignore` + any tool config a gate needs — decided by `.gitignore`, not by
-  prompting per commit.
+  + `.claude/skills/` + `AGENTS.md` + `.gitignore` + any tool config a gate needs — decided by
+  `.gitignore`, not by prompting per commit.
 - Run `ai-sdd validate .ai-sdd` — referential + edge-type + acyclicity must pass before any run.
 
 ## Discovery quality — evals + observability
@@ -163,8 +169,10 @@ contract (deterministic evidence → AI synthesis → grounded-or-flagged) is th
 
 ## Notes
 
-- **Symlinks**: the per-agent surfacing symlinks are local (gitignored, §7) and recreated by
-  re-bootstrap; clean on macOS/Linux, Windows needs `core.symlinks=true`.
+- **Symlinks**: the per-agent surfacing symlinks are committed (`.agents/skills/`, `.claude/skills/`)
+  and recreated/refreshed by re-bootstrap **over the full framework-skill set** — so a newly-added
+  framework skill is surfaced to *every* agent, not just the one that authored it (the failure mode
+  that drifts the surfaces). Clean on macOS/Linux, Windows needs `core.symlinks=true`.
 - **Re-bootstrap** is how conventions stay fresh (architecture §8): re-run to refresh
   `conventions/` + `schemas/` from the evolved codebase, then recompile gates. Mechanical output is
   stable, so a no-change re-run produces no diff — this holds for the generated `.ai-sdd/` specs

@@ -70,7 +70,8 @@ fastlane/test_output
 # Software factory runtime (the rest of .ai-sdd/ is committed)
 .ai-sdd/runs/
 .ai-sdd/artifacts/
-# Agent-local state (NOT .agents/skills/ — that's the committed Codex repo-level skill surface)
-.claude/
+# Agent-local state — EXCEPT each agent's committed repo-level skill surface (.agents/skills/, .claude/skills/)
+.claude/*
+!.claude/skills/
 .codex/
 # ai-sdd:end
