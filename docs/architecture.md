@@ -183,10 +183,18 @@ adapter, a needed refactor). This is handled with no special mechanism:
 - The engine **schedules it later by readiness** — runnable once its `depends_on` are complete,
   prepared/run when you reach it. If the *current* slice actually needs it, add the edge the other
   way (`new → current`) and the current slice goes `blocked`.
+- Amendment is **forward-only**: it adds and rewires `pending` nodes, but a node that has **started —
+  completed or in-flight — is immutable**. To change the outcome of a started node you append a
+  downstream `<node>-revert` node, never rewrite the original. This keeps the graph an append-mostly
+  record and every run reproducible.
 
 So the DAG is amended *between* runs (replanning) while the engine always executes the current
 validated graph — a discovered slice is just a graph amendment, not a new engine feature. (This
 is the pattern behind the many `fix-*` follow-up slices in a real `SDD_ORCHESTRATION.md`.)
+Re-running the planning skill on an existing feature/program *is* the replanning step: it
+auto-detects amend mode from disk and walks this same forward-only path — see the "Amending"
+sections of [ai-sdd-plan](../skills/ai-sdd-plan/SKILL.md) and
+[ai-sdd-plan-program](../skills/ai-sdd-plan-program/SKILL.md).
 
 ## 6. Control model: enablers vs. gates
 

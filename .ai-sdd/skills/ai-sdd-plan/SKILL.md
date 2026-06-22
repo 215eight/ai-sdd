@@ -1,6 +1,6 @@
 ---
 name: ai-sdd-plan
-description: Turn a complete feature brief into a runnable plan for a bootstrapped repo — a decision-closed requirements doc and an orchestration graph (slices + depends_on) the engine executes. Requires a real brief (refuses a bare one-liner — asks for one) and human approval of the requirements draft before generating slices. The planning layer between an idea and ai-sdd-run. Use when starting a new feature in a repo that already has a .ai-sdd/ (run ai-sdd-bootstrap first).
+description: Turn a complete feature brief into a runnable plan for a bootstrapped repo — a decision-closed requirements doc and an orchestration graph (slices + depends_on) the engine executes. Requires a real brief (refuses a bare one-liner — asks for one) and human approval of the requirements draft before generating slices. The planning layer between an idea and ai-sdd-run. Use when starting a new feature in a repo that already has a .ai-sdd/ (run ai-sdd-bootstrap first). Re-run on an existing feature to amend it in place (create-vs-amend is auto-detected from disk): append slices and rewire pending ones; a started slice (completed or in-flight) is immutable and corrected forward with a downstream `<slice>-revert` slice.
 ---
 
 # Planning a feature
@@ -17,6 +17,17 @@ Per-feature output layout:
   pipeline.yaml       the orchestration graph: slices (kind: pipeline) wired by depends_on
   slices/<id>.md      each slice's brief — the intake its architect plans from
 ```
+
+## 0. Create or amend? — detect from disk
+
+Check whether `.ai-sdd/features/<slug>/` already has `requirements.md` **and** `pipeline.yaml`:
+
+- **Neither exists → create.** Follow Steps 1–5 below.
+- **Both exist → amend.** Skip to [Amending the plan](#amending-the-plan) — do **not** restate the
+  brief or regenerate the graph.
+
+Same command either way; create-vs-amend is auto-detected from disk, so there's nothing extra to
+remember.
 
 ## 1. Require a real brief — never invent scope
 
@@ -144,8 +155,23 @@ the engine renders (the instruction carries the slice id; the run id is the feat
 
 ## Amending the plan
 
-When a slice surfaces out-of-scope work, add a new slice (brief + `depends_on`) and re-validate —
-the graph is amendable and stays acyclic. Don't fold it into the current slice.
+Re-running this skill on a feature that already has artifacts **amends** it — same command, no separate
+verb. Planning is idempotent and the engine re-reads the graph on every `ai-sdd next`, so an amendment
+to a running feature is picked up automatically. The graph stays acyclic — the engine enforces it.
+
+The rule is **forward-only correction**: add and rewire **pending** slices freely, but a slice that has
+**started — completed or in-flight — is immutable**. Never fold discovered work into the current slice,
+and never rewrite a finished one.
+
+1. **Describe the change, not a new brief** — a complete description of the new/added slice(s) and how
+   they wire in; refuse a one-liner (no inventing scope).
+2. **Reconcile against run state** — `ai-sdd status <slug>`. Appending a new slice or editing a
+   `pending` one → proceed. Touching a slice that has started (`completed` or in-flight) → **STOP and
+   refuse**: add a downstream `<slice>-revert` slice (`depends_on: [<slice>]`) that undoes or adjusts
+   what it produced. In-flight is treated exactly like completed — both have committed work.
+3. **Approve the delta** — keep every `closed` decision closed; STOP for approval on only the new ones.
+4. **Apply** — append the slice brief(s) → `slices/<id>.md`, add nodes + `depends_on` edges for
+   `pending` wiring only, then re-validate (`ai-sdd validate .ai-sdd/features/<slug>`).
 
 ## Honest edges (first iteration)
 
@@ -154,3 +180,6 @@ the graph is amendable and stays acyclic. Don't fold it into the current slice.
 - Requirements/briefs are **markdown** today; a structured, gated `requirements.v1` schema is later.
 - The orchestration graph is hand-emitted here by the planning agent; the engine only **validates +
   executes** it (it never infers topology — architecture §5).
+- **Amendment is forward-only** — a started slice (completed or in-flight) is immutable; correct it with
+  a downstream `<slice>-revert` slice. The started/pending boundary comes from `ai-sdd status` — a
+  skill-level check; no engine mechanism enforces it yet.

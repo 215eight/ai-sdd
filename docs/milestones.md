@@ -16,7 +16,10 @@ A milestone always has the same shape:
 - **Gate** — the deterministic `validation-result.structure` check: a `fail` outcome, or any failed
   criterion, fails the gate, so the milestone **re-validates** (self-rework) until it passes. It does
   not route rework upstream (a checkpoint has no single indictable input); the team fixes the work, then
-  the gate re-runs. (Cross-feature rework routing is a possible future enhancement.)
+  the gate re-runs. (Cross-feature rework routing is a possible future enhancement.) When the fix lands
+  in an *already-completed* upstream feature, follow forward-only correction — append a downstream
+  `<feature>-revert` node via the [ai-sdd-plan-program](../skills/ai-sdd-plan-program/SKILL.md) amend
+  path rather than rewriting the finished feature — then let the milestone re-validate.
 
 Only **one thing changes** between a manual and an automated milestone: `workerKind` and the checks.
 Inputs and outputs stay identical, so a milestone can start manual and be automated in place as the
