@@ -86,23 +86,26 @@ For each schema, run **ai-sdd-compile-schema**: it emits `.ai-sdd/checks/*.check
 the ids onto the worker that produces that schema. Eval-gate any authored (intent/judge) checks
 before promoting them to blocking.
 
-## 6. Wire provider-neutral surfacing  ← the symlink-into-each-agent's-skill-dir step
+## 6. Surface the skills to every agent — `ai-sdd surface`
 
-The factory must be drivable by any agent, so the *framework* skills a human/agent invokes
-(`ai-sdd-plan`, `ai-sdd-plan-program`, `ai-sdd-run`, `ai-sdd-compile-schema`, `ai-sdd-bootstrap`) are surfaced through each
-agent's **native skill mechanism** — symlinks into the agent's skill dir, **not** prose in AGENTS.md.
-Skill *discovery* must not depend on a human writing the right pointer; it's the agent's own
-convention. Each agent reads `SKILL.md` frontmatter (`name` + `description`) for matching.
+The factory must be drivable by any agent, so the *framework* skills a human/agent invokes (`ai-sdd-*`:
+`ai-sdd-bootstrap`, `ai-sdd-plan`, `ai-sdd-plan-program`, `ai-sdd-run`, `ai-sdd-compile-schema`) are
+surfaced through each agent's **native skill mechanism** — a symlink into the agent's skill dir, **not**
+prose in AGENTS.md (each agent matches on `SKILL.md` frontmatter). Surfacing is purely mechanical, so it
+is a **deterministic command**, never a step to hand-follow:
 
-- **Codex** (repo-level, committed): `.agents/skills/<name>` → `../../.ai-sdd/skills/<name>`. This is
-  Codex's documented repo skill scope (`$REPO_ROOT/.agents/skills`, symlinks followed); it's the
-  **committed, team-shared** surface, so a fresh clone has the skills with no re-bootstrap. Invoked
-  with `$<name>` or `/skills`.
-- **Claude Code** (repo-level, committed): `.claude/skills/<name>` → `../../.ai-sdd/skills/<name>`.
-  Like Codex, `.claude/skills/` is the **committed, team-shared** surface so a fresh clone has the
-  slash commands with no re-bootstrap; the *rest* of `.claude/` stays local (§7). Refreshed by
-  re-bootstrap. (Both agent surfaces are committed and updated together — they cannot drift.)
-- add other agents the same way as supported, each into its own native skill dir.
+```sh
+ai-sdd surface           # idempotently reconcile every agent's skill dir — re-run anytime
+ai-sdd surface --check   # report drift without writing (exit 1 if any link is missing) — for CI / drift
+```
+
+`surface` symlinks every `ai-sdd-*` skill into each configured agent dir. The **agent→dir map is data**
+in the engine (`.agents/skills` for Codex, `.claude/skills` for Claude, …) — adding an agent is a
+one-line data edit, not new prose. The symlink target is uniformly `../../.ai-sdd/skills/<name>` (each
+agent dir sits two levels below the repo root), so the operation is identical for every agent — only the
+parent folder differs. **Both surfaces are committed and team-shared** (§7), so a fresh clone has the
+skills/slash-commands with no re-bootstrap, and re-running `surface` reconciles the *full* set so they
+can't drift.
 
 - **`AGENTS.md`** stays a **general repo guide** (what the project is, how to build/test, the
   `ai-sdd-run` loop) — useful context, but it is **not** the skill-discovery mechanism. Still upsert
@@ -170,9 +173,9 @@ contract (deterministic evidence → AI synthesis → grounded-or-flagged) is th
 ## Notes
 
 - **Symlinks**: the per-agent surfacing symlinks are committed (`.agents/skills/`, `.claude/skills/`)
-  and recreated/refreshed by re-bootstrap **over the full framework-skill set** — so a newly-added
-  framework skill is surfaced to *every* agent, not just the one that authored it (the failure mode
-  that drifts the surfaces). Clean on macOS/Linux, Windows needs `core.symlinks=true`.
+  and created/reconciled by **`ai-sdd surface`** (which re-bootstrap runs) over the full
+  framework-skill set — so a newly-added framework skill reaches *every* agent, not just the one that
+  authored it. Clean on macOS/Linux, Windows needs `core.symlinks=true`.
 - **Re-bootstrap** is how conventions stay fresh (architecture §8): re-run to refresh
   `conventions/` + `schemas/` from the evolved codebase, then recompile gates. Mechanical output is
   stable, so a no-change re-run produces no diff — this holds for the generated `.ai-sdd/` specs

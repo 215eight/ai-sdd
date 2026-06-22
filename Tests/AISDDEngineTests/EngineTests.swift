@@ -1941,4 +1941,156 @@ struct PlanReportTests {
         #expect(text.contains(".ai-sdd/conventions/swift.md (modified)"))
         #expect(text.contains("consumer: w-node (w)"))
     }
+
+    // MARK: - skill surface (ai-sdd surface)
+
+    /// A two-agent table mirroring `Layout.agentSkillSurfaces` but pinned here so the tests don't
+    /// depend on the real repo's table.
+    private static let surfaceAgents: [(agent: String, dir: String)] = [
+        (agent: "codex", dir: ".agents/skills"),
+        (agent: "claude", dir: ".claude/skills")
+    ]
+
+    /// Build a temp fixture repo with `.ai-sdd/skills/` holding the named framework skills (each a
+    /// dir with a `SKILL.md`), plus a `plan-feature` worker skill (no `SKILL.md` marker needed — it
+    /// lacks the `ai-sdd-` prefix), and empty agent dirs for every agent in the table.
+    private func makeSurfaceFixture(frameworkSkills: [String]) throws -> URL {
+        let fm = FileManager.default
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-surface-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent(".ai-sdd/skills", isDirectory: true)
+        for name in frameworkSkills {
+            let skill = source.appendingPathComponent(name, isDirectory: true)
+            try fm.createDirectory(at: skill, withIntermediateDirectories: true)
+            try "# \(name)".write(to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        }
+        // A worker skill — present in the source, must NOT be surfaced.
+        try fm.createDirectory(at: source.appendingPathComponent("plan-feature", isDirectory: true),
+                               withIntermediateDirectories: true)
+        for (_, dir) in Self.surfaceAgents {
+            try fm.createDirectory(at: root.appendingPathComponent(dir, isDirectory: true),
+                                   withIntermediateDirectories: true)
+        }
+        return root
+    }
+
+    private func symlinkTarget(_ url: URL) -> String? {
+        try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+    }
+
+    // Discovery excludes the worker skill: only `ai-sdd-*` dirs with a SKILL.md are framework skills.
+    @Test func surfaceDiscoversFrameworkSkillsExcludingWorkerSkills() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan", "ai-sdd-run"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(SkillSurface.frameworkSkills(repoRoot: root) == ["ai-sdd-plan", "ai-sdd-run"])
+    }
+
+    // A framework skill dir with no SKILL.md is not surfaceable (excluded).
+    @Test func surfaceExcludesPrefixedDirWithoutManifest() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(".ai-sdd/skills/ai-sdd-nomanifest", isDirectory: true),
+            withIntermediateDirectories: true)
+        #expect(SkillSurface.frameworkSkills(repoRoot: root) == ["ai-sdd-plan"])
+    }
+
+    // Reconcile links every framework skill into every agent dir with the correct relative target,
+    // creates them, and leaves the worker skill unsurfaced.
+    @Test func surfaceCreatesCorrectSymlinksInEveryAgentDir() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan", "ai-sdd-run"])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: false)
+        #expect(result.applied)
+        #expect(result.ops.allSatisfy { $0.op == .created })
+
+        for (_, dir) in Self.surfaceAgents {
+            let dirURL = root.appendingPathComponent(dir, isDirectory: true)
+            #expect(symlinkTarget(dirURL.appendingPathComponent("ai-sdd-plan"))
+                == "../../.ai-sdd/skills/ai-sdd-plan")
+            #expect(symlinkTarget(dirURL.appendingPathComponent("ai-sdd-run"))
+                == "../../.ai-sdd/skills/ai-sdd-run")
+            // The worker skill is never surfaced.
+            #expect(symlinkTarget(dirURL.appendingPathComponent("plan-feature")) == nil)
+        }
+    }
+
+    // A missing agent dir is created on apply.
+    @Test func surfaceCreatesMissingAgentDir() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.removeItem(at: root.appendingPathComponent(".claude/skills", isDirectory: true))
+
+        _ = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: false)
+        #expect(symlinkTarget(root.appendingPathComponent(".claude/skills/ai-sdd-plan"))
+            == "../../.ai-sdd/skills/ai-sdd-plan")
+    }
+
+    // Idempotent: a second reconcile reports everything as `unchanged` and mutates nothing.
+    @Test func surfaceIsIdempotent() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan", "ai-sdd-run"])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        _ = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: false)
+        let second = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: false)
+        #expect(second.reconciled)
+        #expect(second.ops.allSatisfy { $0.op == .unchanged })
+    }
+
+    // A stale symlink — pointing at a removed framework skill — is pruned; regular entries untouched.
+    @Test func surfacePrunesStaleSymlink() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let claudeDir = root.appendingPathComponent(".claude/skills", isDirectory: true)
+
+        // A leftover link to a framework skill that no longer exists in the source.
+        try FileManager.default.createSymbolicLink(
+            atPath: claudeDir.appendingPathComponent("ai-sdd-gone").path,
+            withDestinationPath: "../../.ai-sdd/skills/ai-sdd-gone")
+        // An unrelated regular file — must be left alone.
+        try "keep".write(to: claudeDir.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+
+        let result = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: false)
+        let pruned = result.ops.filter { $0.op == .pruned }
+        #expect(pruned.map(\.name) == ["ai-sdd-gone"])
+        #expect(!FileManager.default.fileExists(atPath: claudeDir.appendingPathComponent("ai-sdd-gone").path))
+        #expect(FileManager.default.fileExists(atPath: claudeDir.appendingPathComponent("notes.txt").path))
+    }
+
+    // A wrong-target symlink is repointed to the canonical relative target.
+    @Test func surfaceFixesWrongTargetSymlink() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let agentDir = root.appendingPathComponent(".agents/skills", isDirectory: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: agentDir.appendingPathComponent("ai-sdd-plan").path,
+            withDestinationPath: "/somewhere/else")
+
+        let result = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: false)
+        #expect(result.ops.contains { $0.agentDir == ".agents/skills" && $0.name == "ai-sdd-plan" && $0.op == .fixed })
+        #expect(symlinkTarget(agentDir.appendingPathComponent("ai-sdd-plan"))
+            == "../../.ai-sdd/skills/ai-sdd-plan")
+    }
+
+    // --check mode plans the work, signals out-of-sync, but writes nothing.
+    @Test func surfaceCheckModeChangesNothingAndSignalsOutOfSync() throws {
+        let root = try makeSurfaceFixture(frameworkSkills: ["ai-sdd-plan"])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: true)
+        #expect(!result.applied)
+        #expect(!result.reconciled)               // links are missing → out of sync
+        #expect(result.ops.contains { $0.op == .created })
+        // Nothing was written.
+        for (_, dir) in Self.surfaceAgents {
+            #expect(symlinkTarget(root.appendingPathComponent(dir, isDirectory: true)
+                .appendingPathComponent("ai-sdd-plan")) == nil)
+        }
+
+        // Once reconciled, --check reports everything in sync.
+        _ = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: false)
+        let recheck = try SkillSurface.reconcile(repoRoot: root, agents: Self.surfaceAgents, check: true)
+        #expect(recheck.reconciled)
+    }
 }

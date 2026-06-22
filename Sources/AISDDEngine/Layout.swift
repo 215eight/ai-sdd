@@ -10,6 +10,31 @@ enum Layout {
     /// The factory home as a git pathspec — scopes `git diff` to `.ai-sdd/`.
     static let homePathspec = "\(homeDir)/"
 
+    /// The framework skills source (`.ai-sdd/skills`). `ai-sdd surface` symlinks each framework
+    /// skill here into every coding agent's native skill dir.
+    static let skillsSource = "\(homeDir)/\(Workspace.skillsDir)"
+
+    /// The prefix marking a *framework* skill (`ai-sdd-bootstrap`, `ai-sdd-plan`, …). Worker skills
+    /// (`plan-feature`/`implement-feature`/`review-feature`) lack it and resolve by path, never surfaced.
+    static let frameworkSkillPrefix = "ai-sdd-"
+
+    /// The marker file every surfaceable skill must contain.
+    static let skillManifestFile = "SKILL.md"
+
+    /// The agent→native-skill-dir table — the *one* declarative place this mapping lives. Adding a
+    /// coding agent is a one-line edit here. Each dir is two levels below the repo root, so every
+    /// surfaced symlink shares the same relative target (`skillSurfaceTarget`).
+    static let agentSkillSurfaces: [(agent: String, dir: String)] = [
+        (agent: "codex", dir: ".agents/skills"),
+        (agent: "claude", dir: ".claude/skills")
+    ]
+
+    /// The relative symlink target for a surfaced skill, from inside an agent dir (two levels below
+    /// the repo root) back to `.ai-sdd/skills/<name>`. The `../../` matches every agent dir's depth.
+    static func skillSurfaceTarget(_ name: String) -> String {
+        "../../\(skillsSource)/\(name)"
+    }
+
     /// The gitignored runtime subdirs under the home, as repo-relative path prefixes. Derived from
     /// the names above so no path literal is repeated. `changedArtifacts` drops anything under these.
     static let runtimeExcludedPrefixes = [

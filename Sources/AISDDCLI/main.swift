@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd 0.2.0",
-        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self, Plan.self]
+        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self, Plan.self, Surface.self]
     )
 }
 
@@ -572,6 +572,49 @@ struct Plan: ParsableCommand {
         case "contract": return .contract
         default:
             throw ValidationError("unknown --require-ack tier '\(raw)' — expected one of: refresh, local, contract")
+        }
+    }
+}
+
+// MARK: - surface
+
+struct Surface: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Surface framework skills into each coding agent's native skill dir (idempotent symlinks)."
+    )
+    @Argument(help: "Repo root (its factory home is <dir>/.ai-sdd). Default: current directory.")
+    var dir: String = "."
+    @Flag(name: .long, help: "Report what would change but apply nothing; exit 1 if out of sync.")
+    var check = false
+
+    func run() throws {
+        let repoRoot = URL(fileURLWithPath: dir, isDirectory: true)
+        let result = try SkillSurface.reconcile(repoRoot: repoRoot, check: check)
+
+        // Report grouped by agent dir, in the agent table's declared order.
+        for (_, agentDir) in SkillSurface.agentDirsInOrder(result.ops) {
+            let ops = result.ops(forAgentDir: agentDir).sorted { $0.name < $1.name }
+            print("\(agentDir):")
+            if ops.isEmpty { print("  —"); continue }
+            for op in ops {
+                let verb = check && op.mutates ? "would \(op.op.rawValue)" : op.op.rawValue
+                print("  \(SkillSurface.glyph(op.op)) \(op.name) — \(verb)")
+            }
+        }
+
+        if check {
+            if result.reconciled {
+                print("✓ surfaces reconciled — nothing to do")
+            } else {
+                let changes = result.ops.filter(\.mutates).count
+                print("✗ \(changes) surface link(s) out of sync — run `ai-sdd surface` to reconcile")
+                throw ExitCode.failure
+            }
+        } else {
+            let changes = result.ops.filter(\.mutates).count
+            print(changes == 0
+                ? "✓ surfaces already reconciled"
+                : "✓ reconciled \(changes) surface link(s)")
         }
     }
 }
