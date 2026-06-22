@@ -1,0 +1,131 @@
+schema: feature-plan.v1
+program: guardrails
+feature: drift
+slice: drift-deterministic
+stack: swift
+
+summary: >
+  Add a read-only `ai-sdd drift [<dir>]` ParsableCommand (registered in `main.swift` `subcommands:`)
+  backed by a new `Drift` engine type in `Sources/AISDDEngine/Drift.swift`, implementing the two
+  deterministic drift kinds of ADR-0033 (Kinds 1+2; Kind 3 convention-citation is the next slice).
+  Findings are grouped by kind, each names its remedy, and exit is advisory (Dr2): `0` when no
+  findings, `1` when findings exist — never blocking a run. Kind 2 (fixture↔schema) reuses the
+  shipped `SchemaValidator` to validate the repo's existing committed fixtures (under
+  `docs/examples/schema/`) against their current schemas; a violation is a finding with remedy
+  `fix fixture <path>`. Kind 1 (stale gate) is scoped to what is DETERMINISTICALLY reconstructible:
+  investigation found the `ai-sdd-compile-schema` compiler is LLM SKILL PROSE, not engine code (no
+  Schema→CheckSpec function exists in `AISDDEngine`), so the full "recompile each schema's checks
+  in-memory" assumed by ADR-0033 is not feasible as a library call. The Tier-1 structural check is,
+  however, a FIXED MECHANICAL TEMPLATE keyed purely off the schema name (the skill itself calls it
+  "no judgement"); Kind 1 reconstructs that template per `schemas/*.schema.yaml` and diffs it against
+  the committed `checks/<schema>.structure.check.yaml`, reporting a difference (or a missing/extra
+  structural check) as a stale gate with remedy `recompile <schema>`. Findings are provenance-aware:
+  a finding on a `hand-edited` artifact (per ADR-0032 `Provenance`) is annotated. Tests cover each
+  kind against fixtures plus a reconciled-repo → no-findings, exit-0 case.
+
+scope:
+  in:
+    - "Add `Sources/AISDDEngine/Drift.swift`: a pure `Drift` engine type with a `DriftFinding` value (kind, subject, remedy, optional `handEdited` annotation) and a `Drift.scan(homeDirectory:provenance:)`-style entry that returns findings grouped/ordered by kind, taking injected inputs (loaded schemas, committed checks, fixtures, provenance) so it stays unit-testable over temp fixtures."
+    - "Kind 1 (stale gate): for each `.ai-sdd/schemas/<name>.schema.yaml`, deterministically reconstruct the Tier-1 structural CheckSpec from the FIXED template (name `<name>.structure`, `checkKind: deterministic`, `command` = the `swift run ai-sdd check <schema-path> <artifact-path>` template, `required: true`) and diff it against the committed `.ai-sdd/checks/<name>.structure.check.yaml` (load via `SpecLoader.loadCheckYAML`); a mismatch, a missing structural check, or a structural check with no schema is a finding with remedy `recompile <name>`."
+    - "Kind 2 (fixture↔schema, Dr3): validate the repo's known committed fixtures (the `*-good`/`*-approve`/`*-reject` example artifacts under `docs/examples/schema/`, each paired with its schema) against the current schema via `SchemaValidator.validate(_:artifactYAML:)`; any `SchemaViolation` is a finding with remedy `fix fixture <path>`. The fixture↔schema pairing is a small fixed map in `Drift` (deterministic, no globbing guesswork)."
+    - "Provenance annotation (ADR-0032): load `Provenance` via `Provenance.load(from: Layout.provenanceURL(homeDirectory:))` and, for any finding whose subject path classifies as `.handEdited` against its on-disk bytes, set the finding's `handEdited` annotation. An absent manifest loads empty => no annotations (purely additive)."
+    - "Add a `Drift` `ParsableCommand` to `Sources/AISDDCLI/main.swift`, registered in the `AISDD` `subcommands:` list, mirroring the existing read-only subcommand pattern (`Check`/`Scope`): an optional `@Argument` dir (default current directory), an `abstract` for `--help`, run computes findings via the engine, prints them grouped by kind with each finding's remedy (and `hand-edited` annotation where set), and exits `0` when empty / `1` (`ExitCode.failure`) when findings exist. Never throws a blocking error for a clean repo."
+    - "Unit tests in `Tests/AISDDEngineTests/EngineTests.swift` over temp fixtures (existing Swift Testing + temp-dir patterns): a deliberately-stale committed structural check is reported under stale-gate with `recompile` remedy; a schema-violating fixture is reported under fixture↔schema with `fix fixture` remedy; a reconciled temp repo yields zero findings; a finding whose subject is `hand-edited` per a seeded `provenance.json` carries the annotation."
+  out:
+    - "Kind 3 — convention↔code citation re-check (`re-bootstrap <stack>` remedy). Explicitly the next slice (`drift-conventions`); not in this slice."
+    - "Recompiling the full Tier-2 (rules→commands) and Tier-3 (judge) checks in-memory: the compile-schema logic for those tiers is LLM skill prose (no engine function), so Kind 1 is deliberately scoped to the deterministically-reconstructible Tier-1 structural template only (see D-KIND1-COMPILER-PROSE)."
+    - "Auto-fixing drift, blocking/gating on drift, the `ai-sdd surface --check` surfacing-completeness check, and any change to the `SchemaValidator` / `SpecLoader` / `Provenance` APIs themselves."
+    - "Changing how `ai-sdd check` or any existing committed check is compiled or wired (drift only READS the committed checks; it never rewrites them)."
+  context:
+    - "FEASIBILITY (load-bearing): `ai-sdd-compile-schema` is a SKILL (`.ai-sdd/skills/ai-sdd-compile-schema/SKILL.md`) authored by an LLM at bootstrap; `grep` of `Sources/` finds NO `Compiler`/`compileSchema` function and no Schema→CheckSpec engine code. So ADR-0033's 're-run the compile-schema compilation in-memory' is NOT callable as a library for Tier-2/Tier-3. The Tier-1 structural check IS a fixed template (SKILL Tier-1: 'a fixed template — no judgement'), so it is mechanically reconstructible in pure Swift — that is the deterministic core Kind 1 uses."
+    - "Reused engine surfaces: `SchemaValidator.validate(_:artifactYAML:) -> [SchemaViolation]` (Kind 2); `SpecLoader.loadSchemaYAML` / `loadCheckYAML` and `loadBundle` (load schemas + committed checks); `Provenance.load` + `status(of:artifactURL:)` (annotation); `Layout`/`WorkspaceLayout`/`ArtifactLayout` (paths). CLI mirrors the `Check`/`Scope` `ParsableCommand` pattern in `main.swift`."
+    - "Fixtures available for Kind 2: `docs/examples/schema/` ships `plan-good.yaml`, `changeset-good.yaml`, `review-approve.yaml`, `review-reject.yaml` (+ schemas) — real committed fixtures satisfying Dr3 without new fixture authoring."
+
+acceptance:
+  - id: AC-STALE-GATE-REPORTED
+    description: >
+      A committed `checks/<schema>.structure.check.yaml` that no longer matches the deterministically
+      reconstructed Tier-1 structural template for its schema (or is missing) is reported under the
+      stale-gate kind with remedy `recompile <schema>`.
+  - id: AC-FIXTURE-VIOLATION-REPORTED
+    description: >
+      A known fixture that violates its current schema (via `SchemaValidator`) is reported under the
+      fixture↔schema kind with remedy `fix fixture <path>`.
+  - id: AC-RECONCILED-CLEAN-EXIT0
+    description: >
+      A fully reconciled repo (committed structural checks match their schemas, all fixtures valid)
+      yields zero findings and `ai-sdd drift` exits `0`; when any finding exists it exits `1`.
+  - id: AC-HANDEDITED-ANNOTATED
+    description: >
+      A drift finding whose subject artifact is `hand-edited` per `.ai-sdd/provenance.json` (ADR-0032)
+      is annotated as `hand-edited` in the grouped output, distinguishing it from pristine drift.
+  - id: AC-DRIFT-HELP-READONLY
+    description: >
+      `ai-sdd drift --help` documents the read-only subcommand (optional `[<dir>]`), and `drift`
+      performs no writes to the repo.
+  - id: AC-BUILD-TEST-VALIDATE-GREEN
+    description: "`swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` all succeed."
+
+decisions:
+  - id: D-KIND1-COMPILER-PROSE
+    question: >
+      ADR-0033 / the slice say Kind 1 'recompiles each schema's checks in-memory'. Is the
+      `ai-sdd-compile-schema` compiler reusable as a library function for this?
+    decision: >
+      NO — it is not. Investigation (read `.ai-sdd/skills/ai-sdd-compile-schema/SKILL.md`; grep of
+      `Sources/` for `Compiler`/`compileSchema`/Schema→CheckSpec) confirms the schema→checks
+      compilation is LLM SKILL PROSE authored at bootstrap, not engine code; Tier-2 (rules→commands)
+      and Tier-3 (judge) tiers require LLM intent-mapping/judgement and cannot be recompiled
+      deterministically in-memory. Therefore Kind 1 is SCOPED DOWN to the deterministically
+      reconstructible portion: the Tier-1 structural check, which the skill itself defines as a FIXED
+      MECHANICAL TEMPLATE keyed only off the schema name. `Drift` reconstructs that template in pure
+      Swift per `schemas/*.schema.yaml` and diffs it against the committed
+      `checks/<schema>.structure.check.yaml`; a difference (or missing/extra structural check) is the
+      stale-gate finding with remedy `recompile <schema>`. This keeps Kind 1 in this slice, fully
+      deterministic and library-backed, honoring ADR-0001 (deterministic-where-possible) without
+      inventing an in-engine compiler. Recompiling Tier-2/Tier-3 is explicitly out of scope; if a
+      future slice needs full-check staleness it must first extract the compiler into the engine.
+    status: closed
+  - id: D-KIND2-FIXTURES
+    question: "Which fixtures back Kind 2, and how is the fixture↔schema pairing chosen deterministically?"
+    decision: >
+      Per Dr3, reuse the repo's existing committed fixtures under `docs/examples/schema/`
+      (`plan-good.yaml`→feature-plan, `changeset-good.yaml`→changeset, `review-approve.yaml` &
+      `review-reject.yaml`→review). The pairing is a small FIXED map inside `Drift` (no globbing
+      guesswork), so the kind is deterministic and the set is reviewable. Each fixture is read and
+      passed to `SchemaValidator.validate`; any `SchemaViolation` becomes a finding with remedy
+      `fix fixture <path>`. New fixture authoring is unnecessary.
+    status: closed
+  - id: D-ENGINE-TYPE-PURE
+    question: "Where does the drift logic live and how does it stay testable / non-blocking?"
+    decision: >
+      A new pure `Drift` engine type in `Sources/AISDDEngine/Drift.swift` computes findings from
+      injected inputs (loaded schemas, committed checks, fixture contents, a `Provenance`), mirroring
+      how the other engine types (`SchemaValidator`, `ScopeChecker`, `ChangePlan`) keep IO at the
+      edges so `EngineTests.swift` can drive them over temp fixtures. The `Drift` CLI command in
+      `main.swift` does the file IO (load via `SpecLoader`/`Provenance.load`), calls the engine, and
+      maps findings → grouped stdout + advisory exit code (`0` clean / `1` findings via
+      `ExitCode.failure`), never a blocking throw. This matches the read-only `Check`/`Scope`
+      subcommand pattern and the Dr2 advisory-exit decision.
+    status: closed
+  - id: D-PROVENANCE-ANNOTATION
+    question: "How is the `hand-edited` annotation resolved without coupling the engine to disk?"
+    decision: >
+      The CLI loads `Provenance` once (`Provenance.load(from: Layout.provenanceURL(homeDirectory:))`;
+      absent ⇒ empty) and injects it into the `Drift` engine, which sets a finding's `handEdited`
+      flag when `provenance.status(of: subjectPath, currentData:) == .handEdited`. This reuses the
+      shipped ADR-0032 API unchanged, keeps the engine pure over an injected manifest, and is purely
+      additive (no manifest ⇒ no annotations). It does not touch lock/frozen behavior (ADR-0031).
+    status: closed
+
+files:
+  - Sources/AISDDEngine/Drift.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd
+  - swift run ai-sdd drift --help
+  - swift run ai-sdd drift .

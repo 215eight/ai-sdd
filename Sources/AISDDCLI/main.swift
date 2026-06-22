@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd 0.2.0",
-        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self, Plan.self, Surface.self]
+        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Graph.self, Plan.self, Surface.self, DriftCommand.self]
     )
 }
 
@@ -631,6 +631,107 @@ struct Surface: ParsableCommand {
                 ? "✓ surfaces already reconciled"
                 : "✓ reconciled \(changes) surface link(s)")
         }
+    }
+}
+
+// MARK: - drift
+
+/// `ai-sdd drift [<dir>]` — a read-only detector for the deterministic drift kinds of ADR-0033
+/// (Kinds 1+2; Kind 3 convention-citation is the next slice). It loads the factory home's schemas,
+/// committed structural checks, fixed fixtures and provenance, calls the pure `Drift` engine, and
+/// prints findings grouped by kind with each finding's remedy. Advisory exit (Dr2): `0` when clean,
+/// `1` when findings exist — never blocks a run; it writes nothing.
+struct DriftCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "drift",
+        abstract: "Detect deterministic drift in <dir> (stale structural gates + fixture↔schema violations); read-only, advisory exit."
+    )
+    @Argument(help: "Repo root whose factory home is <dir>/.ai-sdd. Default: current directory.")
+    var dir: String = "."
+
+    /// The FIXED fixture↔schema map (D-KIND2-FIXTURES): the positive committed example artifacts under
+    /// `docs/examples/schema/`, each paired with the schema beside it. Only fixtures meant to VALIDATE
+    /// are listed — `*-reject`/`*-bad` are deliberate negative examples (a reject artifact failing its
+    /// schema is the verdict gate working, not drift), so they are excluded to keep a reconciled repo
+    /// clean. Paths are repo-relative; the command reads them under `dir`.
+    static let fixtureMap: [(fixture: String, schema: String)] = [
+        ("docs/examples/schema/changeset-good.yaml", "docs/examples/schema/changeset.schema.yaml"),
+        ("docs/examples/schema/plan-good.yaml", "docs/examples/schema/feature-plan.schema.yaml"),
+        ("docs/examples/schema/review-approve.yaml", "docs/examples/schema/review.schema.yaml")
+    ]
+
+    func run() throws {
+        let repoRoot = URL(fileURLWithPath: dir, isDirectory: true)
+        let home = repoRoot.appendingPathComponent(".ai-sdd", isDirectory: true)
+        let loader = SpecLoader()
+        let fm = FileManager.default
+
+        // Provenance for the `hand-edited` annotation (ADR-0032). Absent manifest ⇒ empty ⇒ no
+        // annotations (purely additive). The engine stays pure: the CLI resolves the hand-edited set.
+        let provenance = try Provenance.load(from: home.appendingPathComponent("provenance.json"))
+        var handEditedPaths: Set<String> = []
+        func noteHandEdited(_ repoRelPath: String) {
+            let url = repoRoot.appendingPathComponent(repoRelPath)
+            if provenance.status(of: repoRelPath, artifactURL: url) == .handEdited {
+                handEditedPaths.insert(repoRelPath)
+            }
+        }
+
+        // Kind 1 inputs: every schema, and every committed structural check (parsed).
+        let schemasDir = home.appendingPathComponent("schemas", isDirectory: true)
+        var schemas: [Drift.SchemaInput] = []
+        for file in (try? fm.contentsOfDirectory(at: schemasDir, includingPropertiesForKeys: nil)) ?? []
+        where file.lastPathComponent.hasSuffix(".schema.yaml") {
+            let env = try loader.loadSchemaYAML(try String(contentsOf: file, encoding: .utf8))
+            schemas.append(.init(name: env.metadata.name,
+                                 version: env.metadata.version ?? 1,
+                                 format: env.spec.format ?? "yaml"))
+        }
+
+        let checksDir = home.appendingPathComponent("checks", isDirectory: true)
+        var committed: [Drift.CommittedCheck] = []
+        for file in (try? fm.contentsOfDirectory(at: checksDir, includingPropertiesForKeys: nil)) ?? []
+        where file.lastPathComponent.hasSuffix(".structure.check.yaml") {
+            let env = try loader.loadCheckYAML(try String(contentsOf: file, encoding: .utf8))
+            committed.append(.init(checkName: env.metadata.name, spec: env.spec))
+            noteHandEdited(".ai-sdd/checks/\(file.lastPathComponent)")
+        }
+
+        // Kind 2 inputs: the fixed fixture↔schema map. A fixture (or its schema) that is missing on
+        // disk is simply skipped — drift reports what it can read.
+        var fixtures: [Drift.FixtureInput] = []
+        for pair in DriftCommand.fixtureMap {
+            let fixtureURL = repoRoot.appendingPathComponent(pair.fixture)
+            let schemaURL = repoRoot.appendingPathComponent(pair.schema)
+            guard let fixtureText = try? String(contentsOf: fixtureURL, encoding: .utf8),
+                  let schemaText = try? String(contentsOf: schemaURL, encoding: .utf8) else { continue }
+            let schemaEnv = try loader.loadSchemaYAML(schemaText)
+            fixtures.append(.init(path: pair.fixture, contents: fixtureText, schema: schemaEnv.spec))
+            noteHandEdited(pair.fixture)
+        }
+
+        let findings = try Drift.scan(
+            schemas: schemas, committedChecks: committed,
+            fixtures: fixtures, handEditedPaths: handEditedPaths)
+
+        guard !findings.isEmpty else {
+            print("✓ no drift — \(schemas.count) schema(s) reconciled, \(fixtures.count) fixture(s) valid")
+            return
+        }
+
+        // Grouped by kind, in declared kind order; each finding names its remedy + annotation.
+        for kind in DriftKind.allCases {
+            let group = findings.filter { $0.kind == kind }
+            guard !group.isEmpty else { continue }
+            print("\(kind.rawValue) (\(group.count)):")
+            for finding in group {
+                let annotation = finding.handEdited ? " [hand-edited]" : ""
+                print("  ✗ \(finding.subject)\(annotation) — \(finding.detail)")
+                print("    → remedy: \(finding.remedy)")
+            }
+        }
+        print("\(findings.count) drift finding(s)")
+        throw ExitCode.failure
     }
 }
 

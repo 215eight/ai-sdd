@@ -1,0 +1,74 @@
+schema: review.v1
+program: guardrails
+feature: drift
+slice: drift-deterministic
+
+items:
+  - id: AC-STALE-GATE-REPORTED
+    verdict: pass
+    notes: >-
+      Drift reconstructs the FIXED Tier-1 structural CheckSpec per schema and diffs it against the
+      committed check via a semantic `CheckSpec ==` comparison (Drift.swift staleGateFindings), not
+      brittle bytes. A mismatch, a missing structural check, and an orphaned check each yield a
+      stale-gate finding with remedy `recompile <schema>`. Tests staleStructuralCheckIsReported,
+      missingStructuralCheckIsReported, orphanedStructuralCheckIsReported cover all three. Verified
+      the reconstructed template matches the committed feature-plan.structure.check.yaml exactly
+      (checkKind deterministic, `swift run ai-sdd check <schema> <artifact>` command, required true) —
+      so it matches committed reality, not a divergent shape.
+  - id: AC-FIXTURE-VIOLATION-REPORTED
+    verdict: pass
+    notes: >-
+      Kind 2 validates each fixed fixture via SchemaValidator.validate; a SchemaViolation becomes a
+      fixture-schema finding with remedy `fix fixture <path>` plus the violation detail. Test
+      schemaViolatingFixtureIsReported confirms kind, subject, remedy, and detail. The fixture↔schema
+      pairing is a fixed map (no globbing guesswork), reviewable and deterministic.
+  - id: AC-RECONCILED-CLEAN-EXIT0
+    verdict: pass
+    notes: >-
+      Self-consistency invariant VERIFIED by running `ai-sdd drift .`: "✓ no drift — 4 schema(s)
+      reconciled, 3 fixture(s) valid", exit 0. Confirmed NON-vacuous: all 4 schemas have matching
+      committed structural checks and all 3 positive fixtures validate. The reject/bad fixtures are
+      correctly excluded — independently verified that review-reject.yaml and plan-bad.yaml DO fail
+      their schemas, so excluding them is REQUIRED to keep the repo clean (a reject fixture failing
+      its schema is the verdict gate working, not drift). Test reconciledRepoHasNoFindings covers the
+      unit case; findings ⇒ exit 1 via ExitCode.failure in the CLI.
+  - id: AC-HANDEDITED-ANNOTATED
+    verdict: pass
+    notes: >-
+      The CLI loads Provenance (absent ⇒ empty) and resolves the hand-edited subject set via
+      provenance.status(of:artifactURL:); the pure engine sets DriftFinding.handEdited and the CLI
+      prints a `[hand-edited]` annotation per finding, grouped by kind. Purely additive (empty
+      manifest ⇒ no annotations). Test handEditedSubjectIsAnnotated covers both annotated and plain
+      cases. Reuses the shipped ADR-0032 API unchanged; does not touch lock/frozen behavior.
+  - id: AC-DRIFT-HELP-READONLY
+    verdict: pass
+    notes: >-
+      `ai-sdd drift --help` documents the optional `[<dir>]` (default current directory) and the
+      read-only/advisory abstract. Verified no writes: git status is byte-identical before and after
+      running `drift .`. DriftCommand is registered in the AISDD subcommands list and mirrors the
+      read-only Check/Scope ParsableCommand pattern.
+  - id: AC-BUILD-TEST-VALIDATE-GREEN
+    verdict: pass
+    notes: >-
+      Reviewer ran all three: `swift build` complete; `swift test` green (143 tests, 4 suites,
+      DriftTests suite passing); `swift run ai-sdd validate .ai-sdd` → valid (3 nodes, 3 edges,
+      4 workers, 8 checks), exit 0.
+
+verdict: approve
+rework: []
+
+notes: >-
+  Clean, in-scope slice. Scope held to exactly the 3 planned files: new pure engine type
+  Sources/AISDDEngine/Drift.swift (DriftKind + DriftFinding + Drift.scan over injected inputs, IO-free),
+  a read-only DriftCommand in Sources/AISDDCLI/main.swift doing the file IO at the edge (SpecLoader +
+  Provenance.load), and DriftTests in Tests/AISDDEngineTests/EngineTests.swift. The D-KIND1-COMPILER-PROSE
+  decision is honored and sound: Kind 1 is scoped to the deterministically reconstructible Tier-1
+  structural template (the compile-schema compiler is LLM skill prose, not engine code), reconstructed in
+  pure Swift and diffed semantically — and the rebuilt template provably equals the four committed
+  structural checks (drift . is clean). D-KIND2-FIXTURES is honored: a fixed positive-fixture map,
+  reject/bad fixtures excluded with verified justification. Exit is advisory (0/1, never a blocking throw
+  on a clean repo, Dr2). Provenance annotation is additive (ADR-0032 API unchanged). Kind 3
+  (convention↔code citation) is correctly deferred to the next slice — only the two intended DriftKind
+  cases exist. Conventions satisfied: engine/CLI/models layering, Swift Testing style (@Test/#expect/
+  #require, temp-dir-free injected fixtures), no clock reads. Every acceptance id is judged and backed by
+  a real load-bearing test.

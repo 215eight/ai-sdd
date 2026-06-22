@@ -2602,3 +2602,124 @@ struct PlanReportTests {
         #expect(loaded == returned, "the returned manifest equals what was saved")
     }
 }
+
+// MARK: - Drift (ADR-0033 deterministic kinds 1+2)
+
+struct DriftTests {
+    /// A schema input for Kind 1 reconstruction.
+    private func schemaInput(_ name: String, version: Int = 1, format: String = "yaml") -> Drift.SchemaInput {
+        .init(name: name, version: version, format: format)
+    }
+
+    /// The committed structural check that EXACTLY matches what the template reconstructs — so a repo
+    /// built from it is reconciled (no Kind-1 finding).
+    private func reconciledCheck(for name: String) -> Drift.CommittedCheck {
+        .init(checkName: Drift.structuralCheckName(for: name),
+              spec: Drift.expectedStructuralCheck(for: schemaInput(name)))
+    }
+
+    /// A tiny schema with one required non-empty `summary` field, for Kind-2 fixture validation.
+    private func summarySchema() throws -> SchemaSpec {
+        try SpecLoader().loadSchemaYAML("""
+        apiVersion: ai-sdd/v1
+        kind: Schema
+        metadata: { name: thing, version: 1 }
+        spec:
+          handle: file
+          format: yaml
+          fields:
+            summary: { type: string, required: true, invariants: [{ nonEmpty: true }] }
+        """).spec
+    }
+
+    // AC-RECONCILED-CLEAN-EXIT0: a reconciled repo (committed structural checks match their schemas,
+    // all fixtures valid) yields zero findings.
+    @Test func reconciledRepoHasNoFindings() throws {
+        let schema = try summarySchema()
+        let findings = try Drift.scan(
+            schemas: [schemaInput("feature-plan"), schemaInput("changeset")],
+            committedChecks: [reconciledCheck(for: "feature-plan"), reconciledCheck(for: "changeset")],
+            fixtures: [.init(path: "docs/examples/schema/good.yaml",
+                             contents: "summary: a real summary\n", schema: schema)])
+        #expect(findings.isEmpty, "a fully reconciled repo drifts nowhere")
+    }
+
+    // AC-STALE-GATE-REPORTED: a committed structural check that no longer matches its schema's
+    // reconstructed Tier-1 template is reported under stale-gate with remedy `recompile <schema>`.
+    @Test func staleStructuralCheckIsReported() throws {
+        // Inject drift: the committed command points at a stale artifact path.
+        let stale = Drift.CommittedCheck(
+            checkName: Drift.structuralCheckName(for: "feature-plan"),
+            spec: CheckSpec(checkKind: "deterministic",
+                            command: "swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml STALE.yaml",
+                            required: true))
+        let findings = try Drift.scan(
+            schemas: [schemaInput("feature-plan")], committedChecks: [stale], fixtures: [])
+        #expect(findings.count == 1)
+        let finding = try #require(findings.first)
+        #expect(finding.kind == .staleGate)
+        #expect(finding.subject == "feature-plan")
+        #expect(finding.remedy == "recompile feature-plan")
+    }
+
+    // AC-STALE-GATE-REPORTED (missing variant): a schema with no committed structural check is a finding.
+    @Test func missingStructuralCheckIsReported() throws {
+        let findings = try Drift.scan(
+            schemas: [schemaInput("review")], committedChecks: [], fixtures: [])
+        #expect(findings.count == 1)
+        #expect(findings.first?.kind == .staleGate)
+        #expect(findings.first?.remedy == "recompile review")
+        #expect(findings.first?.detail.contains("missing") == true)
+    }
+
+    // An orphaned structural check (a committed `<name>.structure` whose schema is gone) is a finding.
+    @Test func orphanedStructuralCheckIsReported() throws {
+        let findings = try Drift.scan(
+            schemas: [], committedChecks: [reconciledCheck(for: "ghost")], fixtures: [])
+        #expect(findings.count == 1)
+        #expect(findings.first?.kind == .staleGate)
+        #expect(findings.first?.subject == "ghost")
+        #expect(findings.first?.detail.contains("no matching schema") == true)
+    }
+
+    // AC-FIXTURE-VIOLATION-REPORTED: a fixture that violates its current schema is reported under
+    // fixture-schema with remedy `fix fixture <path>`.
+    @Test func schemaViolatingFixtureIsReported() throws {
+        let schema = try summarySchema()
+        let badPath = "docs/examples/schema/bad.yaml"
+        let findings = try Drift.scan(
+            schemas: [], committedChecks: [],
+            fixtures: [.init(path: badPath, contents: "notsummary: oops\n", schema: schema)])
+        #expect(findings.count == 1)
+        let finding = try #require(findings.first)
+        #expect(finding.kind == .fixtureSchema)
+        #expect(finding.subject == badPath)
+        #expect(finding.remedy == "fix fixture \(badPath)")
+        #expect(finding.detail.contains("summary") == true)
+    }
+
+    // AC-HANDEDITED-ANNOTATED: a finding whose subject path is in the hand-edited set carries the
+    // annotation (additive; an empty set leaves findings unannotated).
+    @Test func handEditedSubjectIsAnnotated() throws {
+        let schema = try summarySchema()
+        let badPath = "docs/examples/schema/bad.yaml"
+        let fixtures = [Drift.FixtureInput(path: badPath, contents: "x: 1\n", schema: schema)]
+
+        let annotated = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: fixtures, handEditedPaths: [badPath])
+        #expect(annotated.first?.handEdited == true, "subject in the hand-edited set is annotated")
+
+        let plain = try Drift.scan(schemas: [], committedChecks: [], fixtures: fixtures)
+        #expect(plain.first?.handEdited == false, "absent manifest ⇒ no annotation (additive)")
+    }
+
+    // Findings are grouped/ordered by kind: stale-gate before fixture-schema.
+    @Test func findingsAreOrderedByKind() throws {
+        let schema = try summarySchema()
+        let findings = try Drift.scan(
+            schemas: [schemaInput("missing")], committedChecks: [],
+            fixtures: [.init(path: "docs/examples/schema/bad.yaml",
+                             contents: "x: 1\n", schema: schema)])
+        #expect(findings.map(\.kind) == [.staleGate, .fixtureSchema])
+    }
+}

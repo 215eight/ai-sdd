@@ -1,0 +1,27 @@
+summary: >-
+  Implemented the `drift-deterministic` slice (ADR-0033 Kinds 1+2). Added a pure `Drift` engine type
+  in `Sources/AISDDEngine/Drift.swift` that produces `DriftFinding`s grouped by kind, each naming a
+  remedy, over injected inputs (loaded schemas, committed structural checks, fixed fixtures, a
+  hand-edited path set) so it is unit-testable with no IO. Kind 1 (stale structural gate)
+  reconstructs the FIXED Tier-1 structural `CheckSpec` template per `schemas/*.schema.yaml` in pure
+  Swift — matching the committed `swift run ai-sdd check <schema> <artifact>` format byte-for-byte —
+  and diffs it against the committed `checks/<schema>.structure.check.yaml`; a mismatch, missing, or
+  orphaned check is a finding with remedy `recompile <schema>`. Kind 2 (fixture-schema) validates the
+  fixed positive fixtures under `docs/examples/schema/` (plan-good, changeset-good, review-approve)
+  against their paired schemas via the shipped `SchemaValidator`; a violation is a finding with remedy
+  `fix fixture <path>`. The deliberate negative fixtures (`review-reject`, `plan-bad`) are excluded so
+  a reconciled repo stays clean. Added a read-only `drift [<dir>]` ParsableCommand (default `.`)
+  registered in `main.swift` subcommands, doing the file IO at the edge, printing findings grouped by
+  kind with remedies and an additive `hand-edited` annotation (via Provenance load+status), advisory
+  exit 0 (clean) / 1 (findings), and `--help`. Kind 3 (convention citations) is left to the next
+  slice. Tests in `Tests/AISDDEngineTests/EngineTests.swift` cover each kind over injected drift plus
+  a reconciled-repo -> no-findings case and the hand-edited annotation. `swift build`, `swift test`
+  (143 tests), `swift run ai-sdd validate .ai-sdd`, and `swift run ai-sdd drift .` (no findings,
+  exit 0) all pass on this reconciled repo.
+satisfies:
+  - AC-STALE-GATE-REPORTED
+  - AC-FIXTURE-VIOLATION-REPORTED
+  - AC-RECONCILED-CLEAN-EXIT0
+  - AC-HANDEDITED-ANNOTATED
+  - AC-DRIFT-HELP-READONLY
+  - AC-BUILD-TEST-VALIDATE-GREEN
