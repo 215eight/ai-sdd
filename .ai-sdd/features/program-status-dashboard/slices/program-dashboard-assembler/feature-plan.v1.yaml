@@ -1,0 +1,184 @@
+summary: >-
+  Add the file-aware PROGRAM dashboard assembler plus distinct milestone/gate renderer styling
+  (slice program-dashboard-assembler, slice 2 of 4 of program-status-dashboard). Add
+  ProgramDashboardAssembler.assemble(programDir:runStore:fileManager:) in
+  Sources/AISDDEngine/DashboardProjection.swift (co-located with the existing ProjectDashboardAssembler
+  so it reuses matchedState/standardizedPath): it loads the program pipeline via
+  SpecLoader.loadPipeline(atDirectory:), matches the program run by comparing standardized
+  RunMeta.pipelineDir to programDir, builds a feature-sub-pipeline loader closure that resolves
+  node.pipeline relative to programDir and loads it (returning nil on failure for graceful
+  degradation), feeds that closure into the slice-1 DashboardProjection.project(program:metadata:state:
+  featurePipeline:), and emits one GraphRenderer.DashboardSection ("Program · <name>") with a
+  status-annotated mermaid via GraphRenderer.dashboardMermaid. A truly invalid/empty program throws a
+  new typed ProjectDashboardError case; a missing run or a broken sub-pipeline never crashes. In
+  GraphRenderer.swift, dashboardMermaid renders milestone/gate rows (row.isMilestone == true) with a
+  distinct gate node shape and a dedicated classDef so pass (done) vs blocked (rework/escalated/pending)
+  reads distinctly — purely additive, leaving project/plant dashboards and every existing graph mode
+  unchanged, with every dynamic value escaped. The CLI gate relaxation and end-to-end verification are
+  later slices and out of scope here.
+scope:
+  in:
+    - Add ProgramDashboardAssembler (a new enum) in Sources/AISDDEngine/DashboardProjection.swift, beside ProjectDashboardAssembler, exposing static func assemble(programDir URL, runStore RunStore, fileManager FileManager = .default) throws -> ProjectDashboard.
+    - Load the program pipeline with SpecLoader.loadPipeline(atDirectory programDir); on a missing or invalid program pipeline throw a new typed ProjectDashboardError case (no crash).
+    - Match the program run by scanning runStore.runIds() and comparing standardized RunMeta.pipelineDir to the standardized program dir, reusing the existing ProjectDashboardAssembler.matchedState / standardizedPath logic (refactored to a shared private helper only if it stays clean), so a missing matching run degrades to a nil RunState (static statuses).
+    - Build the feature-sub-pipeline loader closure (PipelineNode) -> (spec PipelineSpec, metadata SpecMetadata)? that, for a kind == "pipeline" node, resolves node.pipeline relative to programDir and loads it via SpecLoader.loadPipeline(atDirectory:), returning nil when node.pipeline is absent or the load throws (graceful degradation); pass it into DashboardProjection.project(program:metadata:state:featurePipeline:) from slice 1.
+    - Emit one GraphRenderer.DashboardSection with heading "Program · <name>" (name from the program metadata) whose projection is the program rollup and whose mermaid is GraphRenderer.dashboardMermaid(programSpec, rows projectedRows, inheritedOwner metadata.owner ?? []), so the master graph is status-annotated; return a ProjectDashboard(title programName, sections [section]).
+    - Reuse path literals via Layout.swift; add a Layout.programsDir literal ("programs") for the on-disk programs dir name and use WorkspaceLayout(dir:).pipeline for the pipeline.yaml path, so no inline path strings appear in the assembler.
+    - In GraphRenderer.dashboardMermaid, render rows with isMilestone == true using a distinct gate node shape and a dedicated milestone classDef (keyed off status so pass/blocked still shows the status color), distinguishing gates from feature/plain rows; keep non-milestone rows byte-for-byte unchanged and HTML/Mermaid-escape every dynamic value.
+    - Add Swift Testing coverage in Tests/AISDDEngineTests/EngineTests.swift using a temp-dir program (a pipeline.yaml with feature kind:pipeline nodes + a milestone-gate node + edges, plus minimal feature sub-pipelines) and a RunStore for run matching, plus pure dashboardMermaid tests for milestone styling and escaping.
+  out:
+    - No change to DashboardProjection.project(program:...) / project(pipeline:...) rollup logic, to DashboardProjectionRow.isMilestone, or to any projection precedence — those shipped in slice program-status-rollup and are reused as-is.
+    - No CLI flag or command changes, including the --dashboard requires --project gate relaxation for program dirs (that is the downstream cli slice in Sources/AISDDCLI/).
+    - No changes to the project dashboard, the plant dashboard, single-graph, --html, plain Mermaid, dashboardPage, dashboardStyles, graphHTML, tableHTML, or DashboardCharts output (additive only; existing modes stay byte-for-byte unchanged).
+    - No changes to pipeline / worker / check / schema spec formats, to RunState storage, to recursive execution, or to the milestone-gate worker.
+    - No end-to-end verification against the real .ai-sdd/programs/guardrails program or its run, and no new top-level command (downstream verification slice).
+    - No live overlay, server, CDN, auth, or remote run fragments (ADR-0027 pending items remain out of scope).
+acceptance:
+  - id: assembler-entry-point
+    description: ProgramDashboardAssembler.assemble(programDir:runStore:fileManager:) loads the program pipeline via SpecLoader.loadPipeline(atDirectory:) and returns a ProjectDashboard whose title is the program metadata name and whose single section heading is "Program · <name>".
+  - id: matches-run-by-pipelinedir
+    description: When a run exists in runStore whose standardized RunMeta.pipelineDir equals the standardized programDir, the assembler projects the master graph against that run's RunState, so completed/started feature and milestone nodes roll up to their run-derived statuses; a non-matching pipelineDir is ignored.
+  - id: feature-rollup-via-sub-pipeline
+    description: For a kind == "pipeline" feature node, the assembler's loader closure resolves node.pipeline relative to programDir and loads the sub-pipeline, and the emitted row reflects the slice-1 rollup (a feature whose sub-pipeline rows are all done rolls up to done; a feature with a started sub-pipeline row rolls up to in-progress).
+  - id: milestone-gate-status-in-section
+    description: A milestone-gate node (worker == "milestone-gate", not kind pipeline) appears in the section with isMilestone == true and a status derived from the plain-node precedence over the matched run plus the runnable set (done when its program dependencies completed, runnable/pending otherwise).
+  - id: no-run-static-degradation
+    description: When no run in runStore matches the programDir, the assembler passes a nil RunState into the rollup and the section's rows resolve statically (program-tier source nodes runnable, dependents pending) without throwing or crashing.
+  - id: missing-sub-pipeline-degradation
+    description: When a feature node's node.pipeline is absent or its sub-pipeline fails to load, the loader closure returns nil and the feature row falls back to program-tier signals (top-level run signal if present, else runnable/pending) with no crash.
+  - id: invalid-program-throws-typed-error
+    description: When programDir has no loadable program pipeline.yaml (or it is empty/invalid), assemble throws a clear typed ProjectDashboardError case (analogous to .noGraphs), and tests assert the exact case rather than any Error.
+  - id: milestone-gate-styling-distinct
+    description: GraphRenderer.dashboardMermaid renders a row with isMilestone == true using a distinct gate node shape and a dedicated milestone classDef, so a milestone/gate node is visually distinguishable from feature/plain nodes while still surfacing its status (pass vs blocked) via color.
+  - id: dynamic-values-escaped
+    description: Every dynamic value the assembler and the milestone styling feed into Mermaid/HTML (node ids, status text, owner, headings) is escaped via the existing escape helpers, verified by a test asserting an injected angle-bracket/quote value is escaped in the rendered output.
+  - id: existing-dashboards-unchanged
+    description: All pre-existing dashboard tests (project dashboard assembler, build-pattern, self-contained HTML, plant graph, single-graph, --html, plain Mermaid) pass unchanged, confirming the milestone styling and the new assembler are purely additive.
+  - id: build-and-test-green
+    description: swift build and swift test both pass.
+decisions:
+  - id: assembler-location
+    status: closed
+    decision: >-
+      Implement ProgramDashboardAssembler as a new public enum in the existing
+      Sources/AISDDEngine/DashboardProjection.swift, beside ProjectDashboardAssembler, with signature
+      static func assemble(programDir: URL, runStore: RunStore, fileManager: FileManager = .default)
+      throws -> ProjectDashboard.
+    rationale: >-
+      That file already owns ProjectDashboardAssembler, ProjectDashboard, ProjectDashboardError, the
+      run-matching helpers (matchedState/standardizedPath), and DashboardProjection.project(program:...);
+      co-locating reuses those helpers and the ProjectDashboard return type without duplication or a new
+      file, matching the slice brief's recommendation to sit beside ProjectDashboardAssembler.
+  - id: run-matching-reuse
+    status: closed
+    decision: >-
+      Reuse the existing ProjectDashboardAssembler run-matching logic — scan runStore.runIds(), decode
+      meta, and compare standardizedPath(meta.pipelineDir) to the standardized programDir, returning the
+      reduced RunState of the first match or nil. Extract the matchedState/standardizedPath pair into a
+      private helper shared by both assemblers only if the extraction stays clean; otherwise mirror the
+      tiny logic locally rather than force a refactor.
+    rationale: >-
+      RunMeta.pipelineDir is the run→pipeline join the project assembler already uses; reusing it keeps
+      program run-matching identical to project run-matching and satisfies requirements decision 5's
+      "matches the program run by pipelineDir". A nil match is the no-run static-degradation path, so no
+      error is thrown for a missing run.
+  - id: sub-pipeline-loader-closure
+    status: closed
+    decision: >-
+      Build the featurePipeline closure inline in assemble: for a node with kind == "pipeline" and a
+      non-nil node.pipeline, resolve the path relative to programDir
+      (programDir.appendingPathComponent(node.pipeline).standardizedFileURL), load it via
+      SpecLoader().loadPipeline(atDirectory:), and return (env.spec, env.metadata); return nil when
+      node.pipeline is nil or the load throws (try?). Feed this closure into
+      DashboardProjection.project(program:metadata:state:featurePipeline:).
+    rationale: >-
+      node.pipeline carries the sub-pipeline workspace path (e.g. ../../features/locks in the guardrails
+      program), grounded in .ai-sdd/programs/guardrails/pipeline.yaml; resolving it against programDir
+      matches the on-disk layout. Returning nil on absence/failure is exactly the
+      missing-sub-pipeline-degrades contract slice 1 already handles, keeping the assembler crash-free.
+  - id: invalid-program-error
+    status: closed
+    decision: >-
+      Add a new case to the existing ProjectDashboardError enum (e.g. invalidProgram(String) carrying the
+      programDir path, with an errorDescription) thrown when SpecLoader.loadPipeline(atDirectory:) fails
+      or the loaded program has no nodes. Reuse ProjectDashboardError rather than introducing a separate
+      error type so callers catch one dashboard-error family.
+    rationale: >-
+      The slice brief asks for a typed error "analogous to ProjectDashboardError.noGraphs". Extending the
+      existing Error/Equatable/LocalizedError/Sendable enum keeps the error surface coherent and lets
+      tests assert the exact case; a missing run and a broken sub-pipeline do NOT throw (they degrade),
+      so only a genuinely unloadable/empty program reaches this path.
+  - id: master-section-emission
+    status: closed
+    decision: >-
+      Emit exactly one GraphRenderer.DashboardSection with heading "Program · <name>" (name from the
+      program metadata), projection set to the program rollup result, and mermaid set to
+      GraphRenderer.dashboardMermaid(programSpec, rows: projection.rows, inheritedOwner:
+      metadata.owner ?? []); return ProjectDashboard(title: name, sections: [section]).
+    rationale: >-
+      Mirrors how ProjectDashboardAssembler builds its sections (heading prefix + projection + status
+      annotated dashboardMermaid with inheritedOwner), so the existing dashboardPage renders the program
+      section with the same chart/table vocabulary unchanged; one section reflects requirements decision 4
+      (one rolled-up status per feature node, single master graph).
+  - id: layout-programs-literal
+    status: closed
+    decision: >-
+      Add a Layout.programsDir = "programs" string literal to Sources/AISDDEngine/Layout.swift for the
+      on-disk programs directory name, and use WorkspaceLayout(dir: programDir).pipeline for the
+      pipeline.yaml path, so the assembler contains no inline path strings. The assembler takes the
+      concrete programDir URL as a parameter (the caller, a later CLI slice, composes it), so it needs
+      programsDir only where it derives a programs path internally; expose programsDir public so the
+      downstream CLI slice can compose it.
+    rationale: >-
+      The conventions and requirements mandate all on-disk path literals live in Layout.swift (no inline
+      strings). programsDir is the one new on-disk name this feature introduces; centralizing it there
+      keeps Layout the single source of path truth and lets the CLI slice reuse it.
+  - id: milestone-styling-mechanism
+    status: closed
+    decision: >-
+      Style milestones in GraphRenderer.dashboardMermaid only: when a row has isMilestone == true, emit
+      the node with a distinct gate shape (the Mermaid hexagon/gate form id{{"label"}} instead of
+      id["label"]) and attach a dedicated milestone classDef (e.g. a "milestone_<status>" class) so the
+      gate is shape-distinct while the status color still encodes pass (done) vs blocked
+      (rework/escalated/pending). Look up isMilestone via the rows passed to dashboardMermaid (build a
+      node.id -> isMilestone map alongside the existing node.id -> status map). Do not touch graphHTML,
+      tableHTML, dashboardStyles, or the project/plant code paths.
+    rationale: >-
+      DashboardProjectionRow.isMilestone (added in slice 1) is the gate marker; keying off it in the one
+      pure render function the assembler feeds keeps the change additive and unit-testable without file IO.
+      A distinct Mermaid node shape plus a status-derived classDef satisfies requirements decision 3
+      (style milestones distinctly as gates, surfacing pass vs blocked) without altering the table/HTML
+      fallbacks or any existing graph mode, so non-milestone output is byte-for-byte unchanged.
+  - id: escaping
+    status: closed
+    decision: >-
+      Reuse the existing escapeMermaidLabel (Mermaid labels) and escapeHTML (HTML) helpers in
+      GraphRenderer for every dynamic value in the milestone styling path, exactly as the existing
+      dashboardLabel/dashboardMermaid do; add no new escaping function.
+    rationale: >-
+      The renderer already escapes ampersand/angle-bracket/quote for Mermaid labels and additionally
+      single-quote for HTML; routing milestone labels through the same helpers keeps escaping consistent
+      and lets a test assert an injected angle-bracket value is escaped, satisfying the
+      dynamic-values-escaped acceptance item.
+  - id: tests-location
+    status: closed
+    decision: >-
+      Add the slice tests to Tests/AISDDEngineTests/EngineTests.swift using Swift Testing
+      (@Test/#expect/#require), following the existing projectDashboardAssembler* tests: a temp-dir
+      program (pipeline.yaml with feature kind:pipeline nodes + a milestone-gate node + edges, plus
+      minimal feature sub-pipelines), a RunStore for run matching by pipelineDir, plus pure
+      dashboardMermaid tests for milestone gate shape/class and escaping; assert the exact
+      ProjectDashboardError case for the invalid-program test.
+    rationale: >-
+      The repo keeps engine and dashboard tests in this Swift Testing file with temp-dir programs and a
+      RunStore (the existing projectDashboardAssembler tests are the exemplar); reusing that pattern keeps
+      coverage consistent and exercises both the file-aware assembler and the pure renderer change. Prefer
+      exact typed errors (SpecLoadError/ProjectDashboardError) over any Error per the conventions.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test

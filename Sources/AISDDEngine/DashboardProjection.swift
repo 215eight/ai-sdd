@@ -98,12 +98,76 @@ public struct ProjectDashboard: Equatable, Sendable {
 
 public enum ProjectDashboardError: Error, Equatable, LocalizedError, Sendable {
     case noGraphs(String)
+    /// A program dir has no loadable/valid master `pipeline.yaml` (missing, malformed, or empty of
+    /// nodes). Analogous to `.noGraphs`, but for the program tier: a missing run or a broken
+    /// sub-pipeline degrades silently — only a genuinely unloadable program reaches this.
+    case invalidProgram(String)
 
     public var errorDescription: String? {
         switch self {
         case let .noGraphs(path):
             return "no dashboard graphs at '\(path)' — expected a pipeline.yaml and/or a features/ folder"
+        case let .invalidProgram(path):
+            return "no loadable program pipeline at '\(path)' — expected a pipeline.yaml with at least one node"
         }
+    }
+}
+
+/// Assembles the PROGRAM-tier dashboard: loads a program's master `pipeline.yaml`, matches its run
+/// by `pipelineDir`, descends into each feature node's sub-pipeline for the rollup, and emits one
+/// status-annotated master-graph section. File-aware sibling of `ProjectDashboardAssembler` (a
+/// missing run or a broken sub-pipeline degrades; only an unloadable/empty program throws).
+public enum ProgramDashboardAssembler {
+    public static func assemble(programDir: URL, runStore: RunStore,
+                                fileManager: FileManager = .default) throws -> ProjectDashboard {
+        let homeURL = programDir.standardizedFileURL
+        let loader = SpecLoader()
+
+        guard let env = try? loader.loadPipeline(atDirectory: homeURL), !env.spec.nodes.isEmpty else {
+            throw ProjectDashboardError.invalidProgram(programDir.path)
+        }
+
+        let programName = env.metadata.name
+        let projection = DashboardProjection.project(
+            program: env.spec,
+            metadata: env.metadata,
+            state: matchedState(for: homeURL, in: runStore),
+            featurePipeline: featurePipelineLoader(programDir: homeURL, loader: loader))
+
+        let section = GraphRenderer.DashboardSection(
+            heading: "Program · \(programName)",
+            projection: projection,
+            mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
+                                                    inheritedOwner: env.metadata.owner ?? []))
+        return ProjectDashboard(title: programName, sections: [section])
+    }
+
+    /// A sub-pipeline loader closure for `DashboardProjection.project(program:…)`: for a `kind ==
+    /// "pipeline"` node it resolves `node.pipeline` relative to `programDir` and `try?`-loads it,
+    /// returning nil when `node.pipeline` is absent or the load throws (graceful degradation).
+    private static func featurePipelineLoader(programDir: URL, loader: SpecLoader)
+        -> (PipelineNode) -> (spec: PipelineSpec, metadata: SpecMetadata)? {
+        { node in
+            guard node.kind == "pipeline", let relative = node.pipeline else { return nil }
+            let subDir = programDir.appendingPathComponent(relative).standardizedFileURL
+            guard let env = try? loader.loadPipeline(atDirectory: subDir) else { return nil }
+            return (env.spec, env.metadata)
+        }
+    }
+
+    private static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> RunState? {
+        let expected = pipelineDir.standardizedFileURL.path
+        for runId in (try? runStore.runIds()) ?? [] {
+            guard let meta = try? runStore.meta(of: runId),
+                  standardizedPath(meta.pipelineDir) == expected
+            else { continue }
+            return try? runStore.state(of: runId)
+        }
+        return nil
+    }
+
+    private static func standardizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
     }
 }
 

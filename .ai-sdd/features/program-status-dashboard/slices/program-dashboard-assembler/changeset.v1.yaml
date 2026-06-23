@@ -1,0 +1,32 @@
+summary: >-
+  Slice program-dashboard-assembler (2 of 4 of program-status-dashboard): added the file-aware
+  ProgramDashboardAssembler plus distinct milestone/gate renderer styling. ProgramDashboardAssembler
+  (a new public enum beside ProjectDashboardAssembler in Sources/AISDDEngine/DashboardProjection.swift)
+  exposes static assemble(programDir:runStore:fileManager:) -> ProjectDashboard: it loads the program
+  pipeline via SpecLoader.loadPipeline(atDirectory:), matches the program run by comparing standardized
+  RunMeta.pipelineDir to the standardized programDir (mirroring the project assembler's
+  matchedState/standardizedPath), builds a featurePipeline loader closure that resolves a kind:pipeline
+  node's node.pipeline relative to programDir and try?-loads it (nil on absent/failed for graceful
+  degradation), feeds the closure into the slice-1 DashboardProjection.project(program:metadata:state:
+  featurePipeline:), and emits one GraphRenderer.DashboardSection "Program · <name>" with a
+  status-annotated GraphRenderer.dashboardMermaid. A missing run or broken sub-pipeline degrades
+  silently; only an unloadable/empty program throws the new typed ProjectDashboardError.invalidProgram.
+  In GraphRenderer.dashboardMermaid, rows with isMilestone == true now render with a distinct hexagon
+  gate shape (id{{"label"}}) and a dedicated status-keyed milestone classDef (milestone_<status>) so
+  pass (done) vs blocked (rework/escalated/pending) still reads via the status color; non-milestone
+  rows are byte-for-byte unchanged and every dynamic value is escaped via the existing
+  escapeMermaidLabel helper. Layout gained a public programsDir = "programs" literal. Added 9 Swift
+  Testing tests in Tests/AISDDEngineTests/EngineTests.swift. CLI and end-to-end verification remain
+  out of scope (downstream slices). swift build and swift test both green (184 tests, 6 suites passed).
+satisfies:
+  - assembler-entry-point
+  - matches-run-by-pipelinedir
+  - feature-rollup-via-sub-pipeline
+  - milestone-gate-status-in-section
+  - no-run-static-degradation
+  - missing-sub-pipeline-degradation
+  - invalid-program-throws-typed-error
+  - milestone-gate-styling-distinct
+  - dynamic-values-escaped
+  - existing-dashboards-unchanged
+  - build-and-test-green

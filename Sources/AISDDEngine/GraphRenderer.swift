@@ -140,10 +140,20 @@ public enum GraphRenderer {
                                         direction: String = "TD",
                                         inheritedOwner: [String] = []) -> String {
         let statuses = Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.status) })
+        let milestones = Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.isMilestone) })
         var lines = ["flowchart \(direction)"]
+        var milestoneStatuses: Set<DashboardStatus> = []
         for node in pipeline.nodes {
             let status = statuses[node.id] ?? .pending
-            lines.append("    \(safeID(node.id))\(dashboardLabel(node, status: status, inheritedOwner: inheritedOwner)):::\(mermaidClass(status))")
+            let labelBody = dashboardLabelBody(node, status: status, inheritedOwner: inheritedOwner)
+            if milestones[node.id] == true {
+                // A milestone/gate renders as a distinct hexagon gate shape (id{{"label"}}) with a
+                // status-keyed milestone class so pass vs blocked still reads via the status color.
+                milestoneStatuses.insert(status)
+                lines.append("    \(safeID(node.id)){{\"\(labelBody)\"}}:::\(milestoneClass(status))")
+            } else {
+                lines.append("    \(safeID(node.id))[\"\(labelBody)\"]:::\(mermaidClass(status))")
+            }
         }
         for edge in pipeline.edges {
             let schema = edge.artifact.flatMap { $0 == "*" ? nil : $0 }
@@ -155,6 +165,12 @@ public enum GraphRenderer {
         for status in DashboardStatus.allCases {
             let color = DashboardCharts.defaultColors[status] ?? "#9e9e9e"
             lines.append("    classDef \(mermaidClass(status)) fill:#ffffff,stroke:\(color),stroke-width:3px,color:#1f2328")
+        }
+        // Dedicated milestone classDefs (only for the statuses actually present), keyed off status so
+        // a gate keeps its status color while reading as a gate: heavier stroke + tinted fill.
+        for status in DashboardStatus.allCases where milestoneStatuses.contains(status) {
+            let color = DashboardCharts.defaultColors[status] ?? "#9e9e9e"
+            lines.append("    classDef \(milestoneClass(status)) fill:#f6f8fa,stroke:\(color),stroke-width:4px,color:#1f2328,stroke-dasharray:0")
         }
         return lines.joined(separator: "\n")
     }
@@ -499,19 +515,29 @@ public enum GraphRenderer {
         ].joined(separator: "\n")
     }
 
-    private static func dashboardLabel(_ node: PipelineNode, status: DashboardStatus,
-                                       inheritedOwner: [String]) -> String {
+    /// The escaped inner label content (id + a detail line), without the node-shape brackets — so a
+    /// caller can wrap it in `["…"]` (feature/plain) or `{{"…"}}` (milestone gate). Every dynamic
+    /// value is escaped via `escapeMermaidLabel`.
+    private static func dashboardLabelBody(_ node: PipelineNode, status: DashboardStatus,
+                                           inheritedOwner: [String]) -> String {
         var detail = [status.rawValue]
         if let worker = node.worker, worker != node.id { detail.append(worker) }
         if node.pipeline != nil { detail.append("slice") }
         if let stack = node.stack { detail.append("[\(stack)]") }
         let owner = node.owner ?? (inheritedOwner.isEmpty ? nil : inheritedOwner)
         if let owner, !owner.isEmpty { detail.append("@\(owner.joined(separator: ","))") }
-        return "[\"\(escapeMermaidLabel(node.id))<br/>\(escapeMermaidLabel(detail.joined(separator: " ")))\"]"
+        return "\(escapeMermaidLabel(node.id))<br/>\(escapeMermaidLabel(detail.joined(separator: " ")))"
     }
 
     private static func mermaidClass(_ status: DashboardStatus) -> String {
         "status_\(status.rawValue.replacingOccurrences(of: "-", with: "_"))"
+    }
+
+    /// The dedicated milestone/gate class for a status (`milestone_<status>`), distinct from the
+    /// feature/plain `status_<status>` class so a gate is styled as a gate while still color-keyed
+    /// off its status (pass vs blocked).
+    private static func milestoneClass(_ status: DashboardStatus) -> String {
+        "milestone_\(status.rawValue.replacingOccurrences(of: "-", with: "_"))"
     }
 
     private static func escapeMermaidLabel(_ value: String) -> String {

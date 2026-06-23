@@ -7,6 +7,11 @@ public enum Layout {
     static let homeDir = ".ai-sdd"
     static let runsDir = "runs"
     static let artifactsDir = "artifacts"
+    /// The on-disk programs directory name (`.ai-sdd/programs`) — one program workspace per subdir,
+    /// each with its own master `pipeline.yaml`. `public` so the downstream CLI slice can compose a
+    /// concrete program dir from it without an inline path literal (the conventions mandate path
+    /// literals live here, never inline).
+    public static let programsDir = "programs"
     /// The hand-edited committed lock manifest (`.ai-sdd/locks.yaml`) — a top-level list of
     /// `{ glob, reason }` entries the `frozen` tier promotion reads (ADR-0031). Absent ⇒ no locks.
     static let locksFile = "locks.yaml"

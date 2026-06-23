@@ -1753,6 +1753,219 @@ struct EngineTests {
     private func status(_ result: DashboardProjectionResult, _ node: String) -> DashboardStatus? {
         result.rows.first { $0.node == node }?.status
     }
+
+    // MARK: - Program dashboard assembler (file-aware)
+
+    /// Write a guardrails-shaped program at `dir`: two `kind: pipeline` feature nodes →
+    /// milestone-gate → a third feature gated on the milestone, with the matching sub-pipelines under
+    /// `<dir>/../features/<name>`.
+    private func writeProgramFixture(at dir: URL, name: String) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let yaml = """
+        apiVersion: ai-sdd/v1
+        kind: Pipeline
+        metadata: { name: \(name), version: 1, owner: [maintainer] }
+        spec:
+          semantics: enabler
+          nodes:
+            - { id: locks, kind: pipeline, pipeline: ../features/locks, stack: swift }
+            - { id: provenance, kind: pipeline, pipeline: ../features/provenance, stack: swift }
+            - { id: m1-guardrails-integrated, worker: milestone-gate, owner: [maintainer] }
+            - { id: drift, kind: pipeline, pipeline: ../features/drift, stack: swift }
+          edges:
+            - { from: locks, to: m1-guardrails-integrated }
+            - { from: provenance, to: m1-guardrails-integrated }
+            - { from: m1-guardrails-integrated, to: drift }
+        """
+        try yaml.write(to: dir.appendingPathComponent("pipeline.yaml"), atomically: true, encoding: .utf8)
+
+        let features = dir.deletingLastPathComponent().appendingPathComponent("features", isDirectory: true)
+        for feature in ["locks", "provenance", "drift"] {
+            try writePipeline(at: features.appendingPathComponent(feature, isDirectory: true),
+                              name: feature, nodes: ["plan", "implement"], edges: [("plan", "implement")])
+        }
+    }
+
+    @Test func programDashboardAssemblerLoadsPipelineAndEmitsOneSection() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-program-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let programDir = root.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("guardrails", isDirectory: true)
+        try writeProgramFixture(at: programDir, name: "guardrails")
+
+        let store = RunStore(root: root.appendingPathComponent("runs", isDirectory: true))
+        let dashboard = try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+
+        #expect(dashboard.title == "guardrails")
+        #expect(dashboard.sections.map(\.heading) == ["Program · guardrails"])
+        #expect(dashboard.sections[0].projection.rows.map(\.node) ==
+            ["locks", "provenance", "m1-guardrails-integrated", "drift"])
+    }
+
+    @Test func programDashboardAssemblerMatchesRunByPipelineDirAndRollsUpSubPipelines() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-program-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let programDir = root.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("guardrails", isDirectory: true)
+        try writeProgramFixture(at: programDir, name: "guardrails")
+
+        let store = RunStore(root: root.appendingPathComponent("runs", isDirectory: true))
+        try store.create(runId: "prog-run", pipelineDir: programDir.standardizedFileURL.path)
+        // locks' sub-pipeline fully done ⇒ rollup done; provenance started ⇒ in-progress.
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "plan", producedArtifacts: [])),
+                         to: "prog-run")
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "implement", producedArtifacts: [])),
+                         to: "prog-run")
+        try store.append(.scoped(slice: "provenance", event: .nodeStarted(node: "plan")), to: "prog-run")
+
+        let dashboard = try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        let rows = dashboard.sections[0].projection.rows
+        #expect(status(dashboard.sections[0].projection, "locks") == .done)
+        #expect(status(dashboard.sections[0].projection, "provenance") == .inProgress)
+        // A non-matching run is ignored: the milestone is still pending (deps not all done).
+        #expect(status(dashboard.sections[0].projection, "m1-guardrails-integrated") == .pending)
+        #expect(rows.first { $0.node == "m1-guardrails-integrated" }?.isMilestone == true)
+    }
+
+    @Test func programDashboardAssemblerSurfacesMilestoneGateStatus() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-program-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let programDir = root.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("guardrails", isDirectory: true)
+        try writeProgramFixture(at: programDir, name: "guardrails")
+
+        let store = RunStore(root: root.appendingPathComponent("runs", isDirectory: true))
+        try store.create(runId: "prog-run", pipelineDir: programDir.standardizedFileURL.path)
+        // Both feature deps of the gate completed at the program tier ⇒ gate runnable.
+        try store.append(.nodeCompleted(node: "locks", producedArtifacts: []), to: "prog-run")
+        try store.append(.nodeCompleted(node: "provenance", producedArtifacts: []), to: "prog-run")
+
+        let dashboard = try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        let projection = dashboard.sections[0].projection
+        #expect(status(projection, "m1-guardrails-integrated") == .runnable)
+        #expect(projection.rows.first { $0.node == "m1-guardrails-integrated" }?.isMilestone == true)
+    }
+
+    @Test func programDashboardAssemblerDegradesStaticallyWithNoRun() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-program-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let programDir = root.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("guardrails", isDirectory: true)
+        try writeProgramFixture(at: programDir, name: "guardrails")
+
+        // Empty store ⇒ no matching run ⇒ static statuses, no crash.
+        let store = RunStore(root: root.appendingPathComponent("runs", isDirectory: true))
+        let dashboard = try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        let projection = dashboard.sections[0].projection
+        #expect(status(projection, "locks") == .runnable)
+        #expect(status(projection, "provenance") == .runnable)
+        #expect(status(projection, "m1-guardrails-integrated") == .pending)
+        #expect(status(projection, "drift") == .pending)
+    }
+
+    @Test func programDashboardAssemblerDegradesWhenSubPipelineMissing() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-program-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let programDir = root.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("guardrails", isDirectory: true)
+        try writeProgramFixture(at: programDir, name: "guardrails")
+        // Remove the locks sub-pipeline (resolved at programs/features/locks) so its loader
+        // closure returns nil.
+        try FileManager.default.removeItem(
+            at: programDir.deletingLastPathComponent()
+                .appendingPathComponent("features/locks", isDirectory: true))
+
+        let store = RunStore(root: root.appendingPathComponent("runs", isDirectory: true))
+        try store.create(runId: "prog-run", pipelineDir: programDir.standardizedFileURL.path)
+        try store.append(.nodeCompleted(node: "locks", producedArtifacts: []), to: "prog-run")
+
+        let dashboard = try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        let projection = dashboard.sections[0].projection
+        // Missing sub-pipeline ⇒ falls back to the top-level program-tier signal (locks completed).
+        #expect(status(projection, "locks") == .done)
+        #expect(status(projection, "provenance") == .runnable)
+    }
+
+    @Test func programDashboardAssemblerThrowsInvalidProgramOnUnloadablePipeline() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-program-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let programDir = root.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: programDir, withIntermediateDirectories: true)
+        // No pipeline.yaml at all ⇒ the exact typed error.
+        let store = RunStore(root: root.appendingPathComponent("runs", isDirectory: true))
+        #expect(throws: ProjectDashboardError.invalidProgram(programDir.path)) {
+            try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        }
+    }
+
+    // MARK: - Milestone gate styling + escaping (pure dashboardMermaid)
+
+    @Test func dashboardMermaidStylesMilestonesAsDistinctGates() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "locks"),
+                    PipelineNode(id: "gate", worker: "milestone-gate")],
+            edges: [PipelineEdge(from: OneOrMany(["locks"]), to: "gate")])
+        let rows = [
+            DashboardProjectionRow(node: "locks", stack: nil, owner: "", lane: nil, milestone: nil,
+                                   dependencyCount: 0, status: .done, nextActionHint: .none,
+                                   isMilestone: false),
+            DashboardProjectionRow(node: "gate", stack: nil, owner: "", lane: nil, milestone: nil,
+                                   dependencyCount: 1, status: .pending,
+                                   nextActionHint: .waitingOnDependencies, isMilestone: true)
+        ]
+        let mermaid = GraphRenderer.dashboardMermaid(pipeline, rows: rows)
+
+        // The gate uses the hexagon gate shape and the dedicated status-keyed milestone class.
+        #expect(mermaid.contains("gate{{\"gate<br/>"))
+        #expect(mermaid.contains(":::milestone_pending"))
+        #expect(mermaid.contains("classDef milestone_pending"))
+        // The non-milestone row is unchanged: rectangle shape + the plain status class.
+        #expect(mermaid.contains("locks[\"locks<br/>"))
+        #expect(mermaid.contains(":::status_done"))
+        // No gate shape leaks onto the plain node.
+        #expect(!mermaid.contains("locks{{"))
+    }
+
+    @Test func dashboardMermaidMilestoneClassTracksPassVsBlockedStatus() {
+        let pipeline = PipelineSpec(nodes: [PipelineNode(id: "gate", worker: "milestone-gate")], edges: [])
+        func mermaid(status: DashboardStatus) -> String {
+            GraphRenderer.dashboardMermaid(pipeline, rows: [
+                DashboardProjectionRow(node: "gate", stack: nil, owner: "", lane: nil, milestone: nil,
+                                       dependencyCount: 0, status: status, nextActionHint: .none,
+                                       isMilestone: true)])
+        }
+        // Pass (done) vs blocked (rework) resolve to distinct status-keyed milestone classes/colors.
+        #expect(mermaid(status: .done).contains(":::milestone_done"))
+        #expect(mermaid(status: .done).contains("classDef milestone_done"))
+        #expect(mermaid(status: .rework).contains(":::milestone_rework"))
+        #expect(mermaid(status: .rework).contains("classDef milestone_rework"))
+    }
+
+    @Test func dashboardMermaidEscapesDynamicValuesIncludingMilestoneLabels() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "gate<x>", worker: "m&w", owner: ["a\"b"])], edges: [])
+        let rows = [
+            DashboardProjectionRow(node: "gate<x>", stack: nil, owner: "", lane: nil, milestone: nil,
+                                   dependencyCount: 0, status: .pending,
+                                   nextActionHint: .waitingOnDependencies, isMilestone: true)
+        ]
+        let mermaid = GraphRenderer.dashboardMermaid(pipeline, rows: rows)
+        // Angle brackets, ampersands, and quotes in dynamic values are escaped in the label.
+        #expect(mermaid.contains("gate&lt;x&gt;"))
+        #expect(mermaid.contains("m&amp;w"))
+        #expect(mermaid.contains("a&quot;b"))
+        // The raw special chars never reach the rendered label.
+        #expect(!mermaid.contains("\"gate<x>"))
+        #expect(!mermaid.contains("m&w<br/>"))
+    }
 }
 
 private extension SpecLoadError {

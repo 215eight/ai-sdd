@@ -1,0 +1,130 @@
+schema: review.v1
+run: program-dashboard
+slice: program-dashboard-assembler
+
+summary: >-
+  Independent review of slice program-dashboard-assembler (2 of 4) against feature-plan.v1 (11
+  acceptance ids), inspecting the real working-tree diff vs HEAD and the source/tests, not the
+  changeset prose. Exactly the four planned files changed (Sources/AISDDEngine/DashboardProjection.swift,
+  GraphRenderer.swift, Layout.swift, Tests/AISDDEngineTests/EngineTests.swift) — no CLI. New
+  ProgramDashboardAssembler enum: assemble(programDir:runStore:fileManager:) loads the program pipeline
+  via SpecLoader.loadPipeline(atDirectory:), matches the run by standardized RunMeta.pipelineDir, builds
+  an inline featurePipeline closure (kind == "pipeline" + node.pipeline resolved relative to programDir,
+  try?-loaded, nil on absence/failure), feeds slice-1 DashboardProjection.project(program:metadata:state:
+  featurePipeline:), and emits one "Program · <name>" DashboardSection with a status-annotated
+  GraphRenderer.dashboardMermaid. Invalid/empty program throws the new typed
+  ProjectDashboardError.invalidProgram; a missing run and a broken sub-pipeline degrade (no throw). In
+  GraphRenderer, dashboardLabel was refactored to dashboardLabelBody (node-shape brackets moved to the
+  caller) so milestone rows render a distinct hexagon gate (id{{"label"}}) with a dedicated
+  milestone_<status> classDef while NON-milestone output stays byte-for-byte unchanged. Every dynamic
+  value still routes through escapeMermaidLabel. Conventions satisfied (engine-only, Swift Testing
+  @Test/#expect, exact typed error asserted, path name centralized in Layout.swift, types
+  Equatable/LocalizedError/Sendable). Ran the gates myself: swift build exit 0; swift test 184 tests in
+  6 suites passed.
+
+items:
+  - id: assembler-entry-point
+    verdict: pass
+    notes: >-
+      assemble(programDir:runStore:fileManager:) loads via SpecLoader().loadPipeline(atDirectory: homeURL)
+      and returns ProjectDashboard(title: env.metadata.name, sections: [one section]) with heading
+      "Program · \(programName)". Test programDashboardAssemblerLoadsPipelineAndEmitsOneSection asserts
+      title == "guardrails", sections.map(\.heading) == ["Program · guardrails"], and exact row order.
+  - id: matches-run-by-pipelinedir
+    verdict: pass
+    notes: >-
+      matchedState scans runStore.runIds(), compares standardizedPath(meta.pipelineDir) to the
+      standardized programDir, returns the first match's RunState else nil. Test
+      programDashboardAssemblerMatchesRunByPipelineDirAndRollsUpSubPipelines creates a run with the
+      matching pipelineDir; locks rolls up to .done and provenance to .inProgress ONLY if the run is
+      genuinely matched and its scoped slice state is read (a nil/unmatched state would leave locks
+      .runnable as a source node), so the assertion truly proves pipelineDir matching, not mere presence.
+  - id: feature-rollup-via-sub-pipeline
+    verdict: pass
+    notes: >-
+      featurePipelineLoader resolves node.pipeline relative to programDir (appendingPathComponent +
+      standardizedFileURL) and loads the sub-pipeline. The same test exercises an all-done sub-pipeline
+      (locks plan+implement completed in slice scope) rolling up to .done and a started sub-pipeline
+      (provenance plan started) rolling up to .inProgress, via the slice-1 featureStatus precedence.
+      Genuine, not vacuous.
+  - id: milestone-gate-status-in-section
+    verdict: pass
+    notes: >-
+      Milestone node (worker == "milestone-gate", not kind pipeline) gets isMilestone == true from slice-1
+      projection and derives status via plain-node precedence over the matched run + runnable set. Test
+      programDashboardAssemblerSurfacesMilestoneGateStatus completes both program-tier deps (top-level
+      nodeCompleted for locks+provenance) and asserts the gate becomes .runnable with isMilestone == true;
+      the rollup test additionally confirms .pending when program-tier deps are not complete.
+  - id: no-run-static-degradation
+    verdict: pass
+    notes: >-
+      Empty RunStore ⇒ matchedState nil ⇒ project(program:) substitutes RunState() ⇒ source nodes
+      runnable, dependents pending. Test programDashboardAssemblerDegradesStaticallyWithNoRun asserts
+      locks/provenance == .runnable and milestone+drift == .pending, no throw. Distinct from the
+      matched-run test (.done/.inProgress), so static degradation is genuinely isolated from a matched run.
+  - id: missing-sub-pipeline-degradation
+    verdict: pass
+    notes: >-
+      Loader returns nil when node.pipeline is absent or the load throws. Test
+      programDashboardAssemblerDegradesWhenSubPipelineMissing removes the resolved
+      programs/features/locks dir (correctly the path node.pipeline=../features/locks resolves to) and
+      asserts no crash, locks falling back to the top-level program-tier signal (.done from a top-level
+      nodeCompleted) and provenance to .runnable — matching the acceptance wording exactly. Borderline
+      note: the .done assertion is satisfied by the top-level completed check short-circuiting before the
+      loader is consulted, so it primarily proves no-crash on a missing sub-pipeline rather than strictly
+      isolating the nil-loader fallback; still consistent with the contract as written.
+  - id: invalid-program-throws-typed-error
+    verdict: pass
+    notes: >-
+      assemble guards `try? loadPipeline(...)` and `!env.spec.nodes.isEmpty`, else throws
+      ProjectDashboardError.invalidProgram(programDir.path). Test
+      programDashboardAssemblerThrowsInvalidProgramOnUnloadablePipeline uses
+      #expect(throws: ProjectDashboardError.invalidProgram(programDir.path)) — asserting the EXACT typed
+      case via the Equatable enum, not any Error. Missing run / broken sub-pipeline do not reach this
+      path. Minor note: the empty-of-nodes branch is covered only by the guard, not separately exercised
+      (the test removes the pipeline.yaml entirely); acceptable.
+  - id: milestone-gate-styling-distinct
+    verdict: pass
+    notes: >-
+      In dashboardMermaid, isMilestone rows emit id{{"label"}} (hexagon gate) with a dedicated
+      milestone_<status> classDef (fill #f6f8fa, stroke-width 4px, status color); non-milestone rows emit
+      id["label"] with status_<status>. Tests dashboardMermaidStylesMilestonesAsDistinctGates and
+      dashboardMermaidMilestoneClassTracksPassVsBlockedStatus assert the gate shape, milestone class
+      reference + classDef emission, the plain node keeping rectangle + status class, and done vs rework
+      mapping to distinct milestone classes/colors.
+  - id: dynamic-values-escaped
+    verdict: pass
+    notes: >-
+      dashboardLabelBody routes node.id and the detail line (worker/owner/etc.) through escapeMermaidLabel
+      for both shapes. Test dashboardMermaidEscapesDynamicValuesIncludingMilestoneLabels injects gate<x>,
+      worker m&w, owner a"b on a milestone row and asserts gate&lt;x&gt;, m&amp;w, a&quot;b appear while
+      the raw special chars never reach the rendered label (negative assertions included). Escaping
+      verified on the new milestone path specifically.
+  - id: existing-dashboards-unchanged
+    verdict: pass
+    notes: >-
+      dashboardLabel renamed to dashboardLabelBody with the node-shape brackets moved to the caller; the
+      resulting non-milestone line is byte-for-byte identical to before
+      (safeID + ["..id..<br/>..detail.."] + :::status_<status>). No callers of the old dashboardLabel
+      remain (grep clean). All pre-existing dashboard/mermaid/plant/single-graph/HTML tests pass unchanged.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      Reviewer ran swift build (Build complete!) and swift test (Test run with 184 tests in 6 suites
+      passed) independently. Confirmed green.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Swift Testing (@Test/#expect) used; exact typed error asserted (ProjectDashboardError.invalidProgram)
+    over any Error per conventions; engine-only changes under Sources/AISDDEngine with tests in
+    Tests/AISDDEngineTests/EngineTests.swift; new on-disk path name centralized in Layout.swift
+    (programsDir) with no inline path literals in the assembler; ProjectDashboardError stays
+    Error/Equatable/LocalizedError/Sendable and ProgramDashboardAssembler is a stateless enum; behavior
+    in AISDDEngine, no spec/model type changes; scope limited to the four declared files (no CLI). Ran
+    swift build + swift test (both pass). Non-blocking observation: Layout.programsDir is declared public
+    for the downstream CLI slice but is unused within this slice's diff (the assembler takes programDir as
+    a parameter and derives no programs path internally) — intentional per decision layout-programs-literal,
+    but currently dead code in this slice.
+
+verdict: approve
