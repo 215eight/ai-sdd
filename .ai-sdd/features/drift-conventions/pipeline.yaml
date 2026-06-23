@@ -1,0 +1,13 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: drift-conventions, version: 1 }
+spec:
+  semantics: enabler
+  # Kind 3 (convention↔code) of ai-sdd drift, deferred from the `drift` feature pending a typed,
+  # machine-readable evidence schema for the convention Discovery Record. Two ordered slices:
+  # the typed-evidence schema (prerequisite) then drift Kind 3 over it.
+  nodes:
+    - { id: typed-evidence-schema, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: drift-kind3, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: typed-evidence-schema, to: drift-kind3 }   # drift-kind3 depends_on typed-evidence-schema
