@@ -423,7 +423,7 @@ struct Graph: ParsableCommand {
     var project = false
     @Flag(name: .long, help: "Wrap the output in a self-contained HTML page (renders Mermaid in a browser).")
     var html = false
-    @Flag(name: .long, help: "Render a self-contained project status dashboard.")
+    @Flag(name: .long, help: "Render a self-contained status dashboard for a program dir, or the factory with --project.")
     var dashboard = false
 
     func run() throws {
@@ -459,17 +459,21 @@ struct Graph: ParsableCommand {
         guard plant == nil else {
             throw ValidationError("--plant --dashboard is not supported; dashboard mode requires --project over a factory directory")
         }
-        guard project else {
-            throw ValidationError("--dashboard requires --project")
-        }
         guard let dir else {
-            throw ValidationError("pass a repo factory dir with --project --dashboard")
+            throw ValidationError("pass a program dir, or --project <factoryDir>, with --dashboard")
         }
 
-        let dashboard = try ProjectDashboardAssembler.assemble(
-            factoryDir: URL(fileURLWithPath: dir, isDirectory: true),
-            runStore: runStore())
-        return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
+        if project {
+            let dashboard = try ProjectDashboardAssembler.assemble(
+                factoryDir: URL(fileURLWithPath: dir, isDirectory: true),
+                runStore: runStore())
+            return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
+        } else {
+            let dashboard = try ProgramDashboardAssembler.assemble(
+                programDir: URL(fileURLWithPath: dir, isDirectory: true),
+                runStore: runStore())
+            return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
+        }
     }
 
     /// One pipeline → one graph (a feature graph or the build pattern). Decode-only — a graph

@@ -1,0 +1,165 @@
+summary: >-
+  Wire the already-shipped PROGRAM dashboard onto the `graph` command (slice program-dashboard-cli,
+  slice 3 of 4 of program-status-dashboard) by relaxing the existing `--dashboard requires --project`
+  gate in `Graph.dashboardDoc()` in `Sources/AISDDCLI/main.swift` — no new flag, additive only. The
+  existing `--html`+`--dashboard` and `--plant`+`--dashboard` rejections stay verbatim and `--dashboard
+  --project <dir>` stays the project-dashboard path. The change replaces the unconditional `guard
+  project` rejection so that when `--dashboard` is set, a `dir` is present, and `--project` is NOT set,
+  the command treats `<dir>` as a PROGRAM pipeline dir and routes to
+  `ProgramDashboardAssembler.assemble(programDir: URL(fileURLWithPath: dir), runStore: runStore())`,
+  rendering via the existing `GraphRenderer.dashboardPage(title:sections:)`; output (`--out` vs stdout)
+  flows through the unchanged `run()` body. `--dashboard` with neither a `dir` nor `--project` keeps a
+  clear error telling the user to pass a program dir or `--project <factoryDir>`, and the `--dashboard`
+  flag help text is updated to mention it accepts a program dir (or `--project` for the factory). The
+  engine projection, the program assembler, the renderer, and milestone styling all shipped in slices
+  1-2 and are reused unchanged; this slice adds no engine code. End-to-end verification and docs are
+  slice 4 (out of scope).
+scope:
+  in:
+    - Relax the gate in `Graph.dashboardDoc()` in `Sources/AISDDCLI/main.swift` so a program dir routes to the program dashboard.
+    - Keep the `--html` + `--dashboard` rejection verbatim ("--dashboard cannot be combined with --html; dashboard mode already renders self-contained HTML").
+    - Keep the `--plant` + `--dashboard` rejection verbatim ("--plant --dashboard is not supported; dashboard mode requires --project over a factory directory").
+    - "When `--dashboard` is set, a `dir` is present, and `--project` is NOT set, call `ProgramDashboardAssembler.assemble(programDir: URL(fileURLWithPath: dir), runStore: runStore())` and render with `GraphRenderer.dashboardPage(title:sections:)`."
+    - "When `--dashboard --project <dir>` is set, keep the existing `ProjectDashboardAssembler.assemble(factoryDir:runStore:)` path byte-for-byte unchanged."
+    - When `--dashboard` is set with no `dir` and no `--project`, throw a clear `ValidationError` telling the user to pass a program dir or `--project <factoryDir>`.
+    - Update the `--dashboard` `@Flag` help text to state it accepts a program dir (or `--project` for the factory).
+    - Verify with `swift build`, `swift test`, and the CLI smoke commands (program dashboard, project regression, and the three error cases).
+  out:
+    - No change to the engine — `DashboardProjection.project(program:...)`, `ProgramDashboardAssembler`, `ProjectDashboardAssembler`, `GraphRenderer`, `DashboardProjectionRow.isMilestone`, `ProjectDashboardError.invalidProgram`, `Layout.programsDir`, and milestone mermaid styling all shipped in slices 1-2 and are reused as-is.
+    - No new CLI flag, option, argument, or top-level command; `--dashboard` is reused and the gate is relaxed, not extended.
+    - No change to any other graph mode — single graph, `--project`, `--plant`, `--html`, and plain Mermaid output stay byte-for-byte unchanged (additive only on a previously erroring input).
+    - No change to the output mechanism — `--out` vs stdout handling in `Graph.run()` is unchanged.
+    - No new CLI test target or CLI-level test file (engine coverage already exists in `Tests/AISDDEngineTests/EngineTests.swift`; see decision cli-test-strategy).
+    - No end-to-end verification artifact, README/QUICKSTART/AGENTS doc updates, or adopter docs — that is slice 4 (program-dashboard-verify).
+    - No live overlay, server, CDN, auth, or remote run fragments (ADR-0027 pending items remain out of scope).
+acceptance:
+  - id: program-dir-renders-dashboard
+    description: >-
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/prog.html` exits 0,
+      prints the `✓ wrote /tmp/prog.html` confirmation, and writes a self-contained HTML file (no
+      `http://`/`https://` CDN script `src` or external stylesheet `href`) that contains the three
+      guardrails feature node labels (`locks`, `provenance`, `drift`) and the `m1-guardrails-integrated`
+      milestone; because the guardrails run is complete the features render done and the milestone
+      passed.
+  - id: project-dashboard-regression
+    description: >-
+      `swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/proj.html` still exits 0 and
+      writes the project dashboard via the unchanged `ProjectDashboardAssembler` path, confirming the
+      `--dashboard --project` route is untouched.
+  - id: html-plus-dashboard-errors
+    description: >-
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --html --dashboard` exits non-zero with the
+      verbatim message "--dashboard cannot be combined with --html; dashboard mode already renders
+      self-contained HTML".
+  - id: plant-plus-dashboard-errors
+    description: >-
+      `swift run ai-sdd graph --plant some/plant.yaml --dashboard` exits non-zero with the verbatim
+      message "--plant --dashboard is not supported; dashboard mode requires --project over a factory
+      directory".
+  - id: dashboard-no-dir-errors
+    description: >-
+      `swift run ai-sdd graph --dashboard` (no `dir`, no `--project`) exits non-zero with a clear error
+      instructing the user to pass a program dir or `--project <factoryDir>`.
+  - id: other-graph-modes-unchanged
+    description: >-
+      Plain `swift run ai-sdd graph .ai-sdd/programs/guardrails`, `swift run ai-sdd graph
+      .ai-sdd/programs/guardrails --html`, `swift run ai-sdd graph <featureDir>`, and `swift run ai-sdd
+      graph .ai-sdd --project` all still produce their pre-existing output, confirming the change is
+      additive (verified by `swift test` staying green plus a manual spot check).
+  - id: flag-help-mentions-program
+    description: >-
+      The `--dashboard` flag help text (visible via `swift run ai-sdd graph --help`) mentions that it
+      accepts a program dir (or `--project` for the factory).
+  - id: build-and-test-green
+    description: "`swift build` and `swift test` both pass."
+decisions:
+  - id: gate-relaxation-control-flow
+    status: closed
+    decision: >-
+      In `Graph.dashboardDoc()`, keep the first two guards verbatim (`guard !html` → the html error;
+      `guard plant == nil` → the plant error). Then REPLACE the current `guard project { throw
+      "--dashboard requires --project" }` + `guard let dir { throw "pass a repo factory dir…" }` +
+      `ProjectDashboardAssembler.assemble(factoryDir:…)` block with this branch order: first `guard let
+      dir else { throw ValidationError("pass a program dir, or --project <factoryDir>, with
+      --dashboard") }`; then `if project { return … ProjectDashboardAssembler.assemble(factoryDir:
+      URL(fileURLWithPath: dir, isDirectory: true), runStore: runStore()) … }` (existing project path,
+      unchanged assembler call + `GraphRenderer.dashboardPage`); else (dir present, project not set)
+      `return … ProgramDashboardAssembler.assemble(programDir: URL(fileURLWithPath: dir), runStore:
+      runStore()) …` rendered with `GraphRenderer.dashboardPage(title:sections:)`. Both assemble calls
+      feed their `ProjectDashboard.title`/`.sections` into the same `dashboardPage` call.
+    rationale: >-
+      Checking `dir` presence before the project/program split means the "no dir and no project" case is
+      caught by one guard and yields a single clear message for both missing-input shapes; the
+      `if project` / `else` split then routes `--project` to the unchanged project assembler and a bare
+      program dir to the program assembler. Reordering the dir guard ahead of the project split is the
+      minimal edit that satisfies all four required behaviors (program dir, project regression, no-dir
+      error, and the two preserved combination errors) without touching `run()` or the output path.
+  - id: assembler-call-shape
+    status: closed
+    decision: >-
+      Call exactly `ProgramDashboardAssembler.assemble(programDir: URL(fileURLWithPath: dir), runStore:
+      runStore())`, relying on the `fileManager: FileManager = .default` default parameter, and render
+      with `GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)` — the same
+      two-line shape the existing project path uses. `runStore()` is the existing private helper
+      (`RunStore.local(under: currentDirectory)`); no new run-store wiring is added.
+    rationale: >-
+      Grounded in `Sources/AISDDEngine/DashboardProjection.swift:120-143`, where `assemble(programDir:
+      runStore: fileManager: = .default)` returns a `ProjectDashboard` (`title` + `sections`) — the same
+      return type the project path already passes to `dashboardPage`. Matching the existing call shape
+      and reusing `runStore()` keeps the diff to the one branch and avoids any engine or helper change.
+  - id: no-dir-error-message
+    status: closed
+    decision: >-
+      Use a single `ValidationError` for the no-dir / no-project case whose message names both
+      remedies, e.g. "pass a program dir, or --project <factoryDir>, with --dashboard". This replaces
+      the old "--dashboard requires --project" and "pass a repo factory dir with --project --dashboard"
+      messages.
+    rationale: >-
+      With the gate relaxed, `--dashboard` now accepts a bare program dir, so "requires --project" is no
+      longer true; a single message covering both a program dir and `--project` matches the slice brief's
+      "tell the user to pass a program dir or --project <factoryDir>" and avoids a misleading error.
+  - id: flag-help-text
+    status: closed
+    decision: >-
+      Update the `var dashboard` `@Flag` help (currently "Render a self-contained project status
+      dashboard.") to mention the program dir, e.g. "Render a self-contained status dashboard for a
+      program dir, or the factory with --project."
+    rationale: >-
+      The brief requires the help text reflect the new accepted input; keeping it on the same `@Flag`
+      (no new flag) and naming both forms keeps the CLI surface self-documenting via `graph --help`.
+  - id: cli-test-strategy
+    status: closed
+    decision: >-
+      Keep this slice's automated coverage at the engine level only — `ProgramDashboardAssembler`,
+      `DashboardProjection.project(program:…)`, and the milestone renderer styling are already unit-
+      tested in `Tests/AISDDEngineTests/EngineTests.swift` (slices 1-2). Add NO new CLI test target or
+      CLI-level test file. Rely on `swift build` + `swift test` (the `changeset.build` / `changeset.test`
+      gates) plus the manual CLI smoke commands in `tests` for this slice; the dedicated end-to-end
+      verification is slice 4 (program-dashboard-verify).
+    rationale: >-
+      The CLI delta is a thin two-line route to an already-tested assembler; a CLI test target would
+      add disproportionate surface (a new executable-testing harness, process spawning) for a gate
+      branch, and would widen the diff against the diff-in-scope gate. The conventions place tests in
+      `Tests/AISDDEngineTests` and the assembler is unit-tested there, so engine coverage already
+      protects the behavior; the smoke checks confirm the wiring and slice 4 owns the e2e proof.
+  - id: files-scope
+    status: closed
+    decision: >-
+      The only source file this slice touches is `Sources/AISDDCLI/main.swift`. No engine files
+      (`DashboardProjection.swift`, `GraphRenderer.swift`, `Layout.swift`) and no test files are in
+      scope — they shipped in slices 1-2 and are consumed unchanged.
+    rationale: >-
+      Per `.ai-sdd/conventions/swift.md`, CLI surface lives in `Sources/AISDDCLI/`; the engine pieces are
+      already merged. Keeping `files` to the single CLI file keeps the change inside the diff-in-scope
+      gate and matches the slice brief's explicit file constraint.
+files:
+  - Sources/AISDDCLI/main.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/prog.html
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/proj.html
+  - swift run ai-sdd graph .ai-sdd/programs/guardrails --html --dashboard
+  - swift run ai-sdd graph --plant docs/examples/sdlc-plant/plant.yaml --dashboard
+  - swift run ai-sdd graph --dashboard
+  - swift run ai-sdd graph --help

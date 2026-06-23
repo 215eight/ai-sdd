@@ -1,0 +1,86 @@
+schema: review.v1
+run: program-dashboard
+slice: program-dashboard-cli
+
+verdict: approve
+summary: >-
+  Independent review of slice program-dashboard-cli (3 of 4) against feature-plan.v1 (8 acceptance
+  ids), inspecting the real working-tree diff vs HEAD and the actual dashboardDoc()/Graph command,
+  not the changeset prose. Exactly one file changed (Sources/AISDDCLI/main.swift); nothing untracked.
+  The `--dashboard requires --project` gate is relaxed exactly per the closed decisions: the two
+  guards (`!html`, `plant == nil`) are preserved verbatim; the old `guard project` + `guard let dir`
+  pair is replaced by one hoisted `guard let dir` with a single clear message, then an `if project`
+  (unchanged ProjectDashboardAssembler.assemble(factoryDir:runStore:)) / `else`
+  (ProgramDashboardAssembler.assemble(programDir:runStore:)) split, both rendering via the same
+  GraphRenderer.dashboardPage(title:sections:). The @Flag help text is updated; no new flag added;
+  run()/--out path untouched. Ran the gates and every smoke command myself: swift build exit 0;
+  swift test 184 tests in 6 suites passed; all smoke checks confirm exact behavior.
+
+items:
+  - id: program-dir-renders-dashboard
+    verdict: pass
+    notes: >-
+      `graph .ai-sdd/programs/guardrails --dashboard --out /tmp/rev_prog.html` exits 0 and prints
+      `✓ wrote /tmp/rev_prog.html`. File contains all three feature labels (locks, provenance, drift)
+      and the m1-guardrails-integrated milestone, which renders `:::milestone_done` (the complete run
+      shows the milestone done/passed; multiple status-done classes present). Literal self-containment
+      check `(src|href)="https?://` returns 0 matches. CAVEAT: the file carries an inline ESM
+      `import mermaid from 'https://cdn.jsdelivr.net/...'` (a runtime CDN dependency, not a
+      `<script src>`/`<link href>` attribute). This satisfies the acceptance's literal wording, is
+      emitted by the already-shipped GraphRenderer.dashboardPage (slices 1-2, out of scope here), and
+      is byte-identical to the accepted project-dashboard baseline (/tmp/rev_proj.html). Not introduced
+      or regressed by this slice. Passing as written; flagged for future hardening / slice 4.
+  - id: project-dashboard-regression
+    verdict: pass
+    notes: >-
+      `graph .ai-sdd --project --dashboard --out /tmp/rev_proj.html` exits 0 and writes the project
+      dashboard. Output has 8 `Feature ·` sections and 0 `Program ·` sections, confirming it routes
+      through the unchanged ProjectDashboardAssembler path (distinct from the single-section program
+      path). Assembler call shape preserved byte-for-byte; no regression.
+  - id: html-plus-dashboard-errors
+    verdict: pass
+    notes: >-
+      `graph .ai-sdd/programs/guardrails --html --dashboard` exits 64 with the verbatim message
+      "--dashboard cannot be combined with --html; dashboard mode already renders self-contained HTML".
+      Guard ordering correct: the html guard fires first.
+  - id: plant-plus-dashboard-errors
+    verdict: pass
+    notes: >-
+      `graph --plant docs/examples/sdlc-plant/plant.yaml --dashboard` exits 64 with the verbatim
+      message "--plant --dashboard is not supported; dashboard mode requires --project over a factory
+      directory". Message unchanged.
+  - id: dashboard-no-dir-errors
+    verdict: pass
+    notes: >-
+      `graph --dashboard` (no dir, no --project) exits 64 with the clear message
+      "pass a program dir, or --project <factoryDir>, with --dashboard", naming both remedies per
+      decision no-dir-error-message.
+  - id: other-graph-modes-unchanged
+    verdict: pass
+    notes: >-
+      Plain `graph .ai-sdd/programs/guardrails` exits 0 and emits plain markdown (header
+      "# guardrails — dependency graph", one ```mermaid fence, zero DOCTYPE/html/status-bar markup).
+      `graph .ai-sdd/programs/guardrails --html` exits 0. swift test stays green (184 tests). The
+      change is purely additive on a previously-erroring input.
+  - id: flag-help-mentions-program
+    verdict: pass
+    notes: >-
+      `graph --help` shows the --dashboard help as "Render a self-contained status dashboard for a
+      program dir, or the factory with --project." Mentions the program dir and the --project form;
+      the USAGE line adds no new flag.
+  - id: build-and-test-green
+    verdict: pass
+    notes: "swift build exit 0; swift test exit 0 — 184 tests across 6 suites passed."
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. The CLI surface change lives in Sources/AISDDCLI/main.swift per swift.md (CLI under
+    AISDDCLI). No engine/model/test files touched (decision files-scope; git diff --name-only lists
+    only main.swift, nothing untracked). Uses an exact typed ValidationError. The cli-test-strategy
+    decision (engine-only automated coverage + manual smoke) is acceptable for THIS slice: the engine
+    assemblers/projection/milestone styling are already unit-tested in Tests/AISDDEngineTests
+    (programDashboardAssembler* tests present and green), the CLI delta is a thin two-line route, and a
+    CLI test harness would be disproportionate and widen the diff against the diff-in-scope gate. The
+    changeset.build/changeset.test gates plus the passing smoke checks adequately protect this gate
+    branch; the dedicated e2e proof is owned by slice 4 (program-dashboard-verify).

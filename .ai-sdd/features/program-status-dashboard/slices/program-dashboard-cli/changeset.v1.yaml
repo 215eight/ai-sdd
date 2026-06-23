@@ -1,0 +1,26 @@
+summary: >-
+  Slice program-dashboard-cli (3 of 4 of program-status-dashboard): relaxed the
+  `--dashboard requires --project` gate in `Graph.dashboardDoc()`
+  (Sources/AISDDCLI/main.swift) so a bare program dir now routes to the
+  already-shipped `ProgramDashboardAssembler.assemble(programDir:runStore:)` and
+  renders via `GraphRenderer.dashboardPage(title:sections:)`. The `--html`+`--dashboard`
+  and `--plant`+`--dashboard` rejections are preserved verbatim. The old
+  `guard project` + `guard let dir` pair was replaced by a single hoisted
+  `guard let dir else { throw ValidationError("pass a program dir, or --project <factoryDir>, with --dashboard") }`
+  (one clear missing-input error) followed by an `if project` / `else` split:
+  `--project` keeps the unchanged `ProjectDashboardAssembler.assemble(factoryDir:runStore:)`
+  path, and a bare program dir takes the new program path, both ending in the same
+  `GraphRenderer.dashboardPage(title:sections:)` call. The `--dashboard` @Flag help
+  text now reads "Render a self-contained status dashboard for a program dir, or the
+  factory with --project." Additive only; no engine, test, or other graph-mode
+  changes. swift build and swift test both green (184 tests, 6 suites passed); all
+  CLI smoke checks pass.
+satisfies:
+  - program-dir-renders-dashboard
+  - project-dashboard-regression
+  - html-plus-dashboard-errors
+  - plant-plus-dashboard-errors
+  - dashboard-no-dir-errors
+  - other-graph-modes-unchanged
+  - flag-help-mentions-program
+  - build-and-test-green
