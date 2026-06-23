@@ -2812,4 +2812,62 @@ struct ConventionCitationDriftTests {
             conventions: [convention], checks: checks(present: []))
         #expect(plain.first?.handEdited == false)
     }
+
+    // The parser scans ONLY `|`-delimited table rows. The real swift.md prefaces its Discovery Record
+    // with an explanatory bullet list that itself contains `path:`/`cmd:` tokens (the grammar) — those
+    // are prose, not citations, and must never be checked (or they'd false-positive the real repo).
+    @Test func nonTableBulletLinesAreIgnored() throws {
+        let markdown = """
+        # Conventions
+
+        ## Discovery Record
+
+        Evidence is recorded as typed tokens; a parser keeps only known-prefix tokens:
+
+        - `path:BULLET-SHOULD-NOT-PARSE.swift` — a concrete repo-relative path; drift checks it exists.
+        - `cmd:bullet-should-not-run` — a shell command; drift checks it exits 0.
+
+        | Change type | Evidence | Convention | Status |
+        |---|---|---|---|
+        | Build | `path:Package.swift`; `cmd:swift build` | Use SwiftPM. | confirmed |
+        """
+        let convention = Drift.ConventionInput(
+            path: Layout.conventionSourcePath(stack: "swift"), stack: "swift", text: markdown)
+        // The table row's citations hold. The bullet tokens are rigged to fail IF wrongly parsed:
+        // the bullet path is absent, and the bullet command is in the failing set.
+        let findings = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: [],
+            conventions: [convention],
+            checks: checks(present: ["Package.swift"], failingCommands: ["bullet-should-not-run"]))
+        #expect(findings.isEmpty,
+                "grammar tokens in bullet lines above the table are prose, not citations")
+    }
+
+    // A multi-row table evaluates each row independently: a confirmed row whose path is missing is
+    // flagged, a sibling confirmed row whose citations hold is not, and an open-gap row mid-table is
+    // skipped — and the `|---|` header-separator row is never mistaken for a citation row.
+    @Test func multiRowTableEvaluatesEachRowIndependently() throws {
+        let markdown = """
+        # Conventions
+
+        ## Discovery Record
+
+        | Change type | Evidence | Convention | Status |
+        |---|---|---|---|
+        | Build | `path:Package.swift`; `cmd:swift build` | Use SwiftPM. | confirmed |
+        | Test | `path:Tests/Gone.swift` | Use Swift Testing (`@Test`). | confirmed |
+        | Lint | no `swiftlint` config found | No lint command. | open gap |
+        """
+        let convention = Drift.ConventionInput(
+            path: Layout.conventionSourcePath(stack: "swift"), stack: "swift", text: markdown)
+        // Build's path present + command passes; Test's path missing; Lint carries no typed token.
+        let findings = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: [],
+            conventions: [convention],
+            checks: checks(present: ["Package.swift"], failingCommands: []))
+        #expect(findings.count == 1, "only the Test row's missing path should flag")
+        #expect(findings.first?.kind == .conventionCitation)
+        #expect(findings.first?.subject == convention.path)
+        #expect(findings.first?.detail.contains("Tests/Gone.swift") == true)
+    }
 }
