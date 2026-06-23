@@ -120,11 +120,31 @@ public enum ProjectDashboardError: Error, Equatable, LocalizedError, Sendable {
 public enum ProgramDashboardAssembler {
     public static func assemble(programDir: URL, runStore: RunStore,
                                 fileManager: FileManager = .default) throws -> ProjectDashboard {
+        guard let section = programSection(programDir: programDir, runStore: runStore,
+                                           fileManager: fileManager) else {
+            throw ProjectDashboardError.invalidProgram(programDir.path)
+        }
+        // The section heading is "Program · <name>"; the title equals the program metadata name, so
+        // derive it by dropping the prefix the helper already applied (avoids a second SpecLoader load).
+        let prefix = "Program · "
+        let title = section.heading.hasPrefix(prefix)
+            ? String(section.heading.dropFirst(prefix.count))
+            : section.heading
+        return ProjectDashboard(title: title, sections: [section])
+    }
+
+    /// Builds the one status-annotated `Program · <name>` section for a program dir, or `nil` when the
+    /// program is unloadable/empty (no master `pipeline.yaml`, malformed, or no nodes). `nil` is the
+    /// graceful-skip signal the whole-repo `ProjectDashboardAssembler` uses; `assemble` turns it into
+    /// the `.invalidProgram` throw. Reuses the existing `matchedState`/`standardizedPath`/
+    /// `featurePipelineLoader` helpers unchanged.
+    static func programSection(programDir: URL, runStore: RunStore,
+                               fileManager: FileManager = .default) -> GraphRenderer.DashboardSection? {
         let homeURL = programDir.standardizedFileURL
         let loader = SpecLoader()
 
         guard let env = try? loader.loadPipeline(atDirectory: homeURL), !env.spec.nodes.isEmpty else {
-            throw ProjectDashboardError.invalidProgram(programDir.path)
+            return nil
         }
 
         let programName = env.metadata.name
@@ -134,12 +154,11 @@ public enum ProgramDashboardAssembler {
             state: matchedState(for: homeURL, in: runStore),
             featurePipeline: featurePipelineLoader(programDir: homeURL, loader: loader))
 
-        let section = GraphRenderer.DashboardSection(
+        return GraphRenderer.DashboardSection(
             heading: "Program · \(programName)",
             projection: projection,
             mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
                                                     inheritedOwner: env.metadata.owner ?? []))
-        return ProjectDashboard(title: programName, sections: [section])
     }
 
     /// A sub-pipeline loader closure for `DashboardProjection.project(program:…)`: for a `kind ==
@@ -213,6 +232,19 @@ public enum ProjectDashboardAssembler {
                                                             inheritedOwner: env.metadata.owner ?? [])))
             } else {
                 sections.append(.init(heading: "Feature · \(name)", projection: emptyProjection()))
+            }
+        }
+
+        let programsDir = homeURL.appendingPathComponent(Layout.programsDir, isDirectory: true)
+        let programEntries = ((try? fileManager.contentsOfDirectory(
+            at: programsDir, includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        for entry in programEntries {
+            if let section = ProgramDashboardAssembler.programSection(
+                programDir: entry, runStore: runStore, fileManager: fileManager) {
+                sections.append(section)
             }
         }
 

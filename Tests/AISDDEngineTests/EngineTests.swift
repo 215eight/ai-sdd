@@ -1906,6 +1906,108 @@ struct EngineTests {
         }
     }
 
+    // MARK: - Whole-repo dashboard: features + programs (ProjectDashboardAssembler)
+
+    @Test func projectDashboardAssemblerAppendsProgramSectionsAfterFeaturesAlphabetically() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        // A build-pattern at the root plus a feature, and two programs (out of alpha order on disk).
+        try writePipeline(at: tmp, name: "factory", nodes: ["build"], edges: [])
+        let features = tmp.appendingPathComponent("features", isDirectory: true)
+        try writePipeline(at: features.appendingPathComponent("alpha", isDirectory: true),
+                          name: "alpha", nodes: ["plan", "implement"], edges: [("plan", "implement")])
+        let programs = tmp.appendingPathComponent("programs", isDirectory: true)
+        try writeProgramFixture(at: programs.appendingPathComponent("zeta", isDirectory: true),
+                                name: "zeta")
+        try writeProgramFixture(at: programs.appendingPathComponent("guardrails", isDirectory: true),
+                                name: "guardrails")
+
+        // Match the guardrails program run and roll up its sub-pipelines.
+        let store = RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true))
+        let guardrailsDir = programs.appendingPathComponent("guardrails", isDirectory: true)
+        try store.create(runId: "prog-run", pipelineDir: guardrailsDir.standardizedFileURL.path)
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "plan", producedArtifacts: [])),
+                         to: "prog-run")
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "implement", producedArtifacts: [])),
+                         to: "prog-run")
+        try store.append(.scoped(slice: "provenance", event: .nodeStarted(node: "plan")), to: "prog-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: tmp, runStore: store)
+
+        // Feature first, then Program sections alphabetical by slug. Build pattern is runnable-only
+        // here (no active work) so it does not append — preserving the existing conditional behavior.
+        #expect(dashboard.sections.map(\.heading) == [
+            "Feature · alpha",
+            "Program · guardrails",
+            "Program · zeta"
+        ])
+
+        let guardrails = try #require(dashboard.sections.first { $0.heading == "Program · guardrails" })
+        #expect(status(guardrails.projection, "locks") == .done)
+        #expect(status(guardrails.projection, "provenance") == .inProgress)
+        #expect(guardrails.projection.rows.first { $0.node == "m1-guardrails-integrated" }?.isMilestone == true)
+    }
+
+    @Test func projectDashboardAssemblerWithNoProgramsDirHasNoProgramSections() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try writePipeline(at: tmp, name: "factory", nodes: ["build"], edges: [])
+        try writePipeline(at: tmp.appendingPathComponent("features", isDirectory: true)
+                            .appendingPathComponent("alpha", isDirectory: true),
+                          name: "alpha", nodes: ["plan"], edges: [])
+
+        let dashboard = try ProjectDashboardAssembler.assemble(
+            factoryDir: tmp,
+            runStore: RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true)))
+
+        // No programs/ dir ⇒ only the Feature section (build pattern is runnable-only, not appended).
+        #expect(dashboard.sections.map(\.heading) == ["Feature · alpha"])
+        #expect(dashboard.sections.allSatisfy { !$0.heading.hasPrefix("Program · ") })
+    }
+
+    @Test func projectDashboardAssemblerSkipsBrokenProgramButRendersValidOnes() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try writePipeline(at: tmp, name: "factory", nodes: ["build"], edges: [])
+        let programs = tmp.appendingPathComponent("programs", isDirectory: true)
+        try writeProgramFixture(at: programs.appendingPathComponent("guardrails", isDirectory: true),
+                                name: "guardrails")
+        // A broken program: pipeline.yaml present but malformed ⇒ programSection returns nil.
+        let broken = programs.appendingPathComponent("zeta-broken", isDirectory: true)
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        try "not: a pipeline".write(to: broken.appendingPathComponent("pipeline.yaml"),
+                                    atomically: true, encoding: .utf8)
+
+        let store = RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true))
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: tmp, runStore: store)
+
+        // The broken program is skipped (not fatal); the valid one still renders.
+        #expect(dashboard.sections.map(\.heading) == ["Program · guardrails"])
+    }
+
+    @Test func programDashboardAssemblerStandaloneStillThrowsOnBrokenProgram() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-program-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let programDir = root.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("broken", isDirectory: true)
+        try FileManager.default.createDirectory(at: programDir, withIntermediateDirectories: true)
+        try "not: a pipeline".write(to: programDir.appendingPathComponent("pipeline.yaml"),
+                                    atomically: true, encoding: .utf8)
+
+        let store = RunStore(root: root.appendingPathComponent("runs", isDirectory: true))
+        // Standalone behavior preserved: a broken/unloadable program still throws invalidProgram.
+        #expect(throws: ProjectDashboardError.invalidProgram(programDir.path)) {
+            try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        }
+    }
+
     // MARK: - Milestone gate styling + escaping (pure dashboardMermaid)
 
     @Test func dashboardMermaidStylesMilestonesAsDistinctGates() {

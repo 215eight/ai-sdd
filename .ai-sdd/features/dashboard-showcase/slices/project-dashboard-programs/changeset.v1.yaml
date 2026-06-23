@@ -1,0 +1,29 @@
+summary: >-
+  Slice project-dashboard-programs (1 of dashboard-showcase): the whole-repo project dashboard now
+  includes program-tier sections. Extracted a shared static helper
+  ProgramDashboardAssembler.programSection(programDir:runStore:fileManager:) ->
+  GraphRenderer.DashboardSection? from the existing ProgramDashboardAssembler.assemble body: it loads
+  the master pipeline.yaml via SpecLoader, matches the run, builds the feature-sub-pipeline loader, runs
+  DashboardProjection.project(program:…), and returns one status-annotated "Program · <name>" section, or
+  nil when the program is unloadable/empty (graceful skip — no throw). Refactored
+  ProgramDashboardAssembler.assemble into a thin wrapper that calls the helper, derives the title by
+  dropping the "Program · " heading prefix (avoids a second SpecLoader load), and throws
+  ProjectDashboardError.invalidProgram(programDir.path) on nil — preserving its public signature, title,
+  single-section shape, and thrown error case unchanged. Extended ProjectDashboardAssembler.assemble to
+  enumerate <factoryDir>/programs/* (dir name via Layout.programsDir, no inline literal), filter to
+  directories, sort alphabetically by slug (lastPathComponent), and append each non-nil programSection
+  AFTER the Feature sections and BEFORE the conditional Build-pattern append — so a factory with no
+  programs/ dir is byte-for-byte unchanged and a broken program is skipped, never fatal. Added four Swift
+  Testing cases in EngineTests.swift. swift build exit 0, swift test exit 0 (188 tests, 6 suites passed),
+  all pre-existing project + program dashboard tests unchanged.
+satisfies:
+  - combined-feature-and-program-sections-ordered
+  - no-programs-dir-no-regression
+  - broken-program-skipped-not-fatal
+  - program-assembler-standalone-unchanged
+  - shared-helper-extracted
+  - path-literals-via-layout
+  - build-and-test-green
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift

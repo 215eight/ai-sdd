@@ -1,0 +1,206 @@
+summary: >-
+  Make `ai-sdd graph .ai-sdd --project --dashboard` the whole-repo view (slice
+  project-dashboard-programs, slice 1 of feature dashboard-showcase). In
+  Sources/AISDDEngine/DashboardProjection.swift, extract the per-program section-building logic out of
+  the existing ProgramDashboardAssembler.assemble into a shared static helper
+  programSection(programDir:runStore:fileManager:) -> GraphRenderer.DashboardSection? that returns nil
+  when the program dir has no loadable/non-empty master pipeline.yaml (graceful skip) and otherwise
+  returns one status-annotated "Program · <name>" section (load master pipeline via
+  SpecLoader.loadPipeline(atDirectory:), match the run by standardized RunMeta.pipelineDir, resolve each
+  feature sub-pipeline relative to programDir, feed the slice-1 DashboardProjection.project(program:…)
+  rollup, render via GraphRenderer.dashboardMermaid). Refactor ProgramDashboardAssembler.assemble to call
+  the helper and throw ProjectDashboardError.invalidProgram(programDir.path) when it returns nil — its
+  public signature and behavior are unchanged. Then extend
+  ProjectDashboardAssembler.assemble(factoryDir:runStore:fileManager:) to also enumerate
+  `<factoryDir>/programs/*` (via the existing Layout.programsDir literal) and append one program section
+  per program. Ordering: existing `Feature ·` sections first, then `Program ·` sections sorted
+  alphabetically by slug, then the existing conditional `Build pattern ·` section last (unchanged) — so a
+  factory with no programs dir behaves byte-for-byte as today. A broken/unloadable program dir yields nil
+  and is skipped (never fatal). The dashboard summary/donut/bar already aggregate across all sections, so
+  they pick up program sections automatically. No CLI change, no Layout change (programsDir already
+  exists), no fixture/docs. Tests live in Tests/AISDDEngineTests/EngineTests.swift.
+scope:
+  in:
+    - >-
+      Extract a shared static helper programSection(programDir: URL, runStore: RunStore, fileManager:
+      FileManager = .default) -> GraphRenderer.DashboardSection? on ProgramDashboardAssembler in
+      Sources/AISDDEngine/DashboardProjection.swift, moving the body of the current assemble into it: it
+      standardizes programDir, loads the master pipeline via SpecLoader().loadPipeline(atDirectory:),
+      returns nil when the load fails OR env.spec.nodes is empty (so a caller can skip), and otherwise
+      builds the projection via DashboardProjection.project(program:metadata:state:featurePipeline:)
+      (reusing the existing matchedState/standardizedPath and featurePipelineLoader helpers) and returns
+      one GraphRenderer.DashboardSection with heading "Program · <name>" and the status-annotated
+      dashboardMermaid.
+    - >-
+      Refactor ProgramDashboardAssembler.assemble(programDir:runStore:fileManager:) to call
+      programSection(...) and, when it returns nil, throw ProjectDashboardError.invalidProgram(programDir.path),
+      otherwise return ProjectDashboard(title: <program metadata name>, sections: [section]). Keep the
+      public signature, the title (the program metadata name), the single-section shape, and the thrown
+      error case exactly as today so the existing programDashboardAssembler* tests do not regress.
+    - >-
+      Extend ProjectDashboardAssembler.assemble(factoryDir:runStore:fileManager:) to enumerate
+      `<factoryDir>/programs/*` subdirectories using Layout.programsDir for the dir name (no inline path
+      string), filtering to directories and sorting alphabetically by lastPathComponent (the slug),
+      mirroring how the existing features/* enumeration filters and sorts.
+    - >-
+      For each program subdir call ProgramDashboardAssembler.programSection(programDir:runStore:fileManager:);
+      append every non-nil returned section to the dashboard sections AFTER the `Feature ·` sections and
+      BEFORE the existing conditional `Build pattern ·` append, so final order is: Feature sections
+      (existing alphabetical), then Program sections (alphabetical by slug), then the build-pattern section
+      when it applies. A nil result (unloadable/empty program) is skipped, never fatal.
+    - >-
+      Add Swift Testing coverage in Tests/AISDDEngineTests/EngineTests.swift reusing the existing temp-dir
+      helpers (writePipeline + writeProgramFixture) and a RunStore: a factory dir with features/* AND
+      programs/* asserting the combined section order and program rollup statuses; a factory with no
+      programs dir asserting the existing behavior is unchanged (no Program sections); a broken/unloadable
+      program dir asserting it is skipped (not fatal); and an assertion that ProgramDashboardAssembler.assemble
+      standalone behavior (title, single "Program · <name>" section, invalidProgram throw) is preserved.
+  out:
+    - >-
+      No change to DashboardProjection.project(program:…)/project(pipeline:…) rollup logic, to
+      DashboardProjectionRow.isMilestone, to featureStatus precedence, or to GraphRenderer.dashboardMermaid
+      / milestone styling — all shipped in earlier slices and reused as-is.
+    - >-
+      No CLI flag, command, or gate change in Sources/AISDDCLI/ (the --project path already calls
+      ProjectDashboardAssembler; --dashboard requires --project unchanged).
+    - >-
+      No change to Sources/AISDDEngine/Layout.swift — Layout.programsDir already exists and is public; this
+      slice only consumes it.
+    - >-
+      No change to the build-pattern section logic, its position relative to features, the noGraphs error,
+      the plant dashboard, single-graph, --html, plain Mermaid, dashboardPage/dashboardStyles/graphHTML/
+      tableHTML, or DashboardCharts (additive only).
+    - >-
+      No committed demo fixture, no end-to-end CLI integration test, no README change, no portable
+      run-store/relative-pipelineDir matching — those are downstream slices of dashboard-showcase.
+    - No change to RunState/RunStore storage, recursive execution, spec formats, or the milestone-gate worker.
+acceptance:
+  - id: combined-feature-and-program-sections-ordered
+    description: >-
+      ProjectDashboardAssembler.assemble over a factory dir containing both features/* and programs/*
+      returns sections in order: all `Feature ·` sections (existing alphabetical), then `Program ·` sections
+      sorted alphabetically by slug, then the conditional `Build pattern ·` section when it applies. A
+      program section carries the program rollup statuses (e.g. a fully-done feature sub-pipeline rolls up
+      to done, a started one to in-progress, the milestone gate to its plain-node precedence status).
+  - id: no-programs-dir-no-regression
+    description: >-
+      A factory dir with NO programs directory behaves exactly as today — only `Feature ·` (and the
+      conditional `Build pattern ·`) sections, in the same order — and every pre-existing
+      projectDashboardAssembler* test passes unchanged.
+  - id: broken-program-skipped-not-fatal
+    description: >-
+      A program subdir whose master pipeline.yaml is missing, malformed, or empty of nodes is skipped
+      (programSection returns nil) and produces no section, while other valid programs still render and
+      assemble does not throw.
+  - id: program-assembler-standalone-unchanged
+    description: >-
+      ProgramDashboardAssembler.assemble(programDir:runStore:fileManager:) keeps its public signature and
+      observable behavior: title is the program metadata name, it emits exactly one `Program · <name>`
+      section, and it throws ProjectDashboardError.invalidProgram(programDir.path) for an unloadable/empty
+      program — all existing programDashboardAssembler* tests pass unchanged.
+  - id: shared-helper-extracted
+    description: >-
+      The per-program section logic lives in one shared programSection(programDir:runStore:fileManager:)
+      helper that both ProgramDashboardAssembler.assemble and ProjectDashboardAssembler.assemble call,
+      with no duplicated section-building code path.
+  - id: path-literals-via-layout
+    description: >-
+      The programs directory name is referenced via Layout.programsDir (no inline "programs" string in the
+      assembler), keeping Layout.swift the single source of path truth.
+  - id: build-and-test-green
+    description: swift build and swift test both pass.
+decisions:
+  - id: helper-name-and-return-type
+    status: closed
+    decision: >-
+      Extract a shared static helper programSection(programDir: URL, runStore: RunStore, fileManager:
+      FileManager = .default) -> GraphRenderer.DashboardSection? on ProgramDashboardAssembler, beside
+      assemble, in Sources/AISDDEngine/DashboardProjection.swift. It returns an OPTIONAL section: nil when
+      the program dir has no loadable master pipeline.yaml or env.spec.nodes is empty, otherwise the one
+      "Program · <name>" status-annotated section. It reuses the existing private matchedState,
+      standardizedPath, and featurePipelineLoader helpers unchanged.
+    rationale: >-
+      The slice brief offers `-> DashboardSection` (throwing) or `-> DashboardSection?`; the optional form
+      is the clean fit because the project assembler needs to SKIP a broken program gracefully (mirroring
+      how a broken feature degrades), and nil is exactly that signal. Returning the section type
+      GraphRenderer.DashboardSection (not a ProjectDashboard) lets the project assembler append it directly
+      to its existing `sections` array, identical to how the features loop appends sections today. Co-locating
+      on ProgramDashboardAssembler keeps the program-tier logic together and lets assemble stay a thin wrapper.
+  - id: broken-program-skip-vs-throw
+    status: closed
+    decision: >-
+      programSection returns nil for an unloadable/empty program (no throw). ProgramDashboardAssembler.assemble
+      calls programSection and throws ProjectDashboardError.invalidProgram(programDir.path) when it gets nil,
+      preserving its current contract; ProjectDashboardAssembler.assemble calls programSection and silently
+      skips a nil result, so a broken program never aborts the whole-repo dashboard. The existing
+      invalidProgram error case is reused (no new error case is introduced).
+    rationale: >-
+      The standalone per-program command must still surface a hard error for a bad program dir (its tests
+      assert the exact invalidProgram case), while the whole-repo view must degrade gracefully like it does
+      for a broken feature (which today is tolerated). Splitting nil-detection (helper) from the throw
+      (assemble) satisfies both contracts from one code path and matches the existing try?-based degradation
+      style already used throughout these assemblers.
+  - id: section-ordering
+    status: closed
+    decision: >-
+      In ProjectDashboardAssembler.assemble, append program sections AFTER the features loop and BEFORE the
+      existing conditional build-pattern append. Final section order: `Feature ·` sections (existing
+      alphabetical by feature dir name), then `Program ·` sections sorted alphabetically by slug
+      (lastPathComponent), then the conditional `Build pattern ·` section. Programs are enumerated with
+      fileManager.contentsOfDirectory over `<factoryDir>/programs` (dir name from Layout.programsDir),
+      filtered to directories, sorted by lastPathComponent — mirroring the features enumeration.
+    rationale: >-
+      The slice brief and requirements decision 1 specify Feature sections first, then Program sections
+      alphabetically. Inserting programs before the build-pattern append keeps the build-pattern section in
+      its current relative position (last, and only when sections were empty or it contains active work), so
+      every existing project-dashboard test — including the ["Feature · dashboard", "Build pattern · factory"]
+      and "no features ⇒ Build pattern only" cases — stays byte-for-byte unchanged. Reusing the exact
+      directory-filter+sort pattern from the features loop keeps enumeration behavior consistent.
+  - id: title-preservation-for-program-assemble
+    status: closed
+    decision: >-
+      ProgramDashboardAssembler.assemble keeps returning ProjectDashboard(title: <program metadata name>,
+      sections: [section]). Since the title equals the metadata name and the section heading is
+      "Program · <name>", assemble derives the title from the single section (dropping the "Program · "
+      prefix) or otherwise reuses the name programSection already resolved — avoiding a second SpecLoader
+      load — so the observable title is identical to today's env.metadata.name.
+    rationale: >-
+      assemble's current title is the program metadata name and its tests rely on it (e.g.
+      `dashboard.title == "guardrails"`). Deriving the title from the single section the helper already
+      builds avoids a redundant SpecLoader call and keeps assemble a thin, non-regressing wrapper around the
+      shared helper.
+  - id: no-layout-or-cli-change
+    status: closed
+    decision: >-
+      No edit to Sources/AISDDEngine/Layout.swift (Layout.programsDir = "programs" already exists and is
+      public, verified at Layout.swift line 14) and no edit under Sources/AISDDCLI/. The assembler
+      references Layout.programsDir for the dir name. The only touched source file is
+      Sources/AISDDEngine/DashboardProjection.swift; tests go in Tests/AISDDEngineTests/EngineTests.swift.
+    rationale: >-
+      Verified by reading Layout.swift (public static let programsDir = "programs") and main.swift (the
+      --project path already calls ProjectDashboardAssembler.assemble). Keeping the diff to one source file
+      plus its tests respects the diff-in-scope gate and the conventions' "path literals live in
+      Layout.swift" rule with zero new literals.
+  - id: tests-location-and-pattern
+    status: closed
+    decision: >-
+      Add the slice tests to Tests/AISDDEngineTests/EngineTests.swift using Swift Testing
+      (@Test/#expect/#require), reusing the existing temp-dir helpers writePipeline and writeProgramFixture
+      and a RunStore. Cover: (1) a factory with features/* and programs/* asserting combined section order
+      (Feature first, Program alphabetical) and program rollup statuses via a matched run; (2) a factory with
+      no programs dir asserting unchanged behavior (no Program sections); (3) a broken/empty program dir
+      asserting it is skipped, not fatal; (4) an assertion that ProgramDashboardAssembler.assemble standalone
+      still yields one section, correct title, and throws the exact invalidProgram case.
+    rationale: >-
+      The repo keeps engine and dashboard tests in this Swift Testing file with temp-dir factories and a
+      RunStore (the existing projectDashboardAssembler* and programDashboardAssembler* tests are the
+      exemplars). writeProgramFixture already lays a program under <root>/programs/<slug> with sub-pipelines
+      under <root>/features, so a project test can point factoryDir at <root> and the program is found at
+      <root>/programs/<slug>; per the conventions, prefer exact typed errors (ProjectDashboardError) over
+      any Error.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test

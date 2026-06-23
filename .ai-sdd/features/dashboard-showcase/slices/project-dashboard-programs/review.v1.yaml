@@ -1,0 +1,85 @@
+schema: review.v1
+run: program-dashboard
+slice: project-dashboard-programs
+
+verdict: approve
+summary: >-
+  Independent review of slice project-dashboard-programs (1 of dashboard-showcase) against
+  feature-plan.v1 (7 acceptance ids). Inspected the real working-tree diff: exactly the two declared
+  files changed (Sources/AISDDEngine/DashboardProjection.swift, Tests/AISDDEngineTests/EngineTests.swift)
+  per git diff --name-only — no Layout/CLI/fixture/doc files touched. Re-ran the gates myself rather
+  than trusting changeset prose: swift build exit 0; swift test "188 tests in 6 suites passed" exit 0.
+  Verified the helper extraction, the standalone-assembler contract preservation, the ordering and
+  graceful-skip behavior in the project assembler, and that the donut/summary aggregate across all
+  sections unconditionally (GraphRenderer.dashboardSummary iterates every section). Every acceptance id
+  passes and conventions are satisfied.
+
+items:
+  - id: combined-feature-and-program-sections-ordered
+    verdict: pass
+    notes: >-
+      ProjectDashboardAssembler.assemble enumerates <factoryDir>/programs/* via Layout.programsDir,
+      filters to directories, sorts by lastPathComponent, and appends each non-nil programSection AFTER
+      the features loop and BEFORE the conditional build-pattern append (DashboardProjection.swift:238-253).
+      Test projectDashboardAssemblerAppendsProgramSectionsAfterFeaturesAlphabetically uses a real temp-dir
+      factory (feature `alpha`; programs `zeta`+`guardrails` written out of alpha order on disk) plus a
+      matched RunStore run and asserts the exact ordering ["Feature · alpha", "Program · guardrails",
+      "Program · zeta"] AND program rollup statuses (locks => .done, provenance => .inProgress, milestone
+      row isMilestone == true). Genuine, non-vacuous.
+  - id: no-programs-dir-no-regression
+    verdict: pass
+    notes: >-
+      The programs enumeration uses (try? contentsOfDirectory(...)) ?? [], so a missing programs/ dir
+      yields zero appended sections — the section array is byte-for-byte the pre-slice behavior. Test
+      projectDashboardAssemblerWithNoProgramsDirHasNoProgramSections asserts ["Feature · alpha"] and no
+      "Program · " prefix. All pre-existing projectDashboardAssembler* tests pass unchanged.
+  - id: broken-program-skipped-not-fatal
+    verdict: pass
+    notes: >-
+      programSection returns nil on (try? loadPipeline) failure or empty nodes (DashboardProjection.swift:146);
+      the project loop skips nil (lines 244-249) — never throws. Test
+      projectDashboardAssemblerSkipsBrokenProgramButRendersValidOnes writes a valid guardrails program
+      plus a malformed pipeline.yaml ("not: a pipeline") and asserts the result is exactly
+      ["Program · guardrails"] — broken skipped, valid rendered, no throw.
+  - id: program-assembler-standalone-unchanged
+    verdict: pass
+    notes: >-
+      ProgramDashboardAssembler.assemble keeps its exact public signature
+      (programDir:runStore:fileManager:) throws -> ProjectDashboard. It calls programSection and throws
+      ProjectDashboardError.invalidProgram(programDir.path) on nil (lines 123-126). Title is derived by
+      dropping the "Program · " heading prefix, which provably reproduces env.metadata.name (helper builds
+      heading as "Program · \(programName)"). All five existing programDashboardAssembler* tests pass
+      unchanged (title == "guardrails", single section, run match, milestone gate, static + missing
+      sub-pipeline degradation). New test programDashboardAssemblerStandaloneStillThrowsOnBrokenProgram
+      asserts the exact .invalidProgram(path) throw. Error case reused, not changed.
+  - id: shared-helper-extracted
+    verdict: pass
+    notes: >-
+      The per-program section body moved into one static
+      programSection(programDir:runStore:fileManager:) -> GraphRenderer.DashboardSection? helper
+      (DashboardProjection.swift:141-162), reusing the unchanged matchedState/standardizedPath/
+      featurePipelineLoader privates. Both assemblers call it; the old inline construction was deleted from
+      assemble (visible in the diff), so there is no duplicated section-building path.
+  - id: path-literals-via-layout
+    verdict: pass
+    notes: >-
+      The programs dir name is referenced via Layout.programsDir (DashboardProjection.swift:238); no
+      inline "programs" string in the assembler. Layout.swift unchanged (programsDir = "programs" already
+      public at line 14). git diff --name-only shows only the two declared files touched.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      Re-ran by the reviewer: swift build -> "Build complete!" exit 0; swift test -> "Test run with 188
+      tests in 6 suites passed" exit 0, including all four new tests and every pre-existing dashboard test.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Engine-only change under Sources/AISDDEngine with focused tests in
+    Tests/AISDDEngineTests/EngineTests.swift; Swift Testing (@Test/#expect/#require) used; exact typed
+    error ProjectDashboardError.invalidProgram asserted (not any Error). No inline path strings — the
+    programs dir name flows from Layout.programsDir, keeping Layout.swift the single source of path truth.
+    Scope respected: exactly the two declared files changed (git diff --name-only). Baseline gates
+    swift build and swift test are green. The donut/summary aggregate across all sections via
+    GraphRenderer.dashboardSummary, which sums every section unconditionally, so program sections are
+    picked up with no special-casing (verified, unchanged this slice).
