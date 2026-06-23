@@ -26,6 +26,8 @@ pattern**:
   runs/demo-program-run/        committed PORTABLE program run state
     run.json                    RunMeta — pipelineDir RELATIVE: .ai-sdd/programs/demo
     events/NNNNNN.json          hand-authored RunEvent log
+expected/
+  whole-repo-dashboard.html     committed snapshot of the whole-repo project dashboard
 ```
 
 The program wires the two parallel features into a milestone gate, then unlocks the third:
@@ -57,7 +59,24 @@ bash docs/examples/demo-factory/build-fixture.sh
 ```
 
 The script rewrites `run.json` + `events/NNNNNN.json` byte-for-byte to match the engine's Codable
-encoding. It is idempotent — re-running reproduces identical files.
+encoding. It is idempotent — re-running reproduces identical files. The run-state regeneration is
+binary-free; when an `ai-sdd` binary is resolvable (on `PATH` or as `.build/debug/ai-sdd`), the
+script ALSO regenerates the committed dashboard snapshot (below), otherwise it skips that step and
+still exits 0.
+
+## Committed dashboard snapshot
+
+`expected/whole-repo-dashboard.html` is a committed snapshot of the whole-repo project dashboard:
+every `Feature ·` section plus the `Program · demo` section, overlaid with this fixture's committed
+status mix and rendered with inline-SVG charts. It is deterministic (byte-identical across runs) and
+free of absolute machine paths, so it reproduces byte-stably on any clone. Regenerate it directly:
+
+```sh
+ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard \
+  --out docs/examples/demo-factory/expected/whole-repo-dashboard.html
+```
+
+(or just run `build-fixture.sh` with `ai-sdd` on `PATH`, which emits the same snapshot).
 
 ## Dashboard commands
 

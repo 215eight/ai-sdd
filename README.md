@@ -6,6 +6,61 @@ This repository is the Swift implementation for the `ai-sdd` framework. The
 current MVP is CLI-first and builds toward a shared `SDDCore` used by sibling CLI
 and MCP interfaces.
 
+## Visualizing the factory
+
+The dependency graph is the one place the flow lives, and `ai-sdd graph` renders it across every
+tier — a single feature or program graph, a whole-repo project dashboard, a per-program dashboard,
+or a multi-repo plant aggregate. Every command below is copy-pasteable and runs against the
+committed [`docs/examples/demo-factory/`](docs/examples/demo-factory/) fixture, so you can try each
+modality without standing up a factory of your own.
+
+**Single graph (plain Mermaid).** Render one feature's slice graph or a program's master graph to
+stdout (drops straight into GitHub, VS Code, and most Markdown viewers):
+
+```sh
+ai-sdd graph docs/examples/demo-factory/.ai-sdd/features/auth     # one feature's slice graph
+ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo     # the program's master graph
+```
+
+Add `--html` to wrap the same graph in a self-contained page you can open locally or host anywhere:
+
+```sh
+ai-sdd graph docs/examples/demo-factory/.ai-sdd/features/auth --html --out auth.html
+ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --html --out demo-program.html
+```
+
+**Whole-repo project dashboard.** One page covering every feature plus the `Program · demo` section,
+with each node's status overlaid from the fixture's own `.ai-sdd/runs` store:
+
+```sh
+ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out whole-repo-dashboard.html
+```
+
+A committed snapshot of exactly that output lives at
+[`docs/examples/demo-factory/expected/whole-repo-dashboard.html`](docs/examples/demo-factory/expected/whole-repo-dashboard.html)
+— every `Feature ·` section and the `Program · demo` section with the fixture's committed status mix
+(auth `done`, billing `in-progress`), rendered with inline-SVG charts. Regenerate it byte-stably with
+the command above (point `--out` at that path), which `build-fixture.sh` also emits when `ai-sdd` is
+on `PATH`.
+
+**Per-program dashboard.** The same overlay one tier up — a program's master graph as a status
+dashboard, each sub-feature a single node with its status rolled up and the milestone validation
+gates styled distinctly:
+
+```sh
+ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard --out demo-program-dashboard.html
+```
+
+**Multi-repo plant aggregate.** Across repos, `ai-sdd graph --plant <plant.yaml>` aggregates fragment
+locations into one program view grouped by milestone — see
+[`docs/examples/sdlc-plant`](docs/examples/sdlc-plant), which carries its own committed `plant.yaml`.
+
+A note on self-containment: the dashboard's status donut and grouped-bar charts are inline SVG with no
+external assets, but the Mermaid dependency graph renders via a CDN ESM import — parity across all
+tiers, so a generated page is not fully offline. For the run-store overlay semantics and caveats
+(these dashboards are a snapshot of your local `.ai-sdd/runs` store, not a shared live team
+dashboard), see QUICKSTART's [Visualize the work (for you and your team)](QUICKSTART.md#visualize-the-work-for-you-and-your-team).
+
 ## MVP Shape
 
 - `SDDModels`: public domain contracts and JSON shapes.

@@ -1,0 +1,95 @@
+schema: review.v1
+run: program-dashboard
+slice: readme-showcase
+
+verdict: approve
+summary: >-
+  Independent review of the FINAL slice readme-showcase (6 of 6, DOCS) against feature-plan.v1
+  (7 acceptance ids). Diff is scope-tight: exactly README.md, docs/examples/demo-factory/README.md,
+  docs/examples/demo-factory/build-fixture.sh modified + new
+  docs/examples/demo-factory/expected/whole-repo-dashboard.html — no Sources/, Tests/, or QUICKSTART.md.
+  I ran every gate with the checkout's own .build/debug/ai-sdd (not the global binary the impl flagged):
+  swift build → Build complete (exit 0); swift test → 202 tests in 7 suites passed; validate .ai-sdd →
+  valid (3 nodes, 3 edges, 4 workers, 8 checks), exit 0. Every documented command ran exit 0 (feature +
+  program plain Mermaid, --html variants, whole-repo --project --dashboard, per-program --dashboard).
+  Reproducibility: regenerated the snapshot to /tmp and `diff` vs the committed file is IDENTICAL
+  (byte-stable). Portability: grep -E '/Users/|/home/' over the committed HTML returns nothing; the three
+  /tmp generated outputs are also abs-path-free. Content: the snapshot greps Program · demo ×1, Feature ·
+  ×3, status_done ×5 (program section + resolved statuses, not a static/empty render). build-fixture.sh
+  ran exit 0, resolved .build/debug/ai-sdd, emitted the snapshot, and left run.json + the committed HTML
+  byte-unchanged (idempotent). The added README section is new-model-clean (no genuine legacy tokens). All
+  7 ids pass; conventions satisfied.
+
+items:
+  - id: readme-showcase-section-exists
+    verdict: pass
+    notes: >-
+      README.md gains "## Visualizing the factory" inserted after the intro and immediately before the
+      legacy "## MVP Shape" section. Greps over ONLY the added lines (9-63): no standalone `.sdd` (only
+      `.ai-sdd`), no SDDCore/SDDMCP/openspec/`swift run sdd`. The `\bsdd\b` matches are all the `sdd`
+      substring inside `ai-sdd`/`.ai-sdd` (word boundary at hyphen/dot) — new-model framing. Surrounding
+      legacy README body is pre-existing and out of scope.
+  - id: every-modality-command-present-and-accurate
+    verdict: pass
+    notes: >-
+      All five modalities present and each ran exit 0 with .build/debug/ai-sdd: (a) single plain-Mermaid
+      feature (.../features/auth) + program (.../programs/demo); (b) --html single page (feature +
+      program); (c) whole-repo `.ai-sdd --project --dashboard --out`; (d) per-program
+      `.../programs/demo --dashboard --out`; (e) `--plant <plant.yaml>` mention pointing at
+      docs/examples/sdlc-plant, which exists with a committed plant.yaml. Copy-pasteable, fixture-based.
+  - id: committed-example-output-exists
+    verdict: pass
+    notes: >-
+      docs/examples/demo-factory/expected/whole-repo-dashboard.html committed (22928 bytes). Regenerated
+      via the documented whole-repo command; `diff` vs committed = IDENTICAL (byte-stable/reproducible).
+      grep -E '/Users/|/home/' → nothing (portable). Content greps confirm a real render: Program · demo
+      ×1, Feature · ×3, status_done ×5 — program section + resolved statuses, not static/empty.
+  - id: example-output-referenced-and-regen-documented
+    verdict: pass
+    notes: >-
+      README links the snapshot via a relative Markdown link, describes it (every Feature · section +
+      Program · demo, fixture status mix auth done / billing in-progress, inline-SVG charts) and states
+      regeneration (whole-repo command with --out, also emitted by build-fixture.sh when ai-sdd is on
+      PATH). The fixture README adds a "Committed dashboard snapshot" section with the standalone regen
+      command + the build-fixture.sh path and a tree entry for expected/.
+  - id: build-fixture-emits-snapshot-guarded
+    verdict: pass
+    notes: >-
+      build-fixture.sh keeps run-state regeneration binary-free, then resolves a binary preferring
+      .build/debug/ai-sdd, falling back to PATH ai-sdd, else prints a skip notice and exits 0. Ran it:
+      exit 0, resolved the local debug binary, emitted the snapshot. `git status` after shows run.json +
+      the committed snapshot byte-unchanged (no M) — idempotent. The local-binary-first ordering is a
+      sensible deviation from the plan's literal `command -v ai-sdd` (impl flagged a stale global
+      install); still satisfies the guard + skip-exit-0 contract.
+  - id: honest-self-contained-and-new-model-wording
+    verdict: pass
+    notes: >-
+      The "A note on self-containment" paragraph states the status donut + grouped-bar charts are inline
+      SVG with no external assets while the Mermaid graph renders via a CDN ESM import (parity across
+      tiers, not fully offline), and cross-links QUICKSTART's "Visualize the work (for you and your team)"
+      rather than duplicating the caveats. The QUICKSTART anchor target exists (QUICKSTART.md line 203).
+      New-model framing only.
+  - id: build-test-validate-green
+    verdict: pass
+    notes: >-
+      swift build → Build complete, exit 0. swift test → 202 tests in 7 suites passed. validate .ai-sdd →
+      valid (3 nodes, 3 edges, 4 workers, 8 checks), exit 0. All documented graph commands ran exit 0. No
+      Sources/ or Tests/ changes in the diff.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Docs/fixture-artifact-only slice; changed paths exactly match the allowed set
+    (README.md, docs/examples/demo-factory/README.md, docs/examples/demo-factory/build-fixture.sh, new
+    docs/examples/demo-factory/expected/whole-repo-dashboard.html). No Sources/, Tests/, or QUICKSTART.md
+    changes. build-fixture.sh stays POSIX-sh, idempotent, and binary-free for run-state regeneration;
+    the committed snapshot reproduces byte-stably and carries no absolute machine path. Baseline gates
+    (swift build, swift test, validate) green.
+
+caveats: >-
+  Out of scope for this docs slice (not blocking, per brief): the stale globally-installed `ai-sdd` the
+  implementer flagged (this review used .build/debug/ai-sdd throughout) and any version bump. The legacy
+  body of the repo-root README.md remains stale new-model-wise, but it is explicitly out of scope —
+  only the added section must be clean, and it is.
+
+rework: null

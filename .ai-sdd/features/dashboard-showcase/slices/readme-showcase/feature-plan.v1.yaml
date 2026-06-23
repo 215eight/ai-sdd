@@ -1,0 +1,254 @@
+summary: >-
+  Docs-only FINAL slice (readme-showcase, slice 6 of 6 of feature dashboard-showcase; depends on
+  fixture-integration-tests, shipped). Add a concise "Visualizing the factory" showcase section to the
+  repo-root `README.md` that demonstrates every `ai-sdd graph` modality with copy-pasteable, fixture-based
+  commands against the committed `docs/examples/demo-factory/` factory: single graph (plain Mermaid) for a
+  feature and for the program (plus `--html`); the whole-repo project dashboard
+  (`ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out <file>`, features + the
+  `Program · demo` section in one dashboard); the per-program dashboard
+  (`ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard --out <file>`); and a mention
+  of `--plant` for the multi-repo aggregate pointing at `docs/examples/sdlc-plant`. Commit ONE regenerable
+  example OUTPUT — `docs/examples/demo-factory/expected/whole-repo-dashboard.html` — produced
+  deterministically by the documented whole-repo graph command (verified byte-stable across runs and free of
+  any absolute machine path), reference/link it from the README, and state how to regenerate it. Extend the
+  fixture's `build-fixture.sh` to ALSO emit that snapshot when the `ai-sdd` binary is resolvable on PATH
+  (guarded so the existing run-state regeneration still works binary-free), and note the snapshot in the
+  fixture README. Wording mirrors QUICKSTART's honesty: the dashboard charts are inline SVG, but the Mermaid
+  graph renders via a CDN ESM import (parity across tiers — not fully offline); new-model framing only, NO
+  legacy ai-sdd references introduced. NO `Sources/`, NO `Tests/`; the engine/CLI behavior this showcases all
+  shipped in prior slices.
+scope:
+  in:
+    - >-
+      Add a new "## Visualizing the factory" section to the repo-root `README.md`, inserted near the TOP —
+      immediately after the opening title + intro paragraphs and BEFORE the existing legacy "## MVP Shape"
+      section — so the new-model showcase reads first. The section is self-contained and uses new-model
+      framing only (the `ai-sdd graph` command, the demo-factory fixture, project/program dashboards); it
+      introduces NO legacy `sdd`/`SDDCore`/`openspec`/`.sdd` references. The existing legacy body of README.md
+      is NOT rewritten (out of scope for this docs slice); only the new section is added.
+    - >-
+      In that section, show copy-pasteable fixture-based commands for EVERY modality, exactly as verified to
+      work against the committed fixture: (a) single graph, plain Mermaid to stdout, for a feature
+      (`ai-sdd graph docs/examples/demo-factory/.ai-sdd/features/auth`) and for the program
+      (`ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo`); (b) a single self-contained HTML page
+      via `--html` (`ai-sdd graph docs/examples/demo-factory/.ai-sdd/features/auth --html --out auth.html`);
+      (c) the whole-repo project dashboard
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out docs/examples/demo-factory/expected/whole-repo-dashboard.html`
+      (renders every `Feature ·` section AND the `Program · demo` section in one dashboard); (d) the
+      per-program dashboard
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard --out program.html`; and
+      (e) a one-line mention that `ai-sdd graph --plant <plant.yaml>` aggregates a multi-repo program view,
+      pointing the reader at `docs/examples/sdlc-plant` (which contains a committed `plant.yaml`).
+    - >-
+      Link the committed example output `docs/examples/demo-factory/expected/whole-repo-dashboard.html` from
+      the README showcase section (a relative Markdown link), describe what it is (the whole-repo dashboard:
+      every feature + the `Program · demo` section with the fixture's committed status mix, inline-SVG charts),
+      and state the regeneration path: it is produced by the documented whole-repo graph command above, which
+      `build-fixture.sh` also emits when `ai-sdd` is on PATH.
+    - >-
+      Add honest self-containment wording mirroring QUICKSTART: the dashboard's status donut + grouped-bar
+      charts are INLINE SVG (no external assets), but the Mermaid dependency graph renders via a CDN ESM import
+      — parity across all tiers, so a generated page is NOT fully offline. Cross-link to QUICKSTART's
+      "Visualize the work (for you and your team)" section for the how-to + caveats (project/program dashboards
+      are a snapshot of the local `.ai-sdd/runs` store, not a shared live team dashboard) instead of
+      duplicating that prose — README = showcase/overview, QUICKSTART = how-to.
+    - >-
+      Commit the regenerable example output `docs/examples/demo-factory/expected/whole-repo-dashboard.html`,
+      generated EXACTLY by
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out docs/examples/demo-factory/expected/whole-repo-dashboard.html`
+      (the `--out` graph command auto-creates the `expected/` parent dir). The output is deterministic
+      (byte-identical across repeated runs, verified) and contains no absolute machine path (verified), so it
+      reproduces byte-stably on any clone.
+    - >-
+      Extend `docs/examples/demo-factory/build-fixture.sh`: after it (re)writes the portable run state, ALSO
+      regenerate `expected/whole-repo-dashboard.html` by invoking the whole-repo graph command — but ONLY when
+      an `ai-sdd` binary is resolvable (guard with `command -v ai-sdd`); if absent, print a short skip notice
+      and still succeed (the run-state regeneration must stay binary-free, as today). The script stays
+      idempotent: re-running reproduces identical run-state bytes and an identical snapshot. Update the script's
+      header comment to mention the snapshot step.
+    - >-
+      Update `docs/examples/demo-factory/README.md`: note the committed `expected/whole-repo-dashboard.html`
+      snapshot under "Regenerating the run state" / "Dashboard commands" (what it is + that `build-fixture.sh`
+      regenerates it when `ai-sdd` is on PATH, or the standalone `ai-sdd graph … --out expected/…` command
+      regenerates it directly).
+  out:
+    - >-
+      NO changes under `Sources/` (engine, CLI, models) and NO changes under `Tests/`. Every behavior this
+      slice showcases — `--project --dashboard` including the `Program ·` section, per-program `--dashboard`,
+      single-graph plain Mermaid, `--html`, `RunStore.base(forTarget:)` run-store derivation, relative
+      `pipelineDir` matching — shipped in prior slices (project-dashboard-programs, portable-run-matching,
+      runstore-from-target, demo-fixture, fixture-integration-tests). This slice only documents and snapshots
+      them.
+    - >-
+      No rewrite of the existing legacy body of the repo-root `README.md` (the stale `sdd`/SDDCore/openspec/
+      `.sdd` content). Modernizing the whole README is a separate concern; this slice adds ONLY the new-model
+      showcase section. (The added section itself contains zero legacy references, satisfying the new-model
+      constraint for the content this slice authors.)
+    - >-
+      No PNG / image screenshot is committed. The example output is the self-contained HTML snapshot only —
+      reproducible and diffable. No binary-image-generation tooling is assumed, and a committed PNG would be a
+      non-reproducible binary, so HTML-snapshot-only is the chosen artifact.
+    - >-
+      No new `--plant` example factory is authored and no `--plant` command is run here; `--plant` is only
+      MENTIONED, pointing at the already-committed `docs/examples/sdlc-plant` (which carries its own
+      `plant.yaml`). Building/extending the plant fixture is out of scope (ADR-0027 plant aggregation already
+      shipped separately).
+    - >-
+      No changes to `QUICKSTART.md` (it already documents the project/program dashboards and their caveats from
+      prior features); the README links to it rather than editing or duplicating it.
+    - >-
+      No engine/CLI/test defect fix folded in. If running the documented commands surfaces a real defect, STOP
+      and report it (it belongs in the relevant prior slice or a revert slice), per the slice brief.
+acceptance:
+  - id: readme-showcase-section-exists
+    description: >-
+      `README.md` contains a new "## Visualizing the factory" section, inserted after the intro and before the
+      legacy "## MVP Shape" section, framed entirely in new-model terms (no `sdd`/SDDCore/openspec/`.sdd`
+      references introduced by this slice).
+  - id: every-modality-command-present-and-accurate
+    description: >-
+      The section gives copy-pasteable fixture-based commands for EVERY modality and each runs as written: (a)
+      single plain-Mermaid for a feature (`…/features/auth`) and the program (`…/programs/demo`); (b) `--html`
+      single page; (c) whole-repo `… .ai-sdd --project --dashboard --out …` (features + `Program · demo` in one
+      dashboard); (d) per-program `… .ai-sdd/programs/demo --dashboard --out …`; (e) a `--plant` mention
+      pointing at `docs/examples/sdlc-plant`.
+  - id: committed-example-output-exists
+    description: >-
+      `docs/examples/demo-factory/expected/whole-repo-dashboard.html` is committed, is the byte-identical
+      output of
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out docs/examples/demo-factory/expected/whole-repo-dashboard.html`,
+      and contains no absolute machine path (no `/Users/…`, `/home/…`), so it reproduces byte-stably on any
+      clone.
+  - id: example-output-referenced-and-regen-documented
+    description: >-
+      The README showcase section links to `docs/examples/demo-factory/expected/whole-repo-dashboard.html`,
+      describes it, and states how to regenerate it (the whole-repo graph command, which `build-fixture.sh`
+      also emits when `ai-sdd` is on PATH). The fixture README also notes the snapshot + regeneration.
+  - id: build-fixture-emits-snapshot-guarded
+    description: >-
+      `docs/examples/demo-factory/build-fixture.sh` regenerates the run state binary-free as today AND, when
+      `command -v ai-sdd` resolves, also regenerates `expected/whole-repo-dashboard.html` via the whole-repo
+      graph command; with no `ai-sdd` on PATH it prints a skip notice and still exits 0. Re-running reproduces
+      identical run-state bytes and an identical snapshot (idempotent).
+  - id: honest-self-contained-and-new-model-wording
+    description: >-
+      The showcase wording states honestly that the dashboard charts are inline SVG while the Mermaid graph
+      uses a CDN ESM import (parity across tiers, not fully offline), uses new-model framing only, and
+      cross-links QUICKSTART's "Visualize the work" rather than duplicating its caveats.
+  - id: build-test-validate-green
+    description: >-
+      `swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` all pass unchanged (no code/test
+      change in this slice), and the documented graph commands run successfully against the fixture.
+decisions:
+  - id: readme-insertion-point-and-heading
+    status: closed
+    decision: >-
+      Add a new section titled "## Visualizing the factory" to the repo-root `README.md`, inserted immediately
+      after the opening title + intro paragraphs and BEFORE the existing "## MVP Shape" section (i.e. near the
+      top), and use new-model framing only inside it. Do NOT rewrite the rest of README.md.
+    rationale: >-
+      Read README.md in full: it is stale legacy content (it describes `sdd`/`SDDCore`/`SDDMCP`, `openspec/`,
+      `.sdd/telemetry`, `swift run sdd …`) — the OLD model. The slice forbids introducing legacy references and
+      mandates new-model framing, so the added section must be self-contained and not lean on the legacy body.
+      Placing it near the top (before "## MVP Shape") makes the new-model showcase the first thing a reader
+      sees and physically separates it from the legacy prose. Rewriting the whole README is a larger,
+      out-of-scope concern; the slice is "add a concise showcase section." The chosen heading mirrors the
+      slice/requirements wording ("Visualizing the factory") and is distinct from QUICKSTART's "Visualize the
+      work (for you and your team)", so cross-linking (not duplicating) is clean.
+  - id: readme-references-quickstart-not-duplicate
+    status: closed
+    decision: >-
+      README = showcase/overview (the modalities + copy-pasteable fixture commands + the committed snapshot);
+      QUICKSTART = how-to + caveats. The README section cross-links QUICKSTART's "Visualize the work (for you
+      and your team)" section for the run-store overlay semantics and the "snapshot of local runs, not a shared
+      live team dashboard" caveats, rather than restating them.
+    rationale: >-
+      Read QUICKSTART.md: its "Visualize the work (for you and your team)" section (around lines 203-230)
+      already documents `ai-sdd graph` with `--project`, `--project --dashboard`, per-program `--dashboard`,
+      `--html`, and `--plant`, plus the honest caveats (local-runs snapshot, not a live team dashboard; CDN for
+      cross-repo plant). Duplicating that prose in README would create drift. README's distinct value is the
+      concrete FIXTURE-based, copy-pasteable showcase + the committed example output — so it shows the
+      modalities running against `docs/examples/demo-factory/` and links to QUICKSTART for the conceptual
+      how-to/caveats. Per memory "adopter-docs-focus-new-model", both docs stay new-model.
+  - id: committed-example-output-path-and-generator
+    status: closed
+    decision: >-
+      Commit exactly ONE example output: `docs/examples/demo-factory/expected/whole-repo-dashboard.html`,
+      generated by
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out docs/examples/demo-factory/expected/whole-repo-dashboard.html`.
+      The whole-repo project dashboard is the richest single modality (every `Feature ·` section + the
+      `Program · demo` section + inline-SVG charts in one page), so one snapshot covers the showcase without a
+      proliferation of files.
+    rationale: >-
+      Verified empirically with the release binary: this command produces a ~23 KB HTML page that is
+      byte-IDENTICAL across two consecutive runs (`diff` empty) and contains ZERO occurrences of an absolute
+      machine path (`grep -c /Users/215eight` → 0), so it is deterministic + portable and will reproduce
+      byte-stably on a fresh clone. Confirmed `ai-sdd graph --out` auto-creates the `expected/` parent
+      directory (tested with a nested `--out` path), so committing the snapshot needs no extra mkdir step. One
+      whole-repo snapshot (vs one per modality) keeps the fixture tight while still exercising the
+      features+program+charts surface the README highlights; the other modalities are shown via their commands
+      (and the program/feature/`--html` outputs were also verified abs-path-free).
+  - id: build-fixture-extends-with-guarded-snapshot
+    status: closed
+    decision: >-
+      Extend `docs/examples/demo-factory/build-fixture.sh` so that, AFTER regenerating the portable run state,
+      it also regenerates `expected/whole-repo-dashboard.html` via the whole-repo graph command — guarded by
+      `command -v ai-sdd` so the script still succeeds binary-free (it prints a one-line skip notice and exits
+      0 when `ai-sdd` is not on PATH). Update the header comment to describe the snapshot step. The standalone
+      `ai-sdd graph … --out expected/whole-repo-dashboard.html` command is also documented (in both READMEs) as
+      the direct regeneration path.
+    rationale: >-
+      Read build-fixture.sh: today it writes run.json + events/*.json with zero external dependencies and is
+      explicitly "deterministic + idempotent". Keeping the run-state regeneration binary-free preserves that
+      property and the prior slice's contract (the fixture must regenerate without the binary). Folding the
+      snapshot in behind a `command -v ai-sdd` guard gives a single "regenerate everything" entry point when
+      the binary is present, while degrading gracefully (skip + still exit 0) when it is not — so CI/clones
+      without `ai-sdd` on PATH still get correct run state. Editing build-fixture.sh and adding files under
+      `docs/examples/demo-factory/` is explicitly allowed for this showcase slice.
+  - id: html-snapshot-only-no-png
+    status: closed
+    decision: >-
+      Commit the HTML snapshot ONLY; do NOT add a PNG/image screenshot.
+    rationale: >-
+      A PNG would require headless-browser/image-rendering tooling not assumed in this environment and would be
+      a non-reproducible binary (defeating the "regenerable, deterministic, diffable" requirement). The
+      self-contained HTML page already embeds the inline-SVG charts and the dashboard layout, so it is both the
+      showcase artifact and a faithful visual snapshot, and it diffs cleanly in review. The slice brief
+      recommends HTML-snapshot-only unless a PNG is trivial — it is not.
+  - id: files-scope-tight
+    status: closed
+    decision: >-
+      The implementation may touch exactly four paths: `README.md`,
+      `docs/examples/demo-factory/expected/whole-repo-dashboard.html` (new),
+      `docs/examples/demo-factory/build-fixture.sh`, and `docs/examples/demo-factory/README.md`. NO `Sources/`,
+      NO `Tests/`, NO `QUICKSTART.md`, NO `.ai-sdd/` factory files.
+    rationale: >-
+      Docs/fixture-artifact-only slice. README.md carries the showcase; the `expected/…html` is the committed
+      example output; build-fixture.sh + the fixture README are the regeneration story (editing them under
+      `docs/examples/demo-factory/` is explicitly permitted for this showcase slice). Everything else is
+      out-of-scope: the engine/CLI/tests already shipped, and QUICKSTART is referenced, not edited.
+  - id: gitignore-allows-expected-snapshot
+    status: closed
+    decision: >-
+      The `expected/whole-repo-dashboard.html` snapshot commits without any `.gitignore` change or force-add;
+      no negation rule is needed.
+    rationale: >-
+      Per requirements Decision 4, `.gitignore` anchors the gitignored `runs/`/`artifacts/` patterns to the
+      repo-root `.ai-sdd`, so `docs/examples/demo-factory/**` (including a new `expected/` dir) is not ignored —
+      the committed fixture run state under `docs/examples/demo-factory/.ai-sdd/runs/` already proves files
+      under the fixture commit normally. The HTML lives under `docs/examples/`, well outside any ignore rule.
+files:
+  - README.md
+  - docs/examples/demo-factory/expected/whole-repo-dashboard.html
+  - docs/examples/demo-factory/build-fixture.sh
+  - docs/examples/demo-factory/README.md
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd
+  - ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out docs/examples/demo-factory/expected/whole-repo-dashboard.html
+  - ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard --out /tmp/program.html
+  - ai-sdd graph docs/examples/demo-factory/.ai-sdd/features/auth
+  - ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo
+  - ai-sdd graph docs/examples/demo-factory/.ai-sdd/features/auth --html --out /tmp/auth.html
+  - bash docs/examples/demo-factory/build-fixture.sh

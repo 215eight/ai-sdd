@@ -1,0 +1,37 @@
+summary: >-
+  Docs/fixture-artifact-only FINAL slice (readme-showcase). Added a self-contained
+  "## Visualizing the factory" section to the repo-root README.md, inserted after the intro and
+  before the legacy "## MVP Shape" section, with new-model framing only (no sdd/SDDCore/openspec/.sdd
+  references introduced). The section showcases every `ai-sdd graph` modality with copy-pasteable,
+  fixture-based commands against docs/examples/demo-factory/: single plain-Mermaid graph for a feature
+  (.../features/auth) and a program (.../programs/demo); the same via --html; the whole-repo project
+  dashboard (`.ai-sdd --project --dashboard --out ...`, features + the `Program · demo` section in one
+  page); the per-program dashboard (`.ai-sdd/programs/demo --dashboard --out ...`); and a one-line
+  --plant mention pointing at docs/examples/sdlc-plant (which carries its own plant.yaml). It links the
+  committed example output, describes it, states the regeneration path, and adds honest
+  self-containment wording mirroring QUICKSTART (charts are inline SVG; the Mermaid graph uses a CDN
+  ESM import — parity across tiers, not fully offline), cross-linking QUICKSTART's "Visualize the work"
+  rather than duplicating its caveats. Committed the regenerable snapshot
+  docs/examples/demo-factory/expected/whole-repo-dashboard.html, produced by
+  `ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out
+  docs/examples/demo-factory/expected/whole-repo-dashboard.html` from the current build — verified
+  byte-stable across runs and free of any absolute machine path. Extended
+  docs/examples/demo-factory/build-fixture.sh to also emit that snapshot after the binary-free
+  run-state regeneration, guarded so it prefers this checkout's own .build/debug/ai-sdd (then PATH
+  ai-sdd) and prints a skip notice + still exits 0 when no binary is resolvable; updated the script
+  header comment. Updated docs/examples/demo-factory/README.md to note the expected/ snapshot, its
+  tree location, and both regeneration paths (standalone graph command + build-fixture.sh when the
+  binary is present). NO Sources/, NO Tests/, NO QUICKSTART.md changes.
+satisfies:
+  - readme-showcase-section-exists
+  - every-modality-command-present-and-accurate
+  - committed-example-output-exists
+  - example-output-referenced-and-regen-documented
+  - build-fixture-emits-snapshot-guarded
+  - honest-self-contained-and-new-model-wording
+  - build-test-validate-green
+files:
+  - README.md
+  - docs/examples/demo-factory/expected/whole-repo-dashboard.html
+  - docs/examples/demo-factory/build-fixture.sh
+  - docs/examples/demo-factory/README.md
