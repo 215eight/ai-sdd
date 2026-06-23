@@ -673,10 +673,10 @@ struct Surface: ParsableCommand {
 // MARK: - drift
 
 /// `ai-sdd drift [<dir>]` — a read-only detector for the deterministic drift kinds of ADR-0033
-/// (Kinds 1+2; Kind 3 convention-citation is the next slice). It loads the factory home's schemas,
-/// committed structural checks, fixed fixtures and provenance, calls the pure `Drift` engine, and
-/// prints findings grouped by kind with each finding's remedy. Advisory exit (Dr2): `0` when clean,
-/// `1` when findings exist — never blocks a run; it writes nothing.
+/// (Kind 1 stale gate, Kind 2 fixture↔schema, Kind 3 convention-citation). It loads the factory
+/// home's schemas, committed structural checks, fixed fixtures, conventions and provenance, calls the
+/// pure `Drift` engine, and prints findings grouped by kind with each finding's remedy. Advisory exit
+/// (Dr2): `0` when clean, `1` when findings exist — never blocks a run; it writes nothing.
 struct DriftCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "drift",
@@ -746,12 +746,32 @@ struct DriftCommand: ParsableCommand {
             noteHandEdited(pair.fixture)
         }
 
+        // Kind 3 inputs: every `.ai-sdd/conventions/*.md` Discovery Record. The stack name is the
+        // file stem; the finding subject / hand-edited key is its repo-relative path.
+        let conventionsDir = home.appendingPathComponent(Layout.conventionsSubdir, isDirectory: true)
+        var conventions: [Drift.ConventionInput] = []
+        for file in (try? fm.contentsOfDirectory(at: conventionsDir, includingPropertiesForKeys: nil)) ?? []
+        where file.pathExtension == Layout.conventionExtension {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let stack = file.deletingPathExtension().lastPathComponent
+            let path = Layout.conventionSourcePath(stack: stack)
+            conventions.append(.init(path: path, stack: stack, text: text))
+            noteHandEdited(path)
+        }
+
+        // Real citation checks (DC4): existence is resolved under `repoRoot`; commands run there too.
+        let checks = Drift.CitationChecks(
+            pathExists: { FileManager.default.fileExists(atPath: repoRoot.appendingPathComponent($0).path) },
+            execute: CheckRunner.shell)
+
         let findings = try Drift.scan(
             schemas: schemas, committedChecks: committed,
-            fixtures: fixtures, handEditedPaths: handEditedPaths)
+            fixtures: fixtures, conventions: conventions,
+            repoRoot: repoRoot, checks: checks, handEditedPaths: handEditedPaths)
 
         guard !findings.isEmpty else {
-            print("✓ no drift — \(schemas.count) schema(s) reconciled, \(fixtures.count) fixture(s) valid")
+            print("✓ no drift — \(schemas.count) schema(s) reconciled, "
+                + "\(fixtures.count) fixture(s) valid, \(conventions.count) convention(s) grounded")
             return
         }
 

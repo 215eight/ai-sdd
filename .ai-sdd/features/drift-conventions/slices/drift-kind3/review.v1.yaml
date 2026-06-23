@@ -1,0 +1,91 @@
+schema: review.v1
+run: drift-conventions
+slice: drift-kind3
+
+summary: >-
+  Reviewed the drift-kind3 slice (Part 2 of drift-conventions) against feature-plan.v1
+  (AC-KIND3-CASE .. AC-GREEN; decisions DC1-DC5, all closed) by inspecting the real working-tree
+  diff vs HEAD, not the changeset prose. Exactly the four planned files changed
+  (Sources/AISDDEngine/Drift.swift, Sources/AISDDEngine/Layout.swift, Sources/AISDDCLI/main.swift,
+  Tests/AISDDEngineTests/EngineTests.swift). The new Kind-3 path is pure and deterministic: it does
+  only string parsing in-engine and routes every path-existence and command check through the
+  injected `Drift.CitationChecks` closures (`pathExists`, `execute` defaulting to `CheckRunner.shell`);
+  no FileManager/Process is called inside the pure scan, and no LLM/NLP judging exists anywhere. The
+  parser is heuristic-free — it keeps ONLY `path:`/`cmd:`-prefixed backticked tokens from each
+  Discovery-Record table row's Evidence cell, ignores all other vocabulary/prose, and skips rows with
+  zero typed tokens (DC1/DC3). DriftKind stays CaseIterable and the CLI renders the new kind through
+  the existing `DriftKind.allCases` loop; Kind 1's SchemaCompiler delegation and Kind 2 are untouched.
+  Layout was widened to `public` minimally (members stay internal unless marked) to expose only
+  convention path literals (DC5) — acceptable, no over-exposure. Ran all gates and the anchor myself:
+  swift build exit 0; swift test exit 0 (160 tests, 6 suites, incl. 4 new ConventionCitationDriftTests);
+  swift run ai-sdd validate .ai-sdd exit 0; swift run ai-sdd drift . exit 0 with output
+  "✓ no drift — 4 schema(s) reconciled, 3 fixture(s) valid, 1 convention(s) grounded" — no
+  convention-citation findings on the real swift.md (17 typed citations re-checked and intact).
+  git status shows only the four planned files modified.
+
+items:
+  - id: AC-KIND3-CASE
+    verdict: pass
+    notes: >-
+      Drift.swift adds `case conventionCitation = "convention-citation"` to the DriftKind enum (still
+      `Equatable, Sendable, CaseIterable`), ordered after `.fixtureSchema`. The CLI's grouped output
+      loops `DriftKind.allCases`, so the new kind renders with no new render branch. Kind 1's
+      `SchemaCompiler` delegation and Kind 2's fixtureFindings are untouched.
+  - id: AC-CONVENTION-INPUT-PURE
+    verdict: pass
+    notes: >-
+      `Drift.ConventionInput` (Equatable, Sendable) carries repo-relative `path`, `stack`, and raw
+      `text`. The pure `conventionFindings`/`typedCitations`/`backtickedTokens` path does only string
+      work and routes EVERY existence/command check through the injected `Drift.CitationChecks`
+      closures (`pathExists: @Sendable (String)->Bool`, `execute: @Sendable (String,URL)->(Int32,String)`,
+      `execute` defaulting to `CheckRunner.shell`). The pure scan reads no disk and launches no process
+      itself. New `scan` params (`conventions`, `repoRoot`, `checks`) are DEFAULTED so existing callers
+      and Kind 1/2 tests are undisturbed. No LLM/NLP anywhere.
+  - id: AC-BROKEN-CITATION-FLAGGED
+    verdict: pass
+    notes: >-
+      `brokenCitationsAreFlagged` uses a temp-fixture convention with `path:Missing/Gone.swift` (stub
+      reports absent) and `cmd:swift build` (stub exits non-zero) via injected `CitationChecks`: yields
+      2 `conventionCitation` findings, each `subject == convention.path`, `remedy == "re-bootstrap
+      swift"`, with `detail`s naming the broken path and command. Verified passing via swift test.
+  - id: AC-INTACT-CITATIONS-CLEAN
+    verdict: pass
+    notes: >-
+      `intactCitationsAreClean`: `path:Package.swift` present + `cmd:swift build` exits 0 (injected
+      stubs, no disk/shell) ⇒ zero `conventionCitation` findings. Verified passing.
+  - id: AC-OPEN-GAP-SKIPPED
+    verdict: pass
+    notes: >-
+      `openGapRowIsSkipped`: a Discovery-Record row whose Evidence cell holds only unprefixed
+      backticked vocabulary (`@Test`, `swiftlint`) and prose yields zero typed tokens and is skipped
+      (DC3). The parser keeps ONLY `path:`/`cmd:`-prefixed tokens, so the skip keys purely off
+      zero typed tokens with no heuristic. Verified passing.
+  - id: AC-DETERMINISTIC-ADVISORY-PROVENANCE
+    verdict: pass
+    notes: >-
+      Flagging is deterministic citation breakage only (no model invoked). `handEditedConventionIsAnnotated`
+      confirms the existing `handEditedPaths` provenance path annotates the finding (true when the
+      convention path is noted, false otherwise). Ordering is deterministic (conventions by path,
+      citations in source row/token order). The CLI's advisory exit is unchanged (0 clean / 1 on
+      findings) — the new convention loop only appends findings and the clean-summary line.
+  - id: AC-CORRECTNESS-ANCHOR
+    verdict: pass
+    notes: >-
+      Ran `swift run ai-sdd drift .` myself → exit 0, output:
+      "✓ no drift — 4 schema(s) reconciled, 3 fixture(s) valid, 1 convention(s) grounded". No
+      convention-citation findings. Confirmed the real .ai-sdd/conventions/swift.md carries 17 typed
+      citations in Discovery-Record rows (incl. a live `cmd:swift build` and `path:Package.swift`,
+      `path:Package.resolved`, etc.), all re-checked and intact — so the anchor genuinely exercised
+      the Kind-3 path. The `` `path:<repo-relative-path>` `` / `` `cmd:<command>` `` grammar
+      placeholders are prose bullets (lines starting `-`, not table rows starting `|`) and are
+      correctly ignored by the parser.
+  - id: AC-GREEN
+    verdict: pass
+    notes: >-
+      Ran all gates myself: `swift build` exit 0; `swift test` exit 0 (160 tests in 6 suites,
+      including the 4 new ConventionCitationDriftTests); `swift run ai-sdd validate .ai-sdd` exit 0
+      ("✓ ai-sdd-feature: valid — 3 nodes, 3 edges, 4 workers, 8 checks"). `git status` shows ONLY
+      the 4 planned in-scope files modified (Drift.swift, Layout.swift, main.swift, EngineTests.swift).
+
+verdict: approve
+rework: []

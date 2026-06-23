@@ -1,8 +1,9 @@
 import Foundation
 
 /// The tool's on-disk names, defined in exactly one place so no path literal is repeated.
-/// The `*Layout` structs below turn these into concrete `URL`s.
-enum Layout {
+/// The `*Layout` structs below turn these into concrete `URL`s. The enum is `public` so the CLI can
+/// share centralized path literals (per the conventions); members stay internal unless marked `public`.
+public enum Layout {
     static let homeDir = ".ai-sdd"
     static let runsDir = "runs"
     static let artifactsDir = "artifacts"
@@ -137,6 +138,22 @@ enum Layout {
     /// The repo-relative source path of a committed check: `.ai-sdd/checks/<checkName>.check.yaml`.
     static func checkSourcePath(checkName: String) -> String {
         "\(homeDir)/\(Workspace.checksDir)/\(checkName)\(Workspace.checkSuffix)"
+    }
+
+    /// The conventions subdir name (`conventions`), re-exported `public` for the CLI's directory glob.
+    public static let conventionsSubdir = Workspace.conventionsDir
+
+    /// The repo-relative conventions dir: `.ai-sdd/conventions`. The CLI globs `*.md` here for the
+    /// per-stack Discovery Records drift's Kind 3 re-checks.
+    public static let conventionsDirPath = "\(homeDir)/\(Workspace.conventionsDir)"
+
+    /// A convention file's markdown extension. A convention is `.ai-sdd/conventions/<stack>.md`, whose
+    /// stem (`<stack>`) is the stack name carried in a Kind-3 finding's `re-bootstrap <stack>` remedy.
+    public static let conventionExtension = "md"
+
+    /// The repo-relative path of a stack's convention file: `.ai-sdd/conventions/<stack>.md`.
+    public static func conventionSourcePath(stack: String) -> String {
+        "\(conventionsDirPath)/\(stack).\(conventionExtension)"
     }
 }
 

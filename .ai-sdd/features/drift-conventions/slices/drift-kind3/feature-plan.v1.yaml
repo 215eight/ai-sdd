@@ -1,0 +1,194 @@
+summary: >-
+  Part 2 of feature `drift-conventions` (slice `drift-kind3`, `depends_on: typed-evidence-schema`):
+  implement the third deterministic drift kind — `conventionCitation` ("convention-citation") — over the
+  typed evidence schema Part 1 introduced. Additive and orthogonal to Kinds 1+2 (it does not disturb
+  Kind 1's recent delegation to `SchemaCompiler`). The engine (`Sources/AISDDEngine/Drift.swift`) gains a
+  new `CaseIterable` `DriftKind` case `conventionCitation = "convention-citation"`, a
+  `Drift.ConventionInput` carrying a convention's repo-relative path, its stack name, and the RAW
+  Discovery-Record markdown, and a `Drift.scan(...)` extension that parses each convention's typed
+  citations (pure string work) and re-checks them through INJECTED closures so the engine stays pure: a
+  `pathExists: @Sendable (String) -> Bool` for `path:` tokens and an
+  `execute: @Sendable (String, URL) -> (Int32, String)` (the exact `CheckRunner.execute` shape, default
+  `CheckRunner.shell`) for `cmd:` tokens. Parsing is heuristic-free (DC1): split the Discovery Record
+  table rows, take the Evidence cell, collect backticked tokens, keep ONLY those whose content begins
+  with `path:` or `cmd:`, strip the prefix; a row with zero typed tokens is SKIPPED (DC3). Checking
+  (DC2): a `path:` token whose path does not exist, or a `cmd:` token that exits non-zero, is a broken
+  citation ⇒ a `conventionCitation` `DriftFinding` whose `subject` is the convention's repo-relative
+  path, `detail` names the broken citation, `remedy` is `re-bootstrap <stack>`, with the provenance
+  `handEdited` annotation applied the same way Kinds 1+2 do. Findings are deterministically ordered
+  (grouped after Kinds 1+2; convention path order, then citation order within a file). The CLI
+  `DriftCommand` (`Sources/AISDDCLI/main.swift`) loads every `.ai-sdd/conventions/*.md`, builds
+  `ConventionInput`s, notes each via the existing `noteHandEdited`, passes them into `Drift.scan` with
+  real `FileManager`/shell closures, and renders the new kind through the existing
+  `DriftKind.allCases` grouped output. Exit stays advisory (0 clean / 1 on findings). After this slice
+  `swift run ai-sdd drift .` reports NO `convention-citation` findings on the real converted
+  `.ai-sdd/conventions/swift.md` (the repo stays reconciled).
+
+scope:
+  in:
+    - >-
+      Add `case conventionCitation = "convention-citation"` to the `CaseIterable` `DriftKind` enum in
+      `Sources/AISDDEngine/Drift.swift`.
+    - >-
+      Add `Drift.ConventionInput` (repo-relative `path`, `stack` name, and the RAW Discovery-Record
+      markdown `text`) and extend `Drift.scan(...)` with a `conventions` parameter (defaulted to empty so
+      existing callers/tests are undisturbed) plus injected `pathExists` and `execute` closures (the
+      `CheckRunner.execute` shape, default `CheckRunner.shell`).
+    - >-
+      Parse the Discovery Record deterministically (DC1): for each convention, split the markdown into
+      table rows, take the Evidence cell, collect backticked tokens, keep ONLY tokens beginning with
+      `path:` or `cmd:`, strip the prefix. A row with zero typed tokens is skipped (DC3). No NLP / no
+      heuristics.
+    - >-
+      Check each token (DC2): `path:` → `pathExists`; `cmd:` → `execute` and require exit 0. A broken
+      citation emits a `conventionCitation` `DriftFinding{ subject: <conventionPath>, detail: <which
+      citation broke>, remedy: "re-bootstrap <stack>", handEdited }`. Deterministic ordering (conventions
+      by path, citations in source order); grouped after Kinds 1+2.
+    - >-
+      Wire the CLI `DriftCommand` in `Sources/AISDDCLI/main.swift`: load every `.ai-sdd/conventions/*.md`,
+      build `ConventionInput`s, call `noteHandEdited` on each convention path, pass them into `Drift.scan`
+      with real `FileManager`-backed `pathExists` and `CheckRunner.shell` `execute`; the existing
+      `DriftKind.allCases` loop renders the new kind with no new render code path.
+    - >-
+      Add a `Layout` helper for the convention-file repo-relative path literal
+      (`.ai-sdd/conventions/<stack>.md`, built on the existing `Workspace.conventionsDir`) if the CLI
+      needs a fixed path/dir string — keep path literals centralized in `Layout.swift` per conventions.
+    - >-
+      Tests in `Tests/AISDDEngineTests/EngineTests.swift` (Swift Testing) over temp fixtures with injected
+      stub closures (no shelling out): the four cases listed in `tests`.
+  out:
+    - >-
+      Any change to Kind 1 (`staleGate`) or Kind 2 (`fixtureSchema`) behavior, or to Kind 1's delegation
+      to `SchemaCompiler` — Kind 3 is purely additive and orthogonal.
+    - >-
+      LLM / NLP judging of convention-vs-code. Flagging is via deterministic citation breakage ONLY
+      (path missing / command non-zero); no model is invoked.
+    - >-
+      Auto-fixing or auto-re-bootstrapping — drift only reports and names the `re-bootstrap <stack>`
+      remedy.
+    - >-
+      Making drift blocking — exit stays advisory (0 clean / 1 on findings), matching Kinds 1+2.
+    - >-
+      Re-checking commit-SHA / other prose evidence (DC2) — only `path:` and `cmd:` typed tokens are
+      checked; everything else is ignored.
+    - >-
+      The typed evidence SCHEMA, the bootstrap skill copies, and the `swift.md` conversion — those shipped
+      in Part 1 (`typed-evidence-schema`) and are not re-touched here.
+    - >-
+      Other stacks' convention files — only `swift.md` exists today; the CLI globs `*.md` generically.
+
+acceptance:
+  - id: AC-KIND3-CASE
+    description: >-
+      `Sources/AISDDEngine/Drift.swift` defines a third `DriftKind` case `conventionCitation` with raw
+      value `convention-citation`, and the enum remains `CaseIterable` so the CLI's
+      `DriftKind.allCases` grouped output renders it with no new render branch.
+  - id: AC-CONVENTION-INPUT-PURE
+    description: >-
+      `Drift.ConventionInput` carries the convention's repo-relative path, its stack name, and the raw
+      Discovery-Record markdown; `Drift.scan` parses the typed citations as pure string work and performs
+      ALL path-existence and command checks through injected closures (`pathExists` and an
+      `execute: @Sendable (String, URL) -> (Int32, String)` defaulting to `CheckRunner.shell`) — the pure
+      scan reads no disk and shells out to nothing itself.
+  - id: AC-BROKEN-CITATION-FLAGGED
+    description: >-
+      A temp-fixture convention with a missing cited `path:` AND a failing cited `cmd:` (injected stub
+      closures report the path absent and the command non-zero) yields `conventionCitation`
+      `DriftFinding`(s) whose `subject` is the convention path, whose `detail` names the broken
+      citation(s), and whose `remedy` is `re-bootstrap <stack>`.
+  - id: AC-INTACT-CITATIONS-CLEAN
+    description: >-
+      A temp-fixture convention whose every typed citation holds (injected `pathExists` true for each
+      `path:`, injected `execute` exits 0 for each `cmd:`) produces no `conventionCitation` finding.
+  - id: AC-OPEN-GAP-SKIPPED
+    description: >-
+      A temp-fixture Discovery-Record row whose Evidence cell carries zero typed tokens (an open-gap /
+      no-`path:`/`cmd:` row, e.g. a backticked token without a `path:`/`cmd:` prefix) is skipped, never
+      flagged (DC3, keyed purely off zero typed tokens).
+  - id: AC-DETERMINISTIC-ADVISORY-PROVENANCE
+    description: >-
+      Kind 3 invokes no model (flagging is citation breakage only), annotates a finding on a hand-edited
+      convention via the existing `noteHandEdited` / `handEditedPaths` provenance path, and never changes
+      the advisory exit (0 clean / 1 on findings).
+  - id: AC-CORRECTNESS-ANCHOR
+    description: >-
+      `swift run ai-sdd drift .` reports NO `convention-citation` findings on the real converted
+      `.ai-sdd/conventions/swift.md` (every `path:` token's file exists and every `cmd:` token exits 0;
+      the repo stays reconciled).
+  - id: AC-GREEN
+    description: >-
+      `swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` are green.
+
+decisions:
+  - id: DC1
+    question: How are typed citations parsed out of the Discovery Record (heuristic-free)?
+    decision: >-
+      Pure deterministic string work in the engine over the raw Discovery-Record markdown: split into
+      table rows, take each row's Evidence cell, collect every backtick-quoted token, and keep ONLY
+      tokens whose content begins with a known prefix immediately followed by content — `path:` then a
+      repo-relative path, or `cmd:` then a shell command — stripping the prefix to yield the citation.
+      Every other backticked token (convention vocabulary like `@Test`, `swiftlint`) and all prose is
+      ignored. No NLP, no heuristics. This matches the typed format Part 1 wrote into `swift.md`.
+    status: closed
+  - id: DC2
+    question: Which citations are checked, and what counts as broken?
+    decision: >-
+      Exactly two prefixes. A `path:` citation is broken when its repo-relative path does not exist
+      (checked via the injected `pathExists` closure). A `cmd:` citation is broken when the injected
+      `execute` closure returns a non-zero exit code. Commit SHAs and any other prose are not typed
+      citations and are never checked. Each broken citation produces one `conventionCitation`
+      `DriftFinding`.
+    status: closed
+  - id: DC3
+    question: How is a "no checkable citation" row treated?
+    decision: >-
+      A Discovery-Record row whose Evidence cell yields zero typed tokens has nothing to verify and is
+      SKIPPED — never flagged. The skip keys purely off "zero typed tokens" (no heuristic), so open-gap
+      rows (which carry no `path:`/`cmd:` token) never produce a finding.
+    status: closed
+  - id: DC4
+    question: How does the engine stay pure while running real existence/command checks?
+    decision: >-
+      The engine performs no disk reads and no process launches inside `scan`. `Drift.ConventionInput`
+      carries the raw markdown (pure string parsing happens in-engine), and existence + command checks
+      are INJECTED closures: `pathExists: @Sendable (String) -> Bool` and
+      `execute: @Sendable (String, URL) -> (Int32, String)` (the exact `CheckRunner.execute` shape,
+      defaulting to `CheckRunner.shell`). Tests inject stubs (no shelling out); the CLI provides real
+      `FileManager`-backed existence and `CheckRunner.shell`. Findings are deterministically ordered
+      (conventions by path, citations in source order) and grouped after Kinds 1+2. The
+      `conventions`/closure parameters are defaulted so existing `Drift.scan` callers and Kind 1+2 tests
+      are undisturbed, and Kind 1's `SchemaCompiler` delegation is untouched.
+    status: closed
+  - id: DC5
+    question: Where does the convention-file path literal live?
+    decision: >-
+      Centralized in `Layout.swift` per conventions (which already holds `Workspace.conventionsDir`). If
+      the CLI needs a fixed `.ai-sdd/conventions/<stack>.md` repo-relative string (for `subject` /
+      `noteHandEdited`), add a small `Layout` helper built on `Workspace.conventionsDir` rather than an
+      inline string; the convention's stack name is its filename stem.
+    status: closed
+
+files:
+  - Sources/AISDDEngine/Drift.swift
+  - Sources/AISDDCLI/main.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+
+tests:
+  - >-
+    Swift Testing (`Tests/AISDDEngineTests/EngineTests.swift`): a temp-fixture convention with a missing
+    cited `path:` AND a failing cited `cmd:` (injected stub closures: path absent, command non-zero)
+    yields `conventionCitation` finding(s) with `subject` = the convention path and `remedy` =
+    `re-bootstrap <stack>`.
+  - >-
+    Swift Testing: a temp-fixture convention whose every typed citation holds (injected `pathExists`
+    true, injected `execute` exits 0) produces no `conventionCitation` finding.
+  - >-
+    Swift Testing: a temp-fixture Discovery-Record row with zero typed tokens (open-gap / no
+    `path:`/`cmd:` prefix) is skipped, not flagged (DC3).
+  - >-
+    Correctness anchor: `swift run ai-sdd drift .` reports no `convention-citation` findings on the real
+    converted `.ai-sdd/conventions/swift.md`.
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd

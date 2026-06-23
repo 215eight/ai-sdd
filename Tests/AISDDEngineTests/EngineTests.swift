@@ -2726,3 +2726,90 @@ struct DriftTests {
         #expect(findings.map(\.kind) == [.staleGate, .fixtureSchema])
     }
 }
+
+// MARK: - Drift Kind 3 (ADR-0033 convention ↔ code citation)
+
+struct ConventionCitationDriftTests {
+    /// A minimal Discovery-Record markdown with one evidence row, parameterized by the Evidence cell.
+    private func conventionMarkdown(evidence: String) -> String {
+        """
+        # Conventions
+
+        ## Discovery Record
+
+        | Change type | Evidence | Convention | Status |
+        |---|---|---|---|
+        | Build | \(evidence) | Use SwiftPM. | confirmed |
+        """
+    }
+
+    private func conventionInput(evidence: String, stack: String = "swift") -> Drift.ConventionInput {
+        .init(path: Layout.conventionSourcePath(stack: stack), stack: stack,
+              text: conventionMarkdown(evidence: evidence))
+    }
+
+    /// Inject stub checks (no disk, no shell): `path:` existence and `cmd:` exit are table-driven.
+    private func checks(
+        present: Set<String> = [],
+        failingCommands: Set<String> = []
+    ) -> Drift.CitationChecks {
+        .init(
+            pathExists: { present.contains($0) },
+            execute: { command, _ in failingCommands.contains(command) ? (1, "") : (0, "") })
+    }
+
+    // AC-BROKEN-CITATION-FLAGGED: a missing cited `path:` AND a failing cited `cmd:` each yield a
+    // `conventionCitation` finding whose subject is the convention path and remedy is `re-bootstrap <stack>`.
+    @Test func brokenCitationsAreFlagged() throws {
+        let convention = conventionInput(
+            evidence: "`path:Missing/Gone.swift`; `cmd:swift build`")
+        let findings = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: [],
+            conventions: [convention],
+            checks: checks(present: [], failingCommands: ["swift build"]))
+        #expect(findings.count == 2)
+        #expect(findings.allSatisfy { $0.kind == .conventionCitation })
+        #expect(findings.allSatisfy { $0.subject == convention.path })
+        #expect(findings.allSatisfy { $0.remedy == "re-bootstrap swift" })
+        #expect(findings.contains { $0.detail.contains("Missing/Gone.swift") })
+        #expect(findings.contains { $0.detail.contains("swift build") })
+    }
+
+    // AC-INTACT-CITATIONS-CLEAN: every typed citation holding (path present, command exits 0) ⇒ no finding.
+    @Test func intactCitationsAreClean() throws {
+        let convention = conventionInput(
+            evidence: "`path:Package.swift`; `cmd:swift build`")
+        let findings = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: [],
+            conventions: [convention],
+            checks: checks(present: ["Package.swift"], failingCommands: []))
+        #expect(findings.isEmpty, "all typed citations hold ⇒ no convention-citation finding")
+    }
+
+    // AC-OPEN-GAP-SKIPPED: a row whose Evidence cell carries zero typed tokens (only unprefixed
+    // backticked vocabulary / prose) is skipped, never flagged (DC3).
+    @Test func openGapRowIsSkipped() throws {
+        let convention = conventionInput(
+            evidence: "`@Test` and `swiftlint`; no path or command found")
+        let findings = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: [],
+            conventions: [convention],
+            checks: checks(present: [], failingCommands: []))
+        #expect(findings.isEmpty, "a row with zero path:/cmd: tokens has nothing to verify")
+    }
+
+    // AC-DETERMINISTIC-ADVISORY-PROVENANCE: a hand-edited convention's finding carries the annotation.
+    @Test func handEditedConventionIsAnnotated() throws {
+        let convention = conventionInput(evidence: "`path:Missing/Gone.swift`")
+        let annotated = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: [],
+            conventions: [convention], checks: checks(present: []),
+            handEditedPaths: [convention.path])
+        #expect(annotated.first?.handEdited == true)
+
+        let plain = try Drift.scan(
+            schemas: [], committedChecks: [], fixtures: [],
+            conventions: [convention], checks: checks(present: []))
+        #expect(plain.first?.handEdited == false)
+    }
+}

@@ -1,0 +1,60 @@
+summary: >-
+  Implemented drift Kind 3 (`conventionCitation` = "convention-citation"), additive and orthogonal to
+  Kinds 1+2 (Kind 1's SchemaCompiler delegation untouched).
+
+  Engine (`Sources/AISDDEngine/Drift.swift`): added `case conventionCitation = "convention-citation"`
+  to the CaseIterable `DriftKind` enum, ordered after `.fixtureSchema`. Added `Drift.ConventionInput`
+  (Equatable, Sendable: repo-relative `path`, `stack` name, RAW Discovery-Record `text`) and
+  `Drift.CitationChecks` (a small Sendable struct bundling the injected
+  `pathExists: @Sendable (String) -> Bool` and `execute: @Sendable (String, URL) -> (Int32, String)`
+  closures; `execute` defaults to `CheckRunner.shell`). Extended `Drift.scan` with NEW DEFAULTED params
+  `conventions: [ConventionInput] = []`, `repoRoot: URL = .`, `checks: CitationChecks = …`, so existing
+  callers and Kind 1/2 tests are undisturbed. Added pure-string parser `typedCitations(in:)` +
+  `backtickedTokens(in:)`: split markdown into table rows, take the Evidence cell (column 2, skipping
+  the header separator row), collect backticked tokens, keep ONLY `path:`/`cmd:`-prefixed tokens (prefix
+  stripped) — purely prefix-based, no heuristics; rows with zero typed tokens are skipped (DC3).
+  `conventionFindings(...)` re-checks each citation through the injected closures (path missing ⇒
+  "missing path: X"; command exit != 0 ⇒ "command failed: Y"), emitting
+  `DriftFinding(kind: .conventionCitation, subject: <convention path>, detail, remedy: "re-bootstrap
+  <stack>", handEdited)` with deterministic ordering (conventions by path, citations in source order),
+  appended after Kind 2. The pure scan reads no disk and launches no process itself.
+
+  Layout (`Sources/AISDDEngine/Layout.swift`): made `enum Layout` public (members stay internal unless
+  marked) and added public `conventionsSubdir`, `conventionsDirPath`, `conventionExtension`, and
+  `conventionSourcePath(stack:)` so the CLI shares the centralized convention path literals (DC5).
+
+  CLI (`Sources/AISDDCLI/main.swift` `DriftCommand`): loads every `.ai-sdd/conventions/*.md`, builds a
+  `ConventionInput` per file (stack = filename stem, path = `Layout.conventionSourcePath`), calls
+  `noteHandEdited` on each, and passes `conventions:`, `repoRoot:` and a real `CitationChecks`
+  (`FileManager` existence resolved under repoRoot; `CheckRunner.shell` for commands) into `Drift.scan`.
+  The existing `DriftKind.allCases` grouped output renders the new kind with no new render branch. The
+  "✓ no drift …" summary line now also reports conventions count
+  ("N schema(s) reconciled, N fixture(s) valid, N convention(s) grounded"). Advisory exit unchanged.
+
+  Tests (`Tests/AISDDEngineTests/EngineTests.swift`): new `ConventionCitationDriftTests` suite over
+  in-memory fixtures with injected stub closures (no disk, no shelling out): broken-citation flagged
+  (missing path: + failing cmd: ⇒ 2 findings, subject = convention path, remedy "re-bootstrap swift"),
+  intact-citations clean, open-gap row skipped, and a hand-edited provenance annotation case. Existing
+  Kind 1/2 DriftTests untouched and passing.
+
+  Gate results (all green):
+  - `swift build` → exit 0.
+  - `swift test` → 160 tests in 6 suites passed (incl. new ConventionCitationDriftTests + existing
+    DriftTests).
+  - `swift run ai-sdd validate .ai-sdd` → exit 0 (✓ ai-sdd-feature: valid).
+  - CORRECTNESS ANCHOR `swift run ai-sdd drift .` → exit 0:
+    "✓ no drift — 4 schema(s) reconciled, 3 fixture(s) valid, 1 convention(s) grounded"
+    (NO convention-citation findings on the real `.ai-sdd/conventions/swift.md`; the `cmd:swift build`
+    citation ran and exited 0).
+  - `git status` shows ONLY the planned in-scope files changed: Sources/AISDDEngine/Drift.swift,
+    Sources/AISDDEngine/Layout.swift, Sources/AISDDCLI/main.swift, Tests/AISDDEngineTests/EngineTests.swift.
+
+satisfies:
+  - AC-KIND3-CASE
+  - AC-CONVENTION-INPUT-PURE
+  - AC-BROKEN-CITATION-FLAGGED
+  - AC-INTACT-CITATIONS-CLEAN
+  - AC-OPEN-GAP-SKIPPED
+  - AC-DETERMINISTIC-ADVISORY-PROVENANCE
+  - AC-CORRECTNESS-ANCHOR
+  - AC-GREEN

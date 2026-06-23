@@ -1,14 +1,16 @@
 import Foundation
 import AISDDModels
 
-/// The kind of drift a finding reports — the deterministic kinds of ADR-0033 this slice ships.
-/// Kind 3 (convention↔code citation) is the next slice (`drift-conventions`) and is not modeled here.
+/// The kind of drift a finding reports — the deterministic kinds of ADR-0033.
 public enum DriftKind: String, Equatable, Sendable, CaseIterable {
     /// A committed Tier-1 structural check no longer matches the template its schema reconstructs to
     /// (or is missing / orphaned). Remedy: recompile the schema's gates.
     case staleGate = "stale-gate"
     /// A committed fixture no longer validates against its current schema. Remedy: fix the fixture.
     case fixtureSchema = "fixture-schema"
+    /// A typed citation in a convention's Discovery Record no longer holds — a cited `path:` no longer
+    /// exists, or a cited `cmd:` no longer exits 0. Remedy: re-bootstrap the stack's conventions.
+    case conventionCitation = "convention-citation"
 }
 
 /// One drift finding: which kind, the subject it concerns (a repo-relative path or schema name), the
@@ -78,6 +80,21 @@ public enum Drift {
         }
     }
 
+    /// A convention file for Kind 3: its repo-relative `path` (the finding `subject`), the `stack`
+    /// name (the finding remedy's `re-bootstrap <stack>`), and the RAW Discovery-Record markdown
+    /// `text`. The engine parses the typed citations out of `text` as pure string work and re-checks
+    /// them through injected closures — it reads no disk and launches no process itself.
+    public struct ConventionInput: Equatable, Sendable {
+        public var path: String
+        public var stack: String
+        public var text: String
+        public init(path: String, stack: String, text: String) {
+            self.path = path
+            self.stack = stack
+            self.text = text
+        }
+    }
+
     /// The expected structural `CheckSpec` for a schema, computed by delegating to the engine's single
     /// source of truth — `SchemaCompiler.structuralCheck(_:name:version:)` — rather than a private
     /// copy of the Tier-1 template. `Drift` works off `SchemaInput` (name/version/format), so it builds
@@ -106,10 +123,31 @@ public enum Drift {
     ///   on-disk bytes (supplied via `handEditedPaths`) carries the annotation.
     /// - `handEditedPaths`: the set of repo-relative subject paths the CLI has classified as
     ///   `hand-edited` (the CLI does the disk read; the engine stays pure over the resolved set).
+    /// The injected real-world checks Kind 3 uses to keep the pure scan off disk and off the process
+    /// table (DC4): `pathExists` resolves a `path:` citation's existence (relative to `repoRoot`) and
+    /// `execute` runs a `cmd:` citation in `repoRoot` (the exact `CheckRunner.execute` shape). The
+    /// defaults wire real `FileManager`/`CheckRunner.shell` behavior so the CLI need not pass them;
+    /// tests inject stubs so they never touch disk or shell out.
+    public struct CitationChecks: Sendable {
+        public var pathExists: @Sendable (_ repoRelativePath: String) -> Bool
+        public var execute: @Sendable (_ command: String, _ cwd: URL) -> (Int32, String)
+        public init(
+            pathExists: @escaping @Sendable (_ repoRelativePath: String) -> Bool,
+            execute: @escaping @Sendable (_ command: String, _ cwd: URL) -> (Int32, String) = CheckRunner.shell
+        ) {
+            self.pathExists = pathExists
+            self.execute = execute
+        }
+    }
+
     public static func scan(
         schemas: [SchemaInput],
         committedChecks: [CommittedCheck],
         fixtures: [FixtureInput],
+        conventions: [ConventionInput] = [],
+        repoRoot: URL = URL(fileURLWithPath: "."),
+        checks: CitationChecks = CitationChecks(
+            pathExists: { FileManager.default.fileExists(atPath: $0) }),
         handEditedPaths: Set<String> = []
     ) throws -> [DriftFinding] {
         var findings: [DriftFinding] = []
@@ -117,6 +155,9 @@ public enum Drift {
             schemas: schemas, committedChecks: committedChecks, handEditedPaths: handEditedPaths))
         findings.append(contentsOf: try fixtureFindings(
             fixtures: fixtures, handEditedPaths: handEditedPaths))
+        findings.append(contentsOf: conventionFindings(
+            conventions: conventions, repoRoot: repoRoot, checks: checks,
+            handEditedPaths: handEditedPaths))
         return findings
     }
 
@@ -186,5 +227,101 @@ public enum Drift {
                 handEdited: handEditedPaths.contains(fixture.path)))
         }
         return findings
+    }
+
+    // MARK: - Kind 3: convention ↔ code citation
+
+    /// A typed citation parsed out of a Discovery-Record Evidence cell: either a `path:` (existence)
+    /// or a `cmd:` (exit-0) check. The `value` has the prefix stripped.
+    private enum Citation {
+        case path(String)
+        case command(String)
+    }
+
+    /// Re-check every typed citation in each convention's Discovery Record (DC1–DC3). For a
+    /// convention's raw markdown: split into table rows, take each row's Evidence cell, collect the
+    /// backticked tokens, keep ONLY those beginning with `path:` or `cmd:` (strip the prefix). A row
+    /// with zero typed tokens is skipped (DC3 — open-gap rows carry no typed token). A `path:` whose
+    /// path does not exist, or a `cmd:` that exits non-zero, is a broken citation ⇒ one finding.
+    /// Deterministic: conventions by path, citations in source (row, then token) order.
+    private static func conventionFindings(
+        conventions: [Drift.ConventionInput],
+        repoRoot: URL,
+        checks: Drift.CitationChecks,
+        handEditedPaths: Set<String>
+    ) -> [DriftFinding] {
+        var findings: [DriftFinding] = []
+        for convention in conventions.sorted(by: { $0.path < $1.path }) {
+            let handEdited = handEditedPaths.contains(convention.path)
+            for citation in typedCitations(in: convention.text) {
+                switch citation {
+                case .path(let path):
+                    guard !checks.pathExists(path) else { continue }
+                    findings.append(.init(
+                        kind: .conventionCitation, subject: convention.path,
+                        detail: "missing path: \(path)",
+                        remedy: "re-bootstrap \(convention.stack)", handEdited: handEdited))
+                case .command(let command):
+                    let (code, _) = checks.execute(command, repoRoot)
+                    guard code != 0 else { continue }
+                    findings.append(.init(
+                        kind: .conventionCitation, subject: convention.path,
+                        detail: "command failed: \(command)",
+                        remedy: "re-bootstrap \(convention.stack)", handEdited: handEdited))
+                }
+            }
+        }
+        return findings
+    }
+
+    /// Parse the typed citations out of raw Discovery-Record markdown, in source order. Pure string
+    /// work: scan every markdown table row (a line whose trimmed form starts with `|`), take the
+    /// Evidence cell (the 2nd pipe-delimited column), collect every backtick-quoted token, and keep
+    /// ONLY tokens whose content begins with `path:` or `cmd:` (stripping the prefix). No heuristics —
+    /// purely prefix-based, so vocabulary like `@Test` / `swiftlint` and all prose are ignored.
+    private static func typedCitations(in markdown: String) -> [Citation] {
+        var citations: [Citation] = []
+        for rawLine in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("|") else { continue }
+            // Pipe-delimited columns; drop the empty leading/trailing fields from the border pipes.
+            let cells = line.split(separator: "|", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            // Columns: [<empty>, Change type, Evidence, Convention, Status, <empty>]. Evidence is index 2.
+            guard cells.count > 2 else { continue }
+            let evidence = cells[2]
+            // Skip the header separator row (e.g. `|---|---|---|---|`).
+            if evidence.allSatisfy({ $0 == "-" || $0 == ":" }) { continue }
+            for token in backtickedTokens(in: evidence) {
+                if token.hasPrefix("path:") {
+                    let value = String(token.dropFirst("path:".count))
+                    if !value.isEmpty { citations.append(.path(value)) }
+                } else if token.hasPrefix("cmd:") {
+                    let value = String(token.dropFirst("cmd:".count))
+                    if !value.isEmpty { citations.append(.command(value)) }
+                }
+            }
+        }
+        return citations
+    }
+
+    /// Collect the contents of every backtick-quoted token in a cell, in source order. A token is the
+    /// text between a pair of single backticks; unpaired trailing backticks are ignored.
+    private static func backtickedTokens(in cell: String) -> [String] {
+        var tokens: [String] = []
+        var current: String?
+        for character in cell {
+            if character == "`" {
+                if let token = current {
+                    tokens.append(token)
+                    current = nil
+                } else {
+                    current = ""
+                }
+            } else if current != nil {
+                current?.append(character)
+            }
+        }
+        return tokens
     }
 }
