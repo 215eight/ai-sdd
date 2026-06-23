@@ -1,0 +1,91 @@
+schema: review.v1
+run: program-dashboard
+slice: runstore-from-target
+
+verdict: approve
+summary: >-
+  Independent review of slice runstore-from-target (3 of dashboard-showcase) against feature-plan.v1
+  (8 acceptance ids). Inspected the real working-tree diff: exactly the three declared files changed
+  (Sources/AISDDEngine/RunStore.swift, Sources/AISDDCLI/main.swift,
+  Tests/AISDDEngineTests/EngineTests.swift) per git status — no Layout/DashboardProjection/fixture/doc
+  files touched. Confirmed RunStore.base(forTarget:) standardizes the target, ascends via
+  deletingLastPathComponent() to the closest component == Layout.homeDir (".ai-sdd") and returns its
+  parent, with a root-stop guard (pathComponents.count > 1) and cwd fallback — reusing the internal
+  Layout.homeDir literal, no inline path string. Confirmed dashboardDoc() wires
+  RunStore.local(under: RunStore.base(forTarget: <targetURL>)) in BOTH branches reusing the same target
+  URL each assembler gets; the cwd-rooted runStore() helper (lines 22-24) is untouched and no longer
+  called there; no --runs flag added. Re-ran gates myself: swift build exit 0; swift test "197 tests in
+  6 suites passed" exit 0, including all four new resolver tests. Re-ran both regressions myself: both
+  exit 0 and render the repo's .ai-sdd/runs identically (Feature ·, Program · guardrails, milestone_done
+  present, features done). Every acceptance id passes; conventions satisfied.
+
+items:
+  - id: resolver-ai-sdd-target-returns-base
+    verdict: pass
+    notes: >-
+      For <base>/.ai-sdd the resolver standardizes then matches lastPathComponent == ".ai-sdd" and
+      returns its parent <base>. Verified in RunStore.swift:48-57. Test baseForTargetAiSddReturnsBase
+      seeds a temp <base>/.ai-sdd and asserts standardized-path equality with <base>. Non-vacuous.
+  - id: resolver-program-subdir-returns-base
+    verdict: pass
+    notes: >-
+      <base>/.ai-sdd/programs/x ascends x→programs→.ai-sdd, returns <base>. Test
+      baseForTargetProgramSubdirReturnsBase asserts this. The closest (nearest-leaf) .ai-sdd is selected
+      by the ascending loop returning at the first match; correct.
+  - id: resolver-nested-fixture-returns-fixture-base
+    verdict: pass
+    notes: >-
+      <base>/docs/examples/demo-factory/.ai-sdd[/programs/x] returns <base>/docs/examples/demo-factory.
+      Test baseForTargetNestedFixtureReturnsFixtureBase covers BOTH the .ai-sdd and the .ai-sdd/programs/x
+      targets and additionally asserts hasSuffix("docs/examples/demo-factory") — a genuine structural
+      check, not vacuous.
+  - id: resolver-no-ai-sdd-falls-back-to-cwd
+    verdict: pass
+    notes: >-
+      With no ".ai-sdd" component the while loop ascends until pathComponents.count == 1 (filesystem
+      root) and exits, returning URL(fileURLWithPath: FileManager.default.currentDirectoryPath,
+      isDirectory: true). Root-stop guard is the count>1 loop condition. Test
+      baseForTargetNoAiSddFallsBackToCwd asserts equality with standardized cwd.
+  - id: resolver-handles-relative-and-absolute-targets
+    verdict: pass
+    notes: >-
+      target.standardizedFileURL is applied first; URL(fileURLWithPath:) anchors a relative target to
+      cwd and standardization collapses ./../trailing-slash, so relative and absolute equivalents resolve
+      identically. Property is structurally guaranteed and exercised end-to-end by the regression runs,
+      which pass the RELATIVE target ".ai-sdd" and resolve to the cwd base. No dedicated unit test, but the
+      guarantee is concrete (standardizedFileURL) and verified live. Pass.
+  - id: cli-dashboard-wires-resolver-both-branches
+    verdict: pass
+    notes: >-
+      main.swift dashboardDoc() lines 466-478: project branch builds
+      RunStore.local(under: RunStore.base(forTarget: factoryDir)); program branch builds
+      RunStore.local(under: RunStore.base(forTarget: programDir)). Each reuses the exact target URL passed
+      to its assembler. The cwd-rooted runStore() helper is no longer called in either branch (still
+      intact at lines 22-24 for start/status/next/submit). grep confirms no --runs flag.
+  - id: cli-regression-repo-root-unchanged
+    verdict: pass
+    notes: >-
+      Reviewer ran `swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/rev_all.html` → exit
+      0; output has "Feature ·", "Program · guardrails", status_done x31, milestone_done x2. Reviewer ran
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/rev_g.html` → exit 0;
+      output has milestone_done and status_done x4. Both repo-root targets standardize to <cwd>/.ai-sdd[...]
+      so the derived base == <cwd> — byte-identical to the prior cwd-rooted runStore(); repo's
+      .ai-sdd/runs still resolved.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      Reviewer re-ran: swift build -> "Build complete!" exit 0; swift test -> "Test run with 197 tests in
+      6 suites passed" exit 0. The four new resolver tests are included and passing.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Resolver added in Sources/AISDDEngine (engine module) reusing the internal Layout.homeDir
+    literal — no inline path literal, no Layout.swift change, Layout.homeDir stays internal. It is a pure
+    URL-in/URL-out static func co-located with local(under:)/base; RunStore stays Sendable. Tests use
+    Swift Testing (@Test/#expect) in the repo's exemplar test file and are genuine (real temp dirs,
+    distinct per-case assertions, structural suffix check, closest-ancestor program-subdir case, negative
+    cwd-fallback case). DashboardProjection matching untouched. Scope respected: exactly the three
+    declared files changed (git status). Baseline gates swift build and swift test are green.
+
+rework: null

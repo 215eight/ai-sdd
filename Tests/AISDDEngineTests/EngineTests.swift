@@ -2017,6 +2017,51 @@ struct EngineTests {
             == base.standardizedFileURL.path)
     }
 
+    @Test func baseForTargetAiSddReturnsBase() {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-fromtarget-\(UUID().uuidString)", isDirectory: true)
+        let target = base.appendingPathComponent(".ai-sdd", isDirectory: true)
+        #expect(RunStore.base(forTarget: target).standardizedFileURL.path
+            == base.standardizedFileURL.path)
+    }
+
+    @Test func baseForTargetProgramSubdirReturnsBase() {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-fromtarget-\(UUID().uuidString)", isDirectory: true)
+        let target = base.appendingPathComponent(".ai-sdd", isDirectory: true)
+            .appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("x", isDirectory: true)
+        #expect(RunStore.base(forTarget: target).standardizedFileURL.path
+            == base.standardizedFileURL.path)
+    }
+
+    @Test func baseForTargetNestedFixtureReturnsFixtureBase() {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-fromtarget-\(UUID().uuidString)", isDirectory: true)
+        let fixture = base.appendingPathComponent("docs", isDirectory: true)
+            .appendingPathComponent("examples", isDirectory: true)
+            .appendingPathComponent("demo-factory", isDirectory: true)
+        // <fixture>/.ai-sdd → <fixture>
+        let target = fixture.appendingPathComponent(".ai-sdd", isDirectory: true)
+        let resolved = RunStore.base(forTarget: target).standardizedFileURL.path
+        #expect(resolved == fixture.standardizedFileURL.path)
+        #expect(resolved.hasSuffix("docs/examples/demo-factory"))
+        // <fixture>/.ai-sdd/programs/x → <fixture> (closest .ai-sdd ancestor wins)
+        let programTarget = target.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("x", isDirectory: true)
+        #expect(RunStore.base(forTarget: programTarget).standardizedFileURL.path
+            == fixture.standardizedFileURL.path)
+    }
+
+    @Test func baseForTargetNoAiSddFallsBackToCwd() {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-fromtarget-\(UUID().uuidString)", isDirectory: true)
+        let target = base.appendingPathComponent("not-a-factory", isDirectory: true)
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        #expect(RunStore.base(forTarget: target).standardizedFileURL.path
+            == cwd.standardizedFileURL.path)
+    }
+
     @Test func matchedStateStillMatchesAbsolutePipelineDir() throws {
         let base = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ai-sdd-portable-\(UUID().uuidString)", isDirectory: true)

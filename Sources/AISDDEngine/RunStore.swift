@@ -36,6 +36,26 @@ public struct RunStore: Sendable {
     /// equivalent `<base>/.ai-sdd/runs` root).
     public var base: URL { root.deletingLastPathComponent().deletingLastPathComponent() }
 
+    /// The `<base>` to pass to `local(under:)` so a store resolves against the `.ai-sdd` home that
+    /// GOVERNS `target` — the target-relative complement to `local(under:)` (forward) and `base`
+    /// (inverse). Standardizes `target` to an absolute URL (so relative and absolute targets behave
+    /// identically, and `.`/`..`/trailing-slash collapse), then ascends via
+    /// `deletingLastPathComponent()` to the CLOSEST (nearest-the-leaf) component equal to
+    /// `Layout.homeDir` that is the target or an ancestor of it, and returns that component's parent.
+    /// If the target has no `.ai-sdd` component, falls back to the current working directory —
+    /// preserving today's cwd-rooted store. Reuses the internal `Layout.homeDir` literal directly
+    /// (same module) so no path string is duplicated.
+    public static func base(forTarget target: URL) -> URL {
+        var current = target.standardizedFileURL
+        while current.pathComponents.count > 1 {
+            if current.lastPathComponent == Layout.homeDir {
+                return current.deletingLastPathComponent()
+            }
+            current = current.deletingLastPathComponent()
+        }
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    }
+
     public func exists(_ runId: String) -> Bool {
         FileManager.default.fileExists(atPath: layout(runId).meta.path)
     }

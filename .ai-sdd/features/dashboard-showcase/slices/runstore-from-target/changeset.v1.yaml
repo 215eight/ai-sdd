@@ -1,0 +1,37 @@
+summary: >-
+  Added a pure target-relative run-store resolver `RunStore.base(forTarget:)` (slice
+  runstore-from-target, 3 of dashboard-showcase) and wired it into both branches of
+  `Graph.dashboardDoc()` so `ai-sdd graph --dashboard` resolves its run store against the `.ai-sdd`
+  home that GOVERNS the target dir (the closest `.ai-sdd` ancestor-or-self), instead of always rooting
+  at cwd. The resolver standardizes the target to an absolute URL, ascends via
+  `deletingLastPathComponent()` to the nearest path component equal to `Layout.homeDir` (internal,
+  same module — no new path literal), and returns that component's parent; with no `.ai-sdd` component
+  it falls back to `URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)`,
+  preserving today's cwd-rooted store. Repo-root targets (`.ai-sdd`, `.ai-sdd/programs/<slug>`)
+  standardize to `<cwd>/.ai-sdd[/...]`, so the derived base is `<cwd>` and the resolved store is
+  byte-identical to before; a nested fixture target `docs/examples/demo-factory/.ai-sdd[/programs/x]`
+  resolves to the fixture's own `docs/examples/demo-factory` base. In Sources/AISDDCLI/main.swift the
+  `--project` and per-program branches now build the assembler store as
+  `RunStore.local(under: RunStore.base(forTarget: <target dir URL>))`, reusing the same
+  `URL(fileURLWithPath: dir, isDirectory: true)` already passed as factoryDir/programDir; no `--runs`
+  flag added, and the `runStore()` helper plus all `start`/`status`/`next`/`submit` call sites are
+  untouched. Added four Swift Testing cases in Tests/AISDDEngineTests/EngineTests.swift for the
+  resolver (.ai-sdd target, program-subdir target, nested-fixture target incl. programs/x, and the
+  no-`.ai-sdd` cwd fallback). No change to DashboardProjection matching, Layout, fixtures, or docs.
+  swift build exit 0; swift test exit 0 (197 tests, 6 suites passed). Regression: `ai-sdd graph
+  .ai-sdd --project --dashboard` exit 0 (still shows Feature· + Program· guardrails) and `ai-sdd graph
+  .ai-sdd/programs/guardrails --dashboard` exit 0 (features done + m1 milestone_done) both resolve the
+  repo's `.ai-sdd/runs` exactly as before.
+satisfies:
+  - resolver-ai-sdd-target-returns-base
+  - resolver-program-subdir-returns-base
+  - resolver-nested-fixture-returns-fixture-base
+  - resolver-no-ai-sdd-falls-back-to-cwd
+  - resolver-handles-relative-and-absolute-targets
+  - cli-dashboard-wires-resolver-both-branches
+  - cli-regression-repo-root-unchanged
+  - build-and-test-green
+files:
+  - Sources/AISDDEngine/RunStore.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift

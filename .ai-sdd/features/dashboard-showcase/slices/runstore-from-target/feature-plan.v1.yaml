@@ -1,0 +1,216 @@
+summary: >-
+  Make `ai-sdd graph --dashboard` resolve its run store relative to the TARGET dir, so a self-contained
+  fixture (e.g. `docs/examples/demo-factory/.ai-sdd`) shows its OWN committed runs, while the repo-root
+  case (`.ai-sdd`, `.ai-sdd/programs/<slug>`) stays byte-identical to today (slice runstore-from-target,
+  slice 3 of feature dashboard-showcase; depends on portable-run-matching, which shipped `RunStore.base`
+  and relative-pipelineDir matching). Add a PURE engine resolver that, given a target dir URL, finds the
+  `.ai-sdd` (`Layout.homeDir`) directory that is the target itself or its closest ancestor and returns the
+  directory just above it — exactly the `<base>` value to pass to `RunStore.local(under:)`. Place it as a
+  small `public static func` on `RunStore` (`RunStore.base(forTarget:)`) so the inverse-pair forward
+  (`local(under:)`) / inverse (`base`) / from-target (`base(forTarget:)`) all live together and reuse the
+  same `Layout.homeDir` literal the engine already owns (the resolver lives in the engine module, so it
+  reads `Layout.homeDir` without making it public). The algorithm: standardize the target to an absolute
+  URL (so relative and absolute targets behave identically); walk its path components and select the
+  CLOSEST (last, i.e. nearest-to-the-leaf) component equal to `Layout.homeDir` that is the target or an
+  ancestor of it; the base is the URL of all components up to (but excluding) that `.ai-sdd` component. If
+  the target has no `.ai-sdd` component, fall back to the current working directory
+  (`FileManager.default.currentDirectoryPath`), preserving today's behavior. In
+  `Sources/AISDDCLI/main.swift` `Graph.dashboardDoc()`, build the run store for BOTH the project
+  (`ProjectDashboardAssembler`) and program (`ProgramDashboardAssembler`) branches as
+  `RunStore.local(under: RunStore.base(forTarget: <target dir URL>))` instead of the cwd-rooted
+  `runStore()` helper, using the same `dir` already turned into a `URL(fileURLWithPath: dir,
+  isDirectory: true)` for the assembler. No `--runs` flag is added (derivation only, per closed
+  requirements decision #2). `status`/`next`/`submit` and every other graph mode are unchanged.
+scope:
+  in:
+    - >-
+      Add a pure `public static func base(forTarget target: URL) -> URL` to `RunStore` in
+      Sources/AISDDEngine/RunStore.swift. It standardizes the target to an absolute file URL, finds the
+      `.ai-sdd` (`Layout.homeDir`) path component that is the target itself or its closest ancestor, and
+      returns the directory immediately above that component — the `<base>` to pass to
+      `RunStore.local(under:)`. If no `.ai-sdd` component exists, it returns
+      `URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)`. It uses
+      `Layout.homeDir` (internal, same module) for the component name — no inline path literal — and is
+      documented as the target-relative complement to `local(under:)`/`base`.
+    - >-
+      Implement the algorithm structurally on URL path components: take
+      `target.standardizedFileURL` (after `URL(fileURLWithPath:isDirectory:)` if the caller passed a
+      relative path, Foundation already anchors it to cwd), then walk its `pathComponents` and find the
+      index of the LAST element equal to `Layout.homeDir`; the base is the URL formed by the components
+      before that index. Equivalent structural form: starting from the standardized target URL, ascend via
+      `deletingLastPathComponent()` until the current URL's `lastPathComponent == Layout.homeDir`, then
+      return that URL's parent (`deletingLastPathComponent()`); if the ascent reaches the filesystem root
+      without seeing `.ai-sdd`, fall back to cwd. Choosing the CLOSEST (last) `.ai-sdd` ancestor-or-self
+      yields `<cwd>` for `.ai-sdd` and `.ai-sdd/programs/<slug>` (byte-identical to today's cwd-rooted
+      store) and `docs/examples/demo-factory` for `docs/examples/demo-factory/.ai-sdd[/programs/<slug>]`.
+    - >-
+      In Sources/AISDDCLI/main.swift `Graph.dashboardDoc()`, in the `project` branch build the assembler's
+      run store as `RunStore.local(under: RunStore.base(forTarget: URL(fileURLWithPath: dir,
+      isDirectory: true)))` and pass it to `ProjectDashboardAssembler.assemble(factoryDir:runStore:)`,
+      reusing the same target dir URL already constructed for `factoryDir`.
+    - >-
+      In the same method's `else` (program) branch, build the run store identically as
+      `RunStore.local(under: RunStore.base(forTarget: URL(fileURLWithPath: dir, isDirectory: true)))` and
+      pass it to `ProgramDashboardAssembler.assemble(programDir:runStore:)`, reusing the same target dir
+      URL already constructed for `programDir`. Both branches stop calling the cwd-rooted `runStore()`
+      helper.
+    - >-
+      Add Swift Testing coverage in Tests/AISDDEngineTests/EngineTests.swift for the resolver
+      (`RunStore.base(forTarget:)`), driving it directly with constructed target URLs and asserting the
+      returned base via standardized-path equality (mirroring the existing `runStoreBaseInvertsLocalUnder`
+      test): (1) a target ending in `.ai-sdd` under a temp base returns that base; (2) a target ending in
+      `.ai-sdd/programs/<slug>` under a temp base returns the same base; (3) a deeply nested fixture-style
+      target `<base>/docs/examples/demo-factory/.ai-sdd[/programs/x]` returns
+      `<base>/docs/examples/demo-factory`; (4) a target with NO `.ai-sdd` component returns
+      cwd (`FileManager.default.currentDirectoryPath`, standardized).
+  out:
+    - >-
+      No `--runs` flag and no other CLI option is added — run-store base is derived from the target dir
+      only (closed requirements decision #2). No change to `status`/`next`/`submit`, to the `runStore()`
+      helper itself (it stays for `start`/`status`/`next`/`submit`), or to any non-`--dashboard` graph mode
+      (`singleDoc`, `projectDoc`, `plantDoc`, `--html`, plain Mermaid).
+    - >-
+      No change to how `ai-sdd start` WRITES runs (still absolute `pipelineDir`), to `RunStore.create`,
+      `RunMeta`, `RunState`, the reducer, the scheduler, recursive execution, or the milestone-gate worker.
+    - >-
+      No change to the matching logic in Sources/AISDDEngine/DashboardProjection.swift (the relative-vs-
+      absolute resolution shipped in slice portable-run-matching). This slice only changes WHICH
+      run-store base the CLI hands the assemblers; matching against that base is already portable.
+    - >-
+      No change to Sources/AISDDEngine/Layout.swift — the resolver reuses the existing internal
+      `Layout.homeDir` literal structurally and adds no new path constant; `Layout.homeDir` need not become
+      `public` because the resolver lives in the same engine module as `Layout`.
+    - >-
+      No committed demo fixture, no fixture builder, no end-to-end CLI integration test, and no README
+      change (those are the downstream demo-fixture / fixture-integration-tests / readme-showcase slices).
+      No change to `ProjectDashboardAssembler`/`ProgramDashboardAssembler` public signatures.
+acceptance:
+  - id: resolver-ai-sdd-target-returns-base
+    description: >-
+      `RunStore.base(forTarget:)` applied to a target whose path ends in `.ai-sdd` (e.g.
+      `<base>/.ai-sdd`) returns `<base>` (standardized-path-equal), i.e. the value `RunStore.local(under:)`
+      needs to root the store at `<base>/.ai-sdd/runs` — today's behavior for the repo-root `.ai-sdd`
+      target.
+  - id: resolver-program-subdir-returns-base
+    description: >-
+      `RunStore.base(forTarget:)` applied to a target ending in `.ai-sdd/programs/<slug>` returns the same
+      `<base>` (the directory above the closest `.ai-sdd` ancestor), so a per-program dashboard rooted at a
+      repo-root program dir still resolves `<base>/.ai-sdd/runs` — identical to today.
+  - id: resolver-nested-fixture-returns-fixture-base
+    description: >-
+      `RunStore.base(forTarget:)` applied to a nested fixture target
+      `<base>/docs/examples/demo-factory/.ai-sdd` (and to `.../.ai-sdd/programs/x`) returns
+      `<base>/docs/examples/demo-factory`, so the resulting store is rooted at the fixture's own
+      `docs/examples/demo-factory/.ai-sdd/runs`.
+  - id: resolver-no-ai-sdd-falls-back-to-cwd
+    description: >-
+      `RunStore.base(forTarget:)` applied to a target with no `.ai-sdd` path component returns the current
+      working directory (`FileManager.default.currentDirectoryPath`, standardized) — preserving today's
+      cwd-rooted fallback.
+  - id: resolver-handles-relative-and-absolute-targets
+    description: >-
+      The resolver returns the same base whether the target is passed as a relative path (anchored to cwd
+      by `URL(fileURLWithPath:)`) or its standardized absolute equivalent; the target is standardized
+      before walking so `.`/`..`/trailing-slash do not change the result.
+  - id: cli-dashboard-wires-resolver-both-branches
+    description: >-
+      `Graph.dashboardDoc()` builds the assembler run store via
+      `RunStore.local(under: RunStore.base(forTarget: <target dir URL>))` in BOTH the `--project` and the
+      per-program branch, no longer calling the cwd-rooted `runStore()` helper there; no `--runs` flag
+      exists.
+  - id: cli-regression-repo-root-unchanged
+    description: >-
+      `ai-sdd graph .ai-sdd --project --dashboard` and `ai-sdd graph .ai-sdd/programs/guardrails
+      --dashboard` still resolve the repo's `.ai-sdd/runs` and render byte-identically to before (the
+      derived base is `.`/cwd for both repo-root targets).
+  - id: build-and-test-green
+    description: swift build and swift test both pass.
+decisions:
+  - id: resolver-location-and-signature
+    status: closed
+    decision: >-
+      Add the resolver as `public static func base(forTarget target: URL) -> URL` on `RunStore` in
+      Sources/AISDDEngine/RunStore.swift, next to `local(under:)` and the `base` accessor. It returns the
+      `<base>` URL to pass to `RunStore.local(under:)`.
+    rationale: >-
+      `local(under:)` (forward), `base` (inverse), and `base(forTarget:)` (from-target) are three views of
+      the same `<base>/.ai-sdd/runs` structure; co-locating them on `RunStore` keeps them in sync and lets
+      the resolver reuse the same `Layout.homeDir` literal `local(under:)` appends — with no new path
+      constant. The resolver lives in the engine module, so it reads the internal `Layout.homeDir`
+      directly; `Layout.homeDir` stays internal (no Layout.swift change). A `URL`-in/`URL`-out signature
+      composes cleanly at the call site (`RunStore.local(under: RunStore.base(forTarget: targetURL))`) and
+      is pure and trivially unit-testable.
+  - id: closest-ai-sdd-ancestor-selection
+    status: closed
+    decision: >-
+      The chosen `.ai-sdd` is the CLOSEST (nearest-the-leaf, i.e. LAST in path-component order) component
+      equal to `Layout.homeDir` that is the target itself or one of its ancestors; the base is the
+      directory immediately above it. Implemented by standardizing the target to an absolute URL, then
+      ascending via `deletingLastPathComponent()` until `lastPathComponent == Layout.homeDir` and returning
+      that URL's parent (equivalently: the last index of `Layout.homeDir` in `pathComponents`, base = the
+      components before it). The target is always standardized first, so relative and absolute targets
+      resolve identically.
+    rationale: >-
+      The `.ai-sdd` that governs a target is the home dir the target is the same as or sits inside; the
+      base must be its parent. For `<base>/docs/examples/demo-factory/.ai-sdd/programs/x` that parent is
+      `docs/examples/demo-factory` (the slice's required result). For the repo-root targets `.ai-sdd` and
+      `.ai-sdd/programs/<slug>` (standardized to `<cwd>/.ai-sdd[/...]`) the parent is `<cwd>`, byte-
+      identical to today. Choosing the CLOSEST (rather than outermost) ancestor is the robust rule: it is
+      the home dir actually governing the target, and it gives the correct fixture base even if some
+      enclosing path segment also happened to be named `.ai-sdd` (the governing home wins). Standardizing
+      first guarantees `.`/`..`/trailing-slash and relative-vs-absolute inputs all collapse to one answer.
+  - id: no-ai-sdd-falls-back-to-cwd
+    status: closed
+    decision: >-
+      If the standardized target has no `.ai-sdd` (`Layout.homeDir`) path component, the resolver returns
+      `URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)` (cwd).
+    rationale: >-
+      The slice and closed requirements require preserving today's behavior, which is a cwd-rooted store
+      (`RunStore.local(under: cwd)`). Falling back to cwd keeps a non-factory target degrading to exactly
+      the prior store rather than throwing, so no existing path regresses. The fallback is the only place
+      the resolver reads cwd; the governed-by-`.ai-sdd` cases derive the base purely from the target.
+  - id: cli-wiring-point
+    status: closed
+    decision: >-
+      Wire the resolver only inside `Graph.dashboardDoc()` in Sources/AISDDCLI/main.swift, in both the
+      `--project` and the per-program branch, by replacing the `runStore()` argument with
+      `RunStore.local(under: RunStore.base(forTarget: URL(fileURLWithPath: dir, isDirectory: true)))`,
+      reusing the same target `dir` URL already passed as `factoryDir`/`programDir`. Leave the `runStore()`
+      helper and all `start`/`status`/`next`/`submit` call sites untouched. Add NO `--runs` flag.
+    rationale: >-
+      `dashboardDoc()` is the single method that constructs both dashboard assemblers, and both already
+      build a `URL(fileURLWithPath: dir, isDirectory: true)` for the assembler — the resolver consumes
+      exactly that URL, so the wiring is a one-line change per branch with no new plumbing. Constraining the
+      change to the dashboard path keeps `status`/`next`/`submit` (which legitimately operate against the
+      cwd store) unchanged, honoring the closed requirements and keeping the diff in scope. No `--runs`
+      flag per closed requirements decision #2 (derivation only).
+  - id: no-layout-or-matching-change
+    status: closed
+    decision: >-
+      No change to Sources/AISDDEngine/Layout.swift and no change to the matching logic in
+      Sources/AISDDEngine/DashboardProjection.swift. The resolver reuses the internal `Layout.homeDir`
+      structurally; portable relative-`pipelineDir` matching already shipped in the prior slice.
+    rationale: >-
+      The resolver is in the same module as `Layout`, so it reads `Layout.homeDir` without a visibility
+      change or a new constant. Matching a relative `pipelineDir` against the run-store base is already
+      done by `DashboardProjection` (slice portable-run-matching); this slice only changes WHICH base the
+      CLI supplies, so no engine matching code is touched — keeping the change minimal and additive.
+  - id: files-and-tests-scope
+    status: closed
+    decision: >-
+      Touched files are exactly Sources/AISDDEngine/RunStore.swift (the resolver),
+      Sources/AISDDCLI/main.swift (the two `dashboardDoc()` branches), and
+      Tests/AISDDEngineTests/EngineTests.swift (resolver unit tests). No fixture, docs, or Layout change.
+      Verification is `swift build` then `swift test`.
+    rationale: >-
+      The slice constrains files to precisely these three. The resolver belongs on `RunStore` beside
+      `local(under:)`/`base`; the wiring belongs in `dashboardDoc()`; the unit tests live with the existing
+      run-store/dashboard tests in the single Swift Testing file (the repo's exemplar test location per the
+      conventions). `swift build`/`swift test` are the repo's baseline gates.
+files:
+  - Sources/AISDDEngine/RunStore.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test

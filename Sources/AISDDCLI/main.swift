@@ -464,14 +464,16 @@ struct Graph: ParsableCommand {
         }
 
         if project {
+            let factoryDir = URL(fileURLWithPath: dir, isDirectory: true)
             let dashboard = try ProjectDashboardAssembler.assemble(
-                factoryDir: URL(fileURLWithPath: dir, isDirectory: true),
-                runStore: runStore())
+                factoryDir: factoryDir,
+                runStore: RunStore.local(under: RunStore.base(forTarget: factoryDir)))
             return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
         } else {
+            let programDir = URL(fileURLWithPath: dir, isDirectory: true)
             let dashboard = try ProgramDashboardAssembler.assemble(
-                programDir: URL(fileURLWithPath: dir, isDirectory: true),
-                runStore: runStore())
+                programDir: programDir,
+                runStore: RunStore.local(under: RunStore.base(forTarget: programDir)))
             return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
         }
     }
