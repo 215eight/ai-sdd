@@ -1,0 +1,118 @@
+summary: >-
+  Rename the `Guide` ParsableCommand in Sources/AISDDCLI/main.swift to `Cheatsheet`
+  (commandName "cheatsheet", no alias) and rewrite its printed body as a terse,
+  diagram-driven cheatsheet with three sections — ONE-TIME SETUP, A FEATURE (a
+  left-to-right ASCII flow diagram), and A PROGRAM (a parallel ASCII flow diagram
+  naming milestone gates). Every command sits on its own line marked `$` for shell or
+  `/` for skill; the command stays a pure print (no flags, no state reads, no ANSI,
+  exit 0) and all diagram lines are fixed-width-safe at 80 columns. Only this one
+  source file changes; the skill wrapper and doc/QUICKSTART reference updates are the
+  separate downstream surface-and-docs slice and are out of scope here.
+
+scope:
+  in:
+    - >-
+      Rename `struct Guide` to `struct Cheatsheet` and set the commandName to
+      "cheatsheet" (no alias) in its CommandConfiguration in
+      Sources/AISDDCLI/main.swift.
+    - Update the `subcommands:` list on the root `AISDD` command — replace `Guide.self`
+      with `Cheatsheet.self`.
+    - >-
+      Update the `// MARK: - guide` section comment to `// MARK: - cheatsheet`.
+    - >-
+      Rewrite the printed body as three scannable sections — ONE-TIME SETUP (1–3
+      lines covering install plus `/ai-sdd-bootstrap`), A FEATURE (left-to-right
+      ASCII flow diagram), and A PROGRAM (parallel ASCII flow diagram naming
+      milestone gates) — each command on its own line, marked `$` (shell) or `/`
+      (skill), plus a one-line loop summary and a footer pointing to
+      `ai-sdd status <id>` / `ai-sdd graph <dir>`, `ai-sdd <command> --help`, and
+      QUICKSTART.md.
+    - >-
+      Replace the old `COMMANDS: guide · …` footer line with a line that does not
+      mention `guide`.
+    - Update the command's `abstract` so it no longer describes a prose "guide".
+  out:
+    - The thin `skills/ai-sdd-cheatsheet/SKILL.md` wrapper (surface-and-docs slice).
+    - Updating `ai-sdd guide` references in QUICKSTART.md and docs/decisions.md
+      (surface-and-docs slice).
+    - Running `ai-sdd surface` / touching `.agents/skills` or `.claude/skills`.
+    - Any new flags, context detection, or state/disk reads in the command.
+    - Any change to Status / Next / Surface / other subcommands or engine behavior.
+
+acceptance:
+  - id: A1
+    description: >-
+      `swift run ai-sdd cheatsheet` exits 0 and prints the new diagram-driven content.
+  - id: A2
+    description: >-
+      `swift run ai-sdd guide` fails as an unknown subcommand (the command is removed,
+      no alias).
+  - id: A3
+    description: >-
+      Output shows a distinct A FEATURE flow and a distinct A PROGRAM flow, each an ASCII
+      diagram with the per-stage command surfaced; the PROGRAM flow names milestone
+      gates as blocking downstream features until they pass.
+  - id: A4
+    description: >-
+      These strings appear verbatim and copy-pasteable in the output: `/ai-sdd-bootstrap`,
+      `/ai-sdd-plan`, `/ai-sdd-plan-program`, `ai-sdd start` with `--id`, `/ai-sdd-run`,
+      `ai-sdd status`, `ai-sdd graph`.
+  - id: A5
+    description: >-
+      Commands are visually marked — shell commands prefixed `$`, skills prefixed `/` —
+      and each command is on its own line.
+  - id: A6
+    description: >-
+      Output is plain text with no ANSI/color escapes and is materially shorter than the
+      old prose guide body.
+  - id: A7
+    description: >-
+      No line of the printed output exceeds 80 columns (diagrams are fixed-width-safe).
+  - id: A8
+    description: >-
+      The old `COMMANDS: guide · …` footer line is gone; the replacement footer does not
+      mention `guide`.
+  - id: A9
+    description: >-
+      `swift build` and `swift test` are green.
+
+decisions:
+  - id: D1
+    title: Remove `guide` entirely, no alias — only `cheatsheet` remains.
+    status: closed
+    detail: >-
+      The `Guide` command is renamed to `Cheatsheet` with commandName "cheatsheet" and
+      no alias; `Guide.self` is removed from the subcommands list and `// MARK: - guide`
+      becomes `// MARK: - cheatsheet`. Within this slice that completes the code-side
+      removal of `guide`; the QUICKSTART.md and docs/decisions.md reference updates land
+      in the downstream surface-and-docs slice.
+  - id: D2
+    title: Two ASCII diagrams — a feature flow and a program flow.
+    status: closed
+    detail: >-
+      A FEATURE renders left-to-right boxed stages: `/ai-sdd-plan "<brief>"` →
+      `ai-sdd start <dir> --id ID` → `/ai-sdd-run ID` (the next → work → submit ↺ loop)
+      → done. A PROGRAM renders a parallel flow:
+      `/ai-sdd-plan-program "<brief>"` → `/ai-sdd-plan` each sub-feature →
+      `ai-sdd start <dir> --id ID` + `/ai-sdd-run ID`, with named milestone gates that
+      block downstream features until they pass. Layout uses plain Unicode box-drawing
+      arrows, each command on its own line, fixed-width-safe and validated at 80 cols.
+  - id: D3
+    title: One-time setup is a 1–3 line pointer only.
+    status: closed
+    detail: >-
+      The ONE-TIME SETUP section shows only the install step and `/ai-sdd-bootstrap`;
+      the detailed install / skill-vendoring block is NOT reproduced (it stays in
+      QUICKSTART.md). The footer points to QUICKSTART.md for full adopter docs.
+
+files:
+  - Sources/AISDDCLI/main.swift
+
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd cheatsheet
+  - "swift run ai-sdd cheatsheet | grep -q '/ai-sdd-bootstrap' && swift run ai-sdd cheatsheet | grep -q '/ai-sdd-plan-program' && swift run ai-sdd cheatsheet | grep -q 'ai-sdd status' && swift run ai-sdd cheatsheet | grep -q 'ai-sdd graph'"
+  - "swift run ai-sdd cheatsheet | grep -qi 'guide' && echo 'FAIL: guide still mentioned' && exit 1 || echo OK"
+  - "! swift run ai-sdd guide 2>/dev/null"
+  - "swift run ai-sdd cheatsheet | awk '{ if (length($0) > 80) { print \"OVER 80: \" NR \": \" $0; bad=1 } } END { exit bad }'"

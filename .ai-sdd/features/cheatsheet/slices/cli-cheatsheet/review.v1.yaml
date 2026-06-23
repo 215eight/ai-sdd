@@ -1,0 +1,60 @@
+verdict: approve
+
+items:
+  - id: A1
+    verdict: pass
+    notes: >-
+      `./.build/debug/ai-sdd cheatsheet` prints the new diagram-driven body and exits 0
+      (observed exit=0). Content shows ONE-TIME SETUP, A FEATURE, A PROGRAM, THE LOOP.
+  - id: A2
+    verdict: pass
+    notes: >-
+      `ai-sdd guide` fails: "Error: Unexpected argument 'guide'", exit=64. Command
+      removed, no alias; `Guide.self` replaced by `Cheatsheet.self` in subcommands.
+  - id: A3
+    verdict: pass
+    notes: >-
+      Output contains a distinct `── A FEATURE ──` left-to-right boxed ASCII flow
+      (plan it → start it → run it → done with per-stage commands) and a distinct
+      `── A PROGRAM ──` flow. The PROGRAM section names milestone gates explicitly
+      ("milestone gate ┃ blocks", "[ feature A ] ══(gate1)══▶ [ feature B ]") and
+      states downstream features stay BLOCKED until a gate passes.
+  - id: A4
+    verdict: pass
+    notes: >-
+      grep -F confirmed all required strings present verbatim: /ai-sdd-bootstrap,
+      /ai-sdd-plan, /ai-sdd-plan-program, "ai-sdd start", --id, /ai-sdd-run,
+      "ai-sdd status", "ai-sdd graph".
+  - id: A5
+    verdict: pass
+    notes: >-
+      Shell commands prefixed `$` (e.g. `$ swift build -c release`, `$ ai-sdd start`),
+      skills prefixed `/` (e.g. `/ai-sdd-bootstrap`, `/ai-sdd-plan`); each command on
+      its own line. Legend line documents the convention.
+  - id: A6
+    verdict: pass
+    notes: >-
+      No ANSI/color escapes (grep -cP '\x1b\[' returned 0); pure print. Body is
+      materially shorter than and structurally different from the old prose guide
+      (diagram-driven sections replacing ~50 lines of prose paragraphs).
+  - id: A7
+    verdict: pass
+    notes: >-
+      Display-column check with UTF-8 locale (`wc -m`) found zero lines over 80; a
+      wcwidth-aware Python check (combining-char and East-Asian-width aware) also
+      reported bad=0. The earlier byte-count "OVER" hits were a non-UTF-8 locale
+      artifact, not real overflow.
+  - id: A8
+    verdict: pass
+    notes: >-
+      Old `COMMANDS: guide · …` footer is gone; replacement footer is a `See:` line
+      pointing to ai-sdd status/graph/--help/QUICKSTART.md. `grep -ic guide` on the
+      output returned 0 — no mention of guide anywhere.
+  - id: A9
+    verdict: pass
+    notes: >-
+      `swift build` complete with no errors; `swift test` green — 162 tests in 6 suites
+      passed.
+
+# Scope note: `git diff --name-only HEAD` lists only Sources/AISDDCLI/main.swift,
+# matching the slice's in-scope file constraint.

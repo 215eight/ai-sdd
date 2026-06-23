@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd 0.4.0",
-        subcommands: [Guide.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Compile.self, Graph.self, Plan.self, Surface.self, DriftCommand.self]
+        subcommands: [Cheatsheet.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Compile.self, Graph.self, Plan.self, Surface.self, DriftCommand.self]
     )
 }
 
@@ -151,56 +151,56 @@ private func loadValidated(_ dir: String) throws
     return bundle
 }
 
-// MARK: - guide
+// MARK: - cheatsheet
 
-struct Guide: ParsableCommand {
+struct Cheatsheet: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Print the built-in getting-started guide (install → bootstrap → plan → run; travels with the binary)."
+        commandName: "cheatsheet",
+        abstract: "Print the diagram-driven workflow cheatsheet (the command sequence, feature & program flows)."
     )
 
     func run() {
         print("""
-        ai-sdd — getting started
+        ai-sdd cheatsheet    ( $cmd = shell command   /cmd = agent skill )
 
-        The loop: `ai-sdd next` renders the next worker (role + its skill + inputs + gates); your agent
-        does that work via the skill; `ai-sdd submit` runs the gates and advances — or routes to rework.
-        Repeat until done. The engine is provider-neutral: any agent drives it over a shell.
+        ── ONE-TIME SETUP ──────────────────────────────────────────────
+          $ swift build -c release  # then put .build/release/ai-sdd on PATH
+          /ai-sdd-bootstrap         # discover stack, scaffold .ai-sdd/, gate
 
-        1. INSTALL (one-time) — build the binary and put it on your PATH (no Swift needed afterward):
-             swift build -c release
-             cp .build/release/ai-sdd /usr/local/bin/ai-sdd      # or any dir on your PATH
-             ai-sdd --version
-           Run ai-sdd from your repo root — compiled gates invoke `ai-sdd check`/`ai-sdd scope`.
+        ── A FEATURE ───────────────────────────────────────────────────
 
-        2. SEED THE SKILLS — `ai-sdd-bootstrap` is itself a skill, so it can't install itself. COPY the
-           framework skills INTO the repo so it's self-contained (only whoever sets up needs the clone;
-           everyone else just clones the target repo + installs the binary):
-             AISDD=/path/to/ai-sdd ; TARGET=/path/to/your-repo
-             mkdir -p "$TARGET/.ai-sdd/skills" "$TARGET/.agents/skills" "$TARGET/.claude/skills"
-             for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-plan-program ai-sdd-compile-schema ai-sdd-run; do
-               cp -R "$AISDD/skills/$s" "$TARGET/.ai-sdd/skills/$s"            # vendor INTO the repo
-               ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.agents/skills/$s"   # Codex → in-repo
-               ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.claude/skills/$s"   # Claude Code → in-repo
-             done
+          ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌──────┐
+          │   plan it   │ → │   start it  │ → │    run it   │ → │ done │
+          └─────────────┘   └─────────────┘   └─────────────┘   └──────┘
+          /ai-sdd-plan        $ ai-sdd start    /ai-sdd-run ID
+            "<brief>"           <dir> --id ID      ┌──────────────────┐
+                                                   │ next → work →    │
+                                                   │ submit ↺ (loop)  │
+                                                   └──────────────────┘
 
-        3. BOOTSTRAP the repo's factory (from your repo): ask your agent to run /ai-sdd-bootstrap.
-           It discovers your stack, scaffolds .ai-sdd/, compiles the gates, and validates.
+        ── A PROGRAM ───────────────────────────────────────────────────
 
-        4. A FEATURE:
-             /ai-sdd-plan "<brief>"
-             ai-sdd start .ai-sdd/features/<slug> --id <slug> && /ai-sdd-run <slug>
+          ┌──────────────┐   ┌──────────────┐   ┌───────────────────┐
+          │ plan program │ → │ plan each    │ → │ start + run each  │
+          │              │   │ sub-feature  │   │ sub-feature       │
+          └──────────────┘   └──────────────┘   └───────────────────┘
+          /ai-sdd-plan-program   /ai-sdd-plan     $ ai-sdd start
+            "<brief>"             (per feature)     <dir> --id ID
+                                                    /ai-sdd-run ID
 
-        5. A PROGRAM (multiple features + milestones + owners):
-             /ai-sdd-plan-program "<program brief>"
-             ai-sdd start .ai-sdd/programs/<slug> --id <slug> && /ai-sdd-run <slug>
+          milestone gate          milestone gate
+              ┃ blocks                 ┃ blocks
+              ▼                        ▼
+          [ feature A ] ══(gate1)══▶ [ feature B ] ══(gate2)══▶ [ ... ]
+          A milestone gate is a validation node: downstream features stay
+          BLOCKED until it passes (manual verdict or deterministic check).
 
-        MILESTONES — a validation node that gates downstream work: manual (workerKind: human, a person
-        records the verdict) or automated (a deterministic check, e.g. `docker compose up …`, gated on
-        exit code). Declare them in a feature brief's `## Milestones` section, or as nodes in a program
-        graph. A failed milestone blocks downstream until re-validated.
+        ── THE LOOP ────────────────────────────────────────────────────
+          next renders the worker → your agent does the work via its skill
+          → submit runs the gates and advances (or routes to rework). ↺
 
-        COMMANDS: guide · validate · start · next · submit · status · check · scope · cover · graph
-        Run `ai-sdd <command> --help` for any one. Full adopter docs: QUICKSTART.md in the ai-sdd repo.
+        See:  ai-sdd status <id>   ·   ai-sdd graph <dir>
+              ai-sdd <command> --help   ·   QUICKSTART.md (full adopter docs)
         """)
     }
 }

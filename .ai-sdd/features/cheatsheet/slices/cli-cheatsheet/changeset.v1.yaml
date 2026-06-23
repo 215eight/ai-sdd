@@ -1,0 +1,20 @@
+summary: >-
+  Renamed the `Guide` ParsableCommand to `Cheatsheet` in
+  Sources/AISDDCLI/main.swift (commandName "cheatsheet", no alias), replaced
+  `Guide.self` with `Cheatsheet.self` in the root subcommands list, and changed
+  the `// MARK: - guide` section comment to `// MARK: - cheatsheet`. Rewrote the
+  printed body as a terse, diagram-driven cheatsheet with three scannable
+  sections: ONE-TIME SETUP (install + /ai-sdd-bootstrap, 2 lines), A FEATURE
+  (left-to-right boxed ASCII flow: /ai-sdd-plan -> ai-sdd start --id ->
+  /ai-sdd-run with the next -> work -> submit loop -> done), and A PROGRAM
+  (parallel flow: /ai-sdd-plan-program -> /ai-sdd-plan each sub-feature ->
+  ai-sdd start + /ai-sdd-run, with named milestone gates shown blocking
+  downstream features until they pass). Commands are marked `$` (shell) or `/`
+  (skill), each on its own line and copy-pasteable. The command stays a pure
+  print (no flags, no state reads, no ANSI, exit 0); every line is <= 80 display
+  columns. Replaced the old `COMMANDS: guide ...` footer with a See: footer
+  pointing to ai-sdd status <id>, ai-sdd graph <dir>, ai-sdd <command> --help,
+  and QUICKSTART.md (no mention of `guide`). Only Sources/AISDDCLI/main.swift
+  changed; the skill wrapper and QUICKSTART/docs reference updates are the
+  downstream surface-and-docs slice and were left out of scope.
+satisfies: [A1, A2, A3, A4, A5, A6, A7, A8, A9]
