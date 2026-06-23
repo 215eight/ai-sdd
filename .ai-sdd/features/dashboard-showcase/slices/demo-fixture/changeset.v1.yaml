@@ -1,0 +1,44 @@
+summary: >-
+  Added the committed, portable demo factory under docs/examples/demo-factory/ — the end-to-end
+  dashboard fixture (slice demo-fixture). It contains: a minimal build pattern (build/pipeline.yaml +
+  workers/w.worker.yaml with task: { command: "true" }); three feature pipelines auth (signup→login),
+  billing (invoices), search (index→query), each descending into ../../build; one program programs/demo
+  wiring auth+billing → m1-core-integrated (worker: milestone-gate) → search, with its
+  workers/milestone-gate.worker.yaml + checks/validation-result.structure.check.yaml (mirroring
+  docs/examples/program-milestone) and an approved requirements.md; committed PORTABLE program run state
+  runs/demo-program-run/ (run.json with RELATIVE pipelineDir ".ai-sdd/programs/demo" + four
+  events/NNNNNN.json hand-authored to match the engine's JSONEncoder([.prettyPrinted,.sortedKeys])
+  encoding byte-for-byte, empirically confirmed against a real engine-generated reference run); a
+  deterministic, idempotent build-fixture.sh that regenerates that run state with the relative
+  pipelineDir (no ai-sdd start); and a local README.md documenting topology, status mix, regeneration,
+  and the dashboard commands. The event log folds to a realistic status mix: auth done (top-level
+  nodeCompleted), billing in-progress (scoped event into slice billing starting sub-node invoices),
+  search + m1-core-integrated pending. NO Sources/ or Tests/ changes.
+
+  Note: a top-level .ai-sdd/pipeline.yaml (umbrella: one slice → build) was added beyond the plan's
+  explicit scope.in enumeration because acceptance fixture-validates requires
+  `ai-sdd validate docs/examples/demo-factory/.ai-sdd` to exit 0, and the engine's validate/loadBundle
+  loads <dir>/pipeline.yaml directly (there is no top-level pipeline discovery). It is
+  minimal-but-valid, renders as the dashboard's "Build pattern" section, and stays under the single
+  in-scope prefix docs/examples/demo-factory/.
+
+  Verification: `ai-sdd validate docs/examples/demo-factory/.ai-sdd` → exit 0; the program and every
+  feature/build pipeline also validate. swift build → Build complete; swift test → 197 tests in 6
+  suites passed (no code changed). `graph --project --dashboard` → exit 0 with Feature · auth/billing/
+  search sections + a Program · demo section; `graph .../programs/demo --dashboard` → exit 0 with the
+  master graph showing auth done, billing in-progress, m1-core-integrated pending, search pending.
+  build-fixture.sh re-run is byte-identical (idempotent). git check-ignore on run.json exits 1
+  (committable, no force-add). run.json carries the relative pipelineDir; no absolute machine path
+  appears in any committed fixture file (the only /tmp/ token is the documented --out example in
+  README).
+satisfies:
+  - fixture-validates
+  - project-dashboard-shows-features-and-program
+  - program-dashboard-renders-with-statuses
+  - status-mix-is-meaningful
+  - pipelinedir-is-relative
+  - builder-regenerates-equivalent-state
+  - runs-dir-committable
+  - build-and-test-green
+files:
+  - docs/examples/demo-factory/

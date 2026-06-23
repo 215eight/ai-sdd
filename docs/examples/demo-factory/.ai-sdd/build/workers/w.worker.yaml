@@ -1,0 +1,6 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: w }
+spec:
+  workerKind: transform
+  task: { command: "true" }    # a trivial, check-free build worker (the demo focus is the dashboard)

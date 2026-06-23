@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: search, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: index, kind: pipeline, pipeline: ../../build, stack: core }
+    - { id: query, kind: pipeline, pipeline: ../../build, stack: core }
+  edges:
+    - { from: index, to: query }

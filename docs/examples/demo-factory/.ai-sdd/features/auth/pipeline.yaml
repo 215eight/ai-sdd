@@ -1,0 +1,10 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: auth, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: signup, kind: pipeline, pipeline: ../../build, stack: core }
+    - { id: login, kind: pipeline, pipeline: ../../build, stack: core }
+  edges:
+    - { from: signup, to: login }

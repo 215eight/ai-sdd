@@ -1,0 +1,18 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: demo, version: 1 }
+spec:
+  # A program (ADR-0028) over three features with a MILESTONE gate between them. The two parallel
+  # features (auth, billing) gate into m1-core-integrated; search unlocks only after the milestone
+  # validation node passes. The milestone is a plain worker node (manual `milestone-gate`); owners
+  # are recorded per node.
+  semantics: enabler
+  nodes:
+    - { id: auth, kind: pipeline, pipeline: ../../features/auth, stack: core, owner: [maintainer] }
+    - { id: billing, kind: pipeline, pipeline: ../../features/billing, stack: core, owner: [maintainer] }
+    - { id: m1-core-integrated, worker: milestone-gate, owner: [maintainer] }
+    - { id: search, kind: pipeline, pipeline: ../../features/search, stack: core, owner: [maintainer] }
+  edges:
+    - { from: auth, to: m1-core-integrated }
+    - { from: billing, to: m1-core-integrated }
+    - { from: m1-core-integrated, to: search }

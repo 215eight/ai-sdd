@@ -1,0 +1,8 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: billing, version: 1 }
+spec:
+  semantics: enabler
+  nodes:
+    - { id: invoices, kind: pipeline, pipeline: ../../build, stack: core }
+  edges: []

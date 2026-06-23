@@ -1,0 +1,286 @@
+summary: >-
+  Add a committed, portable demo factory under `docs/examples/demo-factory/` that doubles as the
+  end-to-end dashboard fixture (slice demo-fixture, slice 4 of feature dashboard-showcase; depends on
+  project-dashboard-programs + runstore-from-target, both shipped on this branch). The slice adds ONLY
+  fixture files + a regeneration shell script + a README under `docs/examples/demo-factory/` — NO
+  `Sources/` and NO `Tests/` changes (engine/CLI shipped in prior slices). It delivers four things: (1)
+  a small but VALID self-contained factory `docs/examples/demo-factory/.ai-sdd/` that passes
+  `ai-sdd validate docs/examples/demo-factory/.ai-sdd` — a minimal `build/` build pattern (one trivial
+  worker), three features each descending into that build pattern, and one program `programs/demo` that
+  wires the features through a `milestone-gate` worker node plus sequencing edges, mirroring the real
+  `guardrails`/`docs/examples/program-milestone` shapes but minimal; (2) committed PORTABLE program run
+  state under `docs/examples/demo-factory/.ai-sdd/runs/<runId>/` (`run.json` + `events/NNNNNN.json`)
+  whose `RunMeta.pipelineDir` is RELATIVE (`.ai-sdd/programs/demo`) and whose reduced `RunState` shows a
+  realistic status MIX — one sub-feature done, one in-progress (via `scoped` sub-pipeline events), the
+  milestone-gate node runnable/pending — so both dashboards render a meaningful picture; (3) a committed
+  deterministic `docs/examples/demo-factory/build-fixture.sh` that regenerates that run state by writing
+  the literal `run.json` + event JSON (matching the engine's Codable encoding) with a RELATIVE
+  `pipelineDir`; (4) a short `docs/examples/demo-factory/README.md` documenting the fixture, the script,
+  and the two dashboard commands. The fixture is portable (no absolute machine paths) and matches via
+  the shipped relative-`pipelineDir` resolution: `ai-sdd graph docs/examples/demo-factory/.ai-sdd
+  --project --dashboard` and `ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard`
+  both derive run-store base `docs/examples/demo-factory` via `RunStore.base(forTarget:)`, resolve the
+  relative `pipelineDir` against it, and surface the committed statuses on any clone.
+scope:
+  in:
+    - >-
+      Author the minimal-valid build pattern `docs/examples/demo-factory/.ai-sdd/build/`:
+      `build/pipeline.yaml` (kind: Pipeline, one node `{ id: w, worker: w }`, `edges: []`) and
+      `build/workers/w.worker.yaml` (kind: Worker, `workerKind: transform`, `task: { command: "true" }`,
+      no produces/consumes/checks). This is the smallest validatable build pattern (mirrors
+      `docs/examples/program-milestone/build/`); no checks dir, no schemas, no skills are required for
+      `ai-sdd validate` to pass on it.
+    - >-
+      Author three feature pipelines, each a directory with only a `pipeline.yaml`:
+      `docs/examples/demo-factory/.ai-sdd/features/{auth,billing,search}/pipeline.yaml`. Each has one or
+      two slice nodes `{ id: <slice>, kind: pipeline, pipeline: ../../build, stack: core }` descending
+      into the build pattern, with bare sequencing edges where there is more than one slice. Slice nodes
+      need only a non-empty `pipeline:` ref to validate (no workers/checks dir per feature). Give each
+      feature distinct, named slice ids so the program's `featureStatus` descend has real sub-nodes to
+      reduce against (e.g. `auth` has `signup`,`login` with edge `signup → login`; `billing` has
+      `invoices`; `search` has `index`,`query` with edge `index → query`).
+    - >-
+      Author the program `docs/examples/demo-factory/.ai-sdd/programs/demo/`:
+      `programs/demo/pipeline.yaml` (kind: Pipeline, `metadata.name: demo`) with nodes — feature slices
+      `{ id: auth, kind: pipeline, pipeline: ../../features/auth, stack: core, owner: [maintainer] }`,
+      same for `billing` and `search`, plus a milestone node
+      `{ id: m1-core-integrated, worker: milestone-gate, owner: [maintainer] }` — and bare sequencing
+      edges `auth → m1-core-integrated`, `billing → m1-core-integrated`, `m1-core-integrated → search`
+      (mirrors `guardrails`: parallel features → milestone gate → downstream feature). Program-local
+      `programs/demo/workers/milestone-gate.worker.yaml` (kind: Worker, `workerKind: human`, `produces:
+      [{ schema: validation-result.v1 }]`, `task: { skill: validate-milestone }`, `checks:
+      [validation-result.structure]`) and `programs/demo/checks/validation-result.structure.check.yaml`
+      (kind: Check, `checkKind: deterministic`, the standard `swift run ai-sdd check
+      .ai-sdd/schemas/validation-result.schema.yaml .ai-sdd/artifacts/validation-result.v1.yaml`
+      command, `required: true`) so the milestone node's `worker:` and its `checks:` both RESOLVE at
+      validate time (mirrors `docs/examples/program-milestone/program/`).
+    - >-
+      Author the program's committed `requirements.md`
+      (`docs/examples/demo-factory/.ai-sdd/programs/demo/requirements.md`): a short plain-markdown doc
+      (H1 title + `> APPROVED` blockquote + Goal / Sub-features / Milestones / Sequencing sections),
+      matching the `guardrails`/`program-milestone` requirements shape. Informational only; `validate`
+      ignores it but the slice brief and program shape call for it.
+    - >-
+      Author the committed PORTABLE program run state under
+      `docs/examples/demo-factory/.ai-sdd/runs/<runId>/`. `run.json` = the `RunMeta` JSON
+      `{ "runId": "<runId>", "pipelineDir": ".ai-sdd/programs/demo" }` — `pipelineDir` RELATIVE to the
+      fixture base `docs/examples/demo-factory` (NO absolute path). The `events/` dir holds one
+      `RunEvent` JSON per file named `NNNNNN.json` (6-digit zero-padded, 1-based starting at
+      `000001.json`), each in the compiler-synthesized enum shape `{ "<caseName>": { <labeled values> } }`.
+      Seed the status MIX — `auth` DONE (top-level `nodeCompleted` for `auth`), `billing` IN-PROGRESS
+      (a `scoped` event into slice `billing` starting a real sub-node, e.g.
+      `{ "scoped": { "slice": "billing", "event": { "nodeStarted": { "node": "invoices" } } } }`),
+      `search` and `m1-core-integrated` left to reduce to runnable/pending. Open with a `runStarted`
+      event. The exact `runId` directory name is arbitrary (matching is by `pipelineDir`, not run id) —
+      use a fixed, readable id (e.g. `demo-program-run`).
+    - >-
+      Author `docs/examples/demo-factory/build-fixture.sh`: a committed, deterministic, idempotent
+      `#!/usr/bin/env bash` (`set -euo pipefail`) script that, run from anywhere, resolves its own
+      directory, removes and recreates `.ai-sdd/runs/<runId>/events/`, and writes the literal `run.json`
+      (with the RELATIVE `pipelineDir`) and each `events/NNNNNN.json` via heredocs — reproducing exactly
+      the committed run state. It must write the relative `pipelineDir` directly (no `ai-sdd start`, so
+      no absolute path to rewrite) and must contain NO absolute machine paths. Re-running it reproduces
+      equivalent run state.
+    - >-
+      Author `docs/examples/demo-factory/README.md`: a short doc describing the fixture topology (build
+      pattern + three features + one program with a milestone gate), the committed status mix, how to
+      regenerate via `bash docs/examples/demo-factory/build-fixture.sh`, and the dashboard commands
+      (`ai-sdd validate docs/examples/demo-factory/.ai-sdd`; `ai-sdd graph
+      docs/examples/demo-factory/.ai-sdd --project --dashboard --out /tmp/demo.html`; `ai-sdd graph
+      docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard`). New-model framing only; no legacy
+      ai-sdd references.
+  out:
+    - >-
+      NO changes under `Sources/` or `Tests/`. The engine/CLI behavior this fixture exercises
+      (`--project --dashboard` including programs; `RunStore.base`; relative-`pipelineDir` matching;
+      `RunStore.base(forTarget:)` wired into `dashboardDoc()`) all shipped in prior slices
+      (project-dashboard-programs, portable-run-matching, runstore-from-target). This slice adds no code
+      and changes no existing test.
+    - >-
+      No end-to-end CLI/assembler integration tests over the fixture and no README "Visualizing the
+      factory" showcase section in the repo-root README — those are downstream slices
+      (fixture-integration-tests, readme-showcase). The README here is the fixture's OWN local
+      `docs/examples/demo-factory/README.md`, not the repo-root README.
+    - >-
+      No `schemas/` and no `skills/` directory inside the fixture factory: the validator never loads
+      them, and the committed run state is reduced from a hand-authored event log, so the milestone gate
+      and the feature workers never actually execute (the dashboard only needs `run.json` + events
+      reduced to `RunState`). Adding them would be dead weight beyond minimal-but-valid.
+    - >-
+      No use of `ai-sdd start`/`next`/`submit` to produce the committed run state, and no rewrite step:
+      the script writes the relative `pipelineDir` directly. (`ai-sdd start` would write an ABSOLUTE
+      `pipelineDir`, defeating portability and forcing a fragile rewrite — rejected.)
+    - >-
+      No `.gitignore` edit and no `git add -f`. The repo-root `.ai-sdd/runs/` ignore rule is anchored to
+      the repo-root `.ai-sdd` (verified: `git check-ignore` does NOT match
+      `docs/examples/demo-factory/.ai-sdd/runs/...`), so the nested fixture runs dir commits normally.
+    - >-
+      No artifacts directory and no committed `validation-result.v1` artifact in the fixture: the
+      milestone gate is never run, the dashboard reduces status from the event log, and `validate` does
+      not execute the milestone check command — so the artifact the command would read is unnecessary.
+acceptance:
+  - id: fixture-validates
+    description: >-
+      `ai-sdd validate docs/examples/demo-factory/.ai-sdd` exits 0 — the build pattern, all three
+      features, and the program (including the milestone-gate worker node and its check) load and pass
+      referential + edge-type + acyclicity validation.
+  - id: project-dashboard-shows-features-and-program
+    description: >-
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out /tmp/demo.html`
+      exits 0 and the output contains a `Feature ·` section for each of auth, billing, search AND a
+      `Program · demo` section, with statuses resolved from the fixture's OWN
+      `docs/examples/demo-factory/.ai-sdd/runs` (run-store base derived via `RunStore.base(forTarget:)`).
+  - id: program-dashboard-renders-with-statuses
+    description: >-
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard` exits 0 and renders
+      the program master graph (the three feature nodes + the `m1-core-integrated` milestone node) with
+      the committed status mix.
+  - id: status-mix-is-meaningful
+    description: >-
+      The rendered program statuses are a genuine mix: `auth` shows done, `billing` shows in-progress
+      (from the scoped sub-pipeline event), and `search`/`m1-core-integrated` show pending or runnable —
+      a meaningful picture rather than all-pending.
+  - id: pipelinedir-is-relative
+    description: >-
+      `docs/examples/demo-factory/.ai-sdd/runs/<runId>/run.json` contains `pipelineDir`:
+      `.ai-sdd/programs/demo` (a RELATIVE path), and no committed fixture file contains any absolute
+      machine path.
+  - id: builder-regenerates-equivalent-state
+    description: >-
+      Running `bash docs/examples/demo-factory/build-fixture.sh` reproduces the committed run state
+      (run.json + events) byte-for-byte equivalent and leaves `git status` clean for the runs dir;
+      re-running it is idempotent.
+  - id: runs-dir-committable
+    description: >-
+      `git check-ignore -v docs/examples/demo-factory/.ai-sdd/runs/<runId>/run.json` reports the file is
+      NOT ignored (exit code 1), confirming the fixture run state commits without force-add.
+  - id: build-and-test-green
+    description: >-
+      `swift build` and `swift test` both pass unchanged (this slice adds no source or test code, so no
+      existing behavior or test regresses).
+decisions:
+  - id: fixture-topology-and-names
+    status: closed
+    decision: >-
+      The fixture is one program `demo` over three features `auth`, `billing`, `search`, each descending
+      into a single shared minimal build pattern `build/` (one `task: { command: "true" }` worker). The
+      program `pipeline.yaml` has feature nodes `auth`/`billing`/`search` (`kind: pipeline`) plus a
+      milestone node `m1-core-integrated` (`worker: milestone-gate`), with edges
+      `auth -> m1-core-integrated`, `billing -> m1-core-integrated`, `m1-core-integrated -> search` (two
+      parallel features gate into the milestone, one feature downstream). Each feature has named slice
+      ids descending into `../../build`: `auth` = `signup`,`login`; `billing` = `invoices`; `search` =
+      `index`,`query`.
+    rationale: >-
+      This mirrors the real `.ai-sdd/programs/guardrails` shape (parallel features -> milestone gate ->
+      downstream feature) and the smallest validatable reference `docs/examples/program-milestone`, while
+      staying minimal. Distinct, named slice ids per feature give the program-tier `featureStatus`
+      descend real sub-nodes to reduce a `scoped` event against (so `billing` can show in-progress).
+      Generic SDLC names (auth/billing/search) read as a realistic small product without implying repo
+      specifics.
+  - id: minimal-valid-file-set
+    status: closed
+    decision: >-
+      The committed fixture factory is exactly: `build/pipeline.yaml` + `build/workers/w.worker.yaml`;
+      `features/{auth,billing,search}/pipeline.yaml` (no per-feature workers/checks); `programs/demo/`
+      with `pipeline.yaml`, `requirements.md`, `workers/milestone-gate.worker.yaml`, and
+      `checks/validation-result.structure.check.yaml`. NO `schemas/` and NO `skills/` anywhere in the
+      fixture.
+    rationale: >-
+      Grounded in the validator (SpecLoader.loadBundle + SpecValidator): `validate` operates on ONE
+      pipeline dir and does NOT recurse into sub-pipelines; it requires only a decodable `pipeline.yaml`,
+      resolves non-slice nodes' `worker:` against `workers/` and those workers' `checks:` against
+      `checks/`, and never loads `schemas/` or `skills/`. Slice nodes (kind: pipeline) need only a
+      non-empty `pipeline:` ref. So the build pattern needs its one worker, the features need only their
+      pipelines, and the program needs the milestone-gate worker + its single check to resolve — nothing
+      more. (Verified against `docs/examples/program-milestone`, which validates with this exact minimal
+      set.)
+  - id: relative-pipelinedir-value
+    status: closed
+    decision: >-
+      `run.json`'s `RunMeta.pipelineDir` is the RELATIVE string `.ai-sdd/programs/demo` (relative to the
+      fixture base `docs/examples/demo-factory`). The committed run state is for the PROGRAM run only;
+      one run dir suffices for both dashboards.
+    rationale: >-
+      For both `ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard` and
+      `ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard`, the CLI derives the
+      run-store base via `RunStore.base(forTarget:)`, which ascends to the nearest `.ai-sdd` ancestor and
+      returns its parent — `docs/examples/demo-factory` in both cases — so the store is rooted at
+      `docs/examples/demo-factory/.ai-sdd/runs` and `runStore.base` is `docs/examples/demo-factory`.
+      `DashboardProjection.resolvedPath` then resolves the relative `.ai-sdd/programs/demo` against that
+      base via `URL(fileURLWithPath:relativeTo:)`, yielding the same absolute path the program section
+      expects on any clone. The `--project` path matches the SAME program run for its `Program · demo`
+      section because that section's target is the same program dir. An absolute `pipelineDir` would bind
+      to one machine and break portability.
+  - id: run-state-regeneration-method
+    status: closed
+    decision: >-
+      The committed run state is a hand-authored event log: `build-fixture.sh` writes the literal
+      `run.json` and each `events/NNNNNN.json` as JSON matching the engine's Codable encoding, via
+      heredocs — it does NOT call `ai-sdd start`/`next`/`submit`. Event files are 6-digit zero-padded,
+      1-based (`000001.json`, `000002.json`, ...); each is the compiler-synthesized enum shape
+      `{ "<caseName>": { <associated-value labels> } }`. The event log is: (1) `runStarted`
+      (`{ "runStarted": { "seedArtifacts": [] } }`); (2) `nodeStarted` then `nodeCompleted` for `auth`
+      (top-level -> `completedNodes` => `featureStatus` returns done); (3) a `scoped` event into slice
+      `billing` starting a real sub-node (`{ "scoped": { "slice": "billing", "event": { "nodeStarted":
+      { "node": "invoices" } } } }`) => `state.slices["billing"]` non-empty with an in-progress sub-node
+      => `featureStatus` descends and returns in-progress. `search` and `m1-core-integrated` are left
+      with no events => they reduce to pending/runnable per the Scheduler.
+    rationale: >-
+      Grounded in Run.swift (RunEvent default Codable, Reducer fold) and RunStore.swift (on-disk
+      `run.json` + `events/%06d.json`, plain JSONDecoder). The dashboard only needs `run.json` + the
+      reduced `RunState`; the gates and feature workers need not actually run, so a hand-authored log is
+      the deterministic, reviewable, portable route. `ai-sdd start` is rejected because it writes an
+      ABSOLUTE `pipelineDir` (forcing a fragile rewrite to relative) and a ULID run id
+      (non-deterministic). The exact JSON encoding of each RunEvent case (the nested
+      `{caseName:{labels}}` shape, the 1-based 6-digit filenames) MUST be EMPIRICALLY CONFIRMED by the
+      implementer before templating the heredocs: generate a tiny sample run through the engine (or a
+      one-off Swift snippet that encodes the cases with the engine's
+      `JSONEncoder([.prettyPrinted,.sortedKeys])`) and inspect the produced `events/*.json`, then
+      template the script to match exactly. (`.sortedKeys`/`.prettyPrinted` is cosmetic — any valid JSON
+      with the right keys decodes — but matching it keeps the committed files and the script output
+      byte-identical.)
+  - id: gitignore-allows-commit
+    status: closed
+    decision: >-
+      No `.gitignore` change is needed; the fixture run state commits normally. Verified:
+      `git check-ignore -v docs/examples/demo-factory/.ai-sdd/runs/x/run.json` exits 1 (no match).
+    rationale: >-
+      The repo-root `.ai-sdd/runs/` and `.ai-sdd/artifacts/` ignore rules sit inside the
+      `ai-sdd:begin/end` bootstrap markers and are anchored to the repo-root `.ai-sdd` (leading
+      `.ai-sdd/` = repo-root-relative), so they do not match a nested
+      `docs/examples/demo-factory/.ai-sdd/runs/` path. The fixture therefore commits without force-add
+      and without any negation pattern.
+  - id: milestone-check-command-mirrors-reference
+    status: closed
+    decision: >-
+      The program's `checks/validation-result.structure.check.yaml` uses the same standard command as
+      the repo and `docs/examples/program-milestone`
+      (`swift run ai-sdd check .ai-sdd/schemas/validation-result.schema.yaml
+      .ai-sdd/artifacts/validation-result.v1.yaml`, `required: true`), even though the fixture ships no
+      such schema/artifact.
+    rationale: >-
+      `ai-sdd validate` only checks that the check spec LOADS and that its name resolves in the milestone
+      worker's `checks:` list — it never EXECUTES the command. The command only runs at milestone
+      execution time, which the fixture never reaches (the run state is hand-authored). Mirroring the
+      canonical command keeps the fixture honest and consistent with the reference example rather than
+      inventing a `true` stub.
+  - id: files-scope-confined-to-fixture-dir
+    status: closed
+    decision: >-
+      Every touched file is under the single directory prefix `docs/examples/demo-factory/`. No
+      `Sources/`, no `Tests/`, no repo-root `.gitignore`/`README.md`/`AGENTS.md` change.
+    rationale: >-
+      The slice brief and the feature-plan `files` schema (which permits `docs/...` paths) require the
+      change to be confined to the fixture directory; the diff-in-scope gate accepts a directory prefix.
+      All four deliverables (factory specs, run state, builder script, local README) live under that one
+      prefix, keeping the diff trivially in scope.
+files:
+  - docs/examples/demo-factory/
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate docs/examples/demo-factory/.ai-sdd
+  - swift run ai-sdd graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out /tmp/demo.html
+  - swift run ai-sdd graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard
+  - bash docs/examples/demo-factory/build-fixture.sh
+  - git check-ignore -v docs/examples/demo-factory/.ai-sdd/runs/demo-program-run/run.json

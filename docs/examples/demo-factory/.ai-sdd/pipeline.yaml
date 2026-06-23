@@ -1,0 +1,12 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: demo-factory, version: 1 }
+spec:
+  # The factory's top-level umbrella pipeline. `ai-sdd validate <.ai-sdd>` loads this file; the
+  # project dashboard (`graph --project`) renders it as the "Build pattern" section and then
+  # discovers features/ and programs/ alongside it. One slice into the shared build pattern keeps it
+  # minimal-but-valid (mirrors the repo's own self-build .ai-sdd/pipeline.yaml).
+  semantics: enabler
+  nodes:
+    - { id: scaffold, kind: pipeline, pipeline: build, stack: core }
+  edges: []

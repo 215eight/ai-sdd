@@ -1,0 +1,99 @@
+schema: review.v1
+run: program-dashboard
+slice: demo-fixture
+
+verdict: approve
+summary: >-
+  Independent review of slice demo-fixture (4 of dashboard-showcase) against feature-plan.v1 (8
+  acceptance ids). Inspected every committed fixture file under docs/examples/demo-factory/ (all new,
+  untracked; no Sources/ or Tests/ changes). The factory is minimal-but-coherent and mirrors the real
+  guardrails / docs/examples/program-milestone shapes: a shared minimal build pattern (one
+  command:"true" worker), three features (auth signup→login, billing invoices, search index→query),
+  and one program demo wiring auth+billing → m1-core-integrated (worker milestone-gate) → search with
+  its program-local worker + validation-result.structure check + approved requirements.md. A top-level
+  umbrella .ai-sdd/pipeline.yaml was added beyond the plan's literal scope.in list — correct and
+  necessary (validate/loadBundle loads <dir>/pipeline.yaml directly; no top-level discovery), minimal,
+  in-scope, and disclosed in the changeset. run.json carries the RELATIVE pipelineDir
+  ".ai-sdd/programs/demo"; grep of ALL committed fixture files found NO absolute machine path (only
+  /tmp/ token is the documented README --out example). Event JSON shapes match Run.swift RunEvent cases
+  exactly. I ran every gate myself: swift build complete; swift test 197 tests in 6 suites passed;
+  validate exit 0; both dashboards exit 0 with the matched status mix; git check-ignore exit 1
+  (committable); builder regeneration byte-identical (idempotent). PORTABILITY PROOF: copied the
+  fixture to a mktemp dir and re-rendered --project --dashboard there — auth still resolved to done
+  (status_done present, not all-static), proving the relative pipelineDir resolves against any clone.
+  Every acceptance id passes; conventions satisfied.
+
+items:
+  - id: fixture-validates
+    verdict: pass
+    notes: >-
+      `swift run ai-sdd validate docs/examples/demo-factory/.ai-sdd` → exit 0
+      ("✓ demo-factory: valid"). Umbrella pipeline, build pattern, three features, and the program
+      (milestone-gate worker node + validation-result.structure check) all load and resolve. The extra
+      top-level .ai-sdd/pipeline.yaml (one slice → build) is required because validate/loadBundle loads
+      <dir>/pipeline.yaml directly with no top-level discovery; it is minimal-but-valid, stays under the
+      in-scope docs/examples/demo-factory/ prefix, and is disclosed in the changeset. Build, feature,
+      and program pipelines also validate.
+  - id: project-dashboard-shows-features-and-program
+    verdict: pass
+    notes: >-
+      `graph docs/examples/demo-factory/.ai-sdd --project --dashboard --out /tmp/rev_demo.html` →
+      exit 0. HTML contains exactly one each of "Feature · auth", "Feature · billing",
+      "Feature · search", and "Program · demo". Statuses resolved from the fixture's own runs/ (run was
+      MATCHED, not all-static): status_done, status_in_progress, milestone_pending, status_pending all
+      present.
+  - id: program-dashboard-renders-with-statuses
+    verdict: pass
+    notes: >-
+      `graph docs/examples/demo-factory/.ai-sdd/programs/demo --dashboard` → exit 0; renders the master
+      graph with all four nodes (auth, billing, search, m1-core-integrated). Status classes present:
+      status_done, status_in_progress, milestone_pending, status_pending — the committed mix surfaces
+      from the relative-pipelineDir-matched run.
+  - id: status-mix-is-meaningful
+    verdict: pass
+    notes: >-
+      Genuine mix confirmed on both dashboards: auth=done (top-level nodeCompleted), billing=in-progress
+      (scoped nodeStarted into sub-node invoices), m1-core-integrated=milestone_pending, search=pending.
+      Verified the event log against Run.swift RunEvent cases
+      (runStarted/nodeStarted/nodeCompleted/scoped) — it folds to exactly this picture.
+  - id: pipelinedir-is-relative
+    verdict: pass
+    notes: >-
+      run.json pipelineDir is the RELATIVE string ".ai-sdd/programs/demo" (no absolute path). Grep of
+      ALL committed fixture files for /Users/, /Users/215eight, $HOME, /home/ → NONE. The only /tmp/
+      token is the documented README `--out /tmp/demo.html` example (acceptable). PORTABILITY PROOF:
+      copied the fixture to a mktemp dir and rendered --project --dashboard there → exit 0 with auth
+      still done (status_done present, NOT all-static), proving the relative pipelineDir resolves
+      against any clone's base via RunStore.base(forTarget:). Temp dir cleaned up.
+  - id: builder-regenerates-equivalent-state
+    verdict: pass
+    notes: >-
+      build-fixture.sh is executable (-rwxr-xr-x), `#!/usr/bin/env bash` with `set -euo pipefail`,
+      resolves its own dir, and writes the RELATIVE pipelineDir directly (no ai-sdd start). Idempotence:
+      shasum of all runs/ files before vs. after running the script is byte-identical. The runtime
+      stdout echo prints an absolute path, but that is console output, not committed file content —
+      committed files stay clean.
+  - id: runs-dir-committable
+    verdict: pass
+    notes: >-
+      `git check-ignore -v docs/examples/demo-factory/.ai-sdd/runs/demo-program-run/run.json` → exit 1
+      (no match). The fixture runs dir commits without force-add; the repo-root .ai-sdd/runs/ ignore
+      rule is anchored to the repo root and does not match the nested path.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      `swift build` → "Build complete!". `swift test` → "Test run with 197 tests in 6 suites passed".
+      No Sources/ or Tests/ changes (all touched files under docs/examples/demo-factory/), so no
+      behavior or test regressed; count matches the prior baseline.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Pure docs/fixture slice — no Sources/ or Tests/ changes, no Layout/engine/CLI edits, no
+    .gitignore edit. All touched files confined to the single in-scope prefix docs/examples/demo-factory/.
+    Specs follow the apiVersion/kind/metadata/spec shape used by the repo and reference examples; the
+    fixture mirrors the real guardrails / program-milestone topology. Adopter-facing README uses
+    new-model framing only (no legacy ai-sdd references). Baseline gates swift build and swift test are
+    green.
+
+rework: null
