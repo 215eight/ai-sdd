@@ -1,0 +1,22 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata:
+  name: dashboard-showcase
+  version: 1
+  correlation: ai-sdd/dashboard-showcase
+  factory: code
+spec:
+  semantics: enabler
+  nodes:
+    - { id: project-dashboard-programs, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: portable-run-matching, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: runstore-from-target, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: demo-fixture, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: fixture-integration-tests, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: readme-showcase, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: portable-run-matching, to: runstore-from-target }
+    - { from: project-dashboard-programs, to: demo-fixture }
+    - { from: runstore-from-target, to: demo-fixture }
+    - { from: demo-fixture, to: fixture-integration-tests }
+    - { from: fixture-integration-tests, to: readme-showcase }
