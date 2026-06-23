@@ -1,0 +1,203 @@
+summary: >-
+  End-to-end verification of the already-shipped PROGRAM dashboard plus one adopter-facing doc note
+  (slice program-dashboard-verification, slice 4 of 4 — the LAST — of program-status-dashboard). NO
+  new engine/CLI/test logic: the pure program rollup projection, `ProgramDashboardAssembler`, the
+  relaxed `Graph.dashboardDoc()` `--dashboard` gate, and the milestone mermaid styling all shipped and
+  were merged by slices 1-3 and are exercised unchanged. This slice (a) proves the full pipeline green
+  — `swift build`, `swift test`, `swift run ai-sdd validate .ai-sdd` — and that
+  `swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/prog.html` exits 0 and
+  renders the three feature nodes (`locks`, `provenance`, `drift`) done, the `m1-guardrails-integrated`
+  milestone passed, and the `feature → milestone → feature` sequencing; (b) proves the regression
+  surface — `swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/proj.html` exits 0
+  unchanged and plain `swift run ai-sdd graph .ai-sdd/programs/guardrails` (and `--html`) Mermaid output
+  is unchanged; and (c) documents the new program-tier invocation in `QUICKSTART.md`, in the existing
+  "Visualize the work" section where the project dashboard invocation already lives, adopter-facing and
+  focused on the new model (no legacy ai-sdd references). The only file edited is `QUICKSTART.md`. The
+  doc describes the program dashboard truthfully the same way the project dashboard is described:
+  self-contained inline-SVG charts, a snapshot of local `.ai-sdd/runs` state, and the master graph
+  rendered by the shared Mermaid runtime — it does NOT claim fully-offline graph rendering, because the
+  dashboard page's Mermaid is rendered via a pre-existing inline ESM `import mermaid from
+  'https://cdn.jsdelivr.net/...'` shared byte-identically with the project/plant dashboard
+  (`GraphRenderer.mermaidScript`, used by `GraphRenderer.dashboardPage`). KEEP PARITY with the project
+  dashboard — `dashboardPage` is NOT modified (out of scope, user-approved).
+scope:
+  in:
+    - >-
+      Verify the full pipeline is green: `swift build`, `swift test`, and
+      `swift run ai-sdd validate .ai-sdd` all exit 0.
+    - >-
+      Verify the real program dashboard:
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/prog.html` exits 0 and
+      writes a self-contained HTML file rendering the three feature nodes (`locks`, `provenance`,
+      `drift`) as done, the `m1-guardrails-integrated` milestone as passed, and the feature → milestone
+      → feature sequencing edges (locks→m1, provenance→m1, m1→drift).
+    - >-
+      Verify "self-contained" in the established project-dashboard sense: the page's donut + grouped bar
+      charts are inline `<svg>` and the page has NO external asset reference — no `(src|href)="http…"`
+      attribute (the master graph is rendered by the shared inline ESM Mermaid import, identical to the
+      project dashboard); and every dynamic name/id/status/text is HTML-escaped.
+    - >-
+      Regression: `swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/proj.html` exits 0
+      and is unchanged via the existing `ProjectDashboardAssembler` path.
+    - >-
+      Regression: plain `swift run ai-sdd graph .ai-sdd/programs/guardrails` and
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --html` Mermaid output are unchanged
+      (additive-only behavior on the dashboard path; non-dashboard graph modes untouched).
+    - >-
+      Document the new program-tier invocation in `QUICKSTART.md`, in the existing "Visualize the work"
+      section alongside the `ai-sdd graph .ai-sdd --project --dashboard --out dashboard.html` line: add a
+      command line for `ai-sdd graph .ai-sdd/programs/<slug> --dashboard --out <file>` and a short
+      adopter-facing note describing the program dashboard truthfully (rolled-up feature statuses +
+      milestone gates, self-contained inline-SVG charts, a local-runs snapshot), mirroring how the
+      project dashboard is already described.
+  out:
+    - >-
+      No source or test changes. The program rollup projection, `ProgramDashboardAssembler`, the
+      relaxed `Graph.dashboardDoc()` gate, and the milestone mermaid styling shipped in slices 1-3 and
+      are consumed unchanged; if verification reveals a real source defect, STOP and surface it (it
+      belongs in a prior slice or a downstream revert slice) — do NOT fold a fix into this slice.
+    - >-
+      No change to `GraphRenderer.dashboardPage` or `GraphRenderer.mermaidScript`. The dashboard's
+      Mermaid CDN ESM import is kept at parity with the project/plant dashboard (user-approved); this
+      slice does not attempt to inline or remove it.
+    - >-
+      No change to the project dashboard, the plant dashboard, single-graph, `--html`, or plain Mermaid
+      output, and no new CLI flag/command — all preserved as shipped.
+    - >-
+      No new ADR, no architecture change, and no doc claim of fully-offline graph rendering.
+    - >-
+      No edits to any file other than `QUICKSTART.md` (e.g. no `README.md`, `AGENTS.md`, `docs/*.md`, or
+      `.ai-sdd/**` changes) — the project dashboard is documented in `QUICKSTART.md`, so the program
+      note lands there too; the diff-in-scope gate compares against the last commit.
+    - >-
+      No live overlay, server, auth, or remote run fragments (ADR-0027 pending items remain out of
+      scope).
+acceptance:
+  - id: pipeline-green
+    description: >-
+      `swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` each exit 0.
+  - id: program-dashboard-renders
+    description: >-
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/prog.html` exits 0 and
+      prints the `✓ wrote /tmp/prog.html` confirmation; `/tmp/prog.html` exists and is non-empty.
+  - id: program-dashboard-nodes-and-statuses
+    description: >-
+      `/tmp/prog.html` contains the three guardrails feature node labels (`locks`, `provenance`,
+      `drift`) and the `m1-guardrails-integrated` milestone, with the feature → milestone → feature
+      sequencing (edges locks→m1, provenance→m1, m1→drift). Because the guardrails run is complete, the
+      three features render as done (`:::status_done`) and the milestone renders as a distinct gate
+      shape passed (`{{…}}:::milestone_done`).
+  - id: program-dashboard-self-contained
+    description: >-
+      `/tmp/prog.html` is self-contained in the established project-dashboard sense: it contains inline
+      `<svg>` chart markup (the status donut and the grouped-by-owner bar chart) AND has NO external
+      asset attribute — `grep -E '(src|href)="https?:' /tmp/prog.html` matches nothing. (The master
+      graph is rendered by the shared inline ESM `import mermaid from 'https://cdn.jsdelivr.net/…'`,
+      byte-identical to the project dashboard — a JS import statement, not an asset src/href attribute;
+      see decision cdn-parity-self-contained.)
+  - id: program-dashboard-escaped
+    description: >-
+      Every dynamic value in `/tmp/prog.html` (node ids/names, statuses, owner labels) is HTML-escaped —
+      the rendered text contains no raw unescaped `<`/`>`/`&` from dynamic content (escaping is produced
+      by the already-tested renderer; this item confirms it holds for the real artifact).
+  - id: project-dashboard-regression
+    description: >-
+      `swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/proj.html` exits 0 and writes the
+      project dashboard via the unchanged `ProjectDashboardAssembler` path.
+  - id: plain-mermaid-unchanged
+    description: >-
+      Plain `swift run ai-sdd graph .ai-sdd/programs/guardrails` and
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --html` still produce their pre-existing
+      Mermaid output (no dashboard styling leaks into the non-dashboard graph modes); confirmed by
+      `swift test` staying green plus a manual spot check.
+  - id: quickstart-documents-program-dashboard
+    description: >-
+      `QUICKSTART.md` documents `ai-sdd graph .ai-sdd/programs/<slug> --dashboard --out <file>` in the
+      existing "Visualize the work" section next to the project `--dashboard` line, with an
+      adopter-facing note that describes the program dashboard (rolled-up feature statuses + milestone
+      gates, self-contained inline-SVG charts, a local-runs snapshot) and does NOT claim fully-offline
+      graph rendering. No legacy ai-sdd references are introduced.
+  - id: diff-in-scope
+    description: >-
+      The working-tree diff against the last commit touches only `QUICKSTART.md`; no source, test, or
+      other doc files are modified.
+decisions:
+  - id: doc-target-quickstart
+    status: closed
+    decision: >-
+      Document the program-tier invocation in `QUICKSTART.md`, in the existing "Visualize the work (for
+      you and your team)" section, immediately alongside the
+      `ai-sdd graph .ai-sdd --project --dashboard --out dashboard.html` line (currently QUICKSTART.md
+      ~line 212) and the project-dashboard explanatory paragraph (~lines 216-219). Add a command line
+      for `ai-sdd graph .ai-sdd/programs/<slug> --dashboard --out <file>` plus a short note. No other
+      file is edited.
+    rationale: >-
+      A repo-wide `grep` for `--dashboard` in `*.md` (excluding `legacy/`, `.ai-sdd/features`,
+      `.ai-sdd/artifacts`) shows the only adopter-facing place the project/plant dashboard invocation is
+      documented is `QUICKSTART.md` (the "Visualize the work" section); `docs/` has no project-dashboard
+      usage doc. Putting the program note where the project note already lives keeps the docs coherent
+      and the diff to a single allowed file (`QUICKSTART.md` is in the schema's permitted `files`
+      prefix).
+  - id: cdn-parity-self-contained
+    status: closed
+    decision: >-
+      KEEP PARITY with the project dashboard and do NOT modify `GraphRenderer.dashboardPage` /
+      `GraphRenderer.mermaidScript` (out of scope). The "self-contained" claim is honest and precise:
+      (a) the dashboard CHARTS (status donut + grouped bar) are inline `<svg>` → truly self-contained,
+      and (b) the dashboard page has NO external asset attribute (no `(src|href)="http…"`). The master
+      GRAPH is rendered by a pre-existing inline ESM `import mermaid from
+      'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs'`
+      (`GraphRenderer.mermaidScript`, line 511, used by `dashboardPage`) — shared byte-identically with
+      the project/plant dashboard. The `program-dashboard-self-contained` acceptance item therefore
+      asserts inline-SVG charts present AND no external src/href attribute — NOT zero network
+      references. The `QUICKSTART.md` note describes the program dashboard the same way the project
+      dashboard is described and does NOT claim fully-offline graph rendering.
+    rationale: >-
+      Grounded in `Sources/AISDDEngine/GraphRenderer.swift:508-516`, where `mermaidScript()` emits an
+      inline `<script type="module">` ESM import from the jsdelivr CDN and is reused by `dashboardPage`
+      for the project, plant, and program tiers identically. The Mermaid import is a JS `import`
+      statement, not an HTML `src=`/`href=` asset attribute, so "no external src/href" holds while a CDN
+      reference still exists. The user approved matching the project dashboard's established behavior:
+      modifying `dashboardPage` to inline Mermaid would (i) be out of this slice's scope, (ii) break
+      byte-for-byte parity the program tier was required to keep, and (iii) widen the diff beyond the
+      one doc file. Honest wording that mirrors the existing project-dashboard description is the
+      decision-closed choice.
+  - id: verification-only-no-source-changes
+    status: closed
+    decision: >-
+      This slice performs verification + the doc note only; it makes NO source or test changes. If a
+      verification command reveals a real defect in shipped engine/CLI code, STOP and surface it as a
+      finding for a prior slice or a downstream `<slice>-revert` slice — do NOT fold a fix into this
+      slice. `files` is limited to `QUICKSTART.md`; `tests` lists the build/test/validate commands plus
+      the CLI graph commands as the runnable evidence.
+    rationale: >-
+      Slices 1-3 shipped and unit-tested the rollup projection, `ProgramDashboardAssembler`, the relaxed
+      `Graph.dashboardDoc()` gate, and milestone styling; the prior CLI slice already confirmed the
+      program dashboard renders. This final slice's job is the end-to-end proof against the real
+      guardrails program plus adopter docs. Per the slice constraints, the diff-in-scope gate compares
+      against the last commit, so only the doc file may change; folding a code fix here would both
+      exceed scope and obscure which slice owns the defect.
+  - id: doc-content-new-model-only
+    status: closed
+    decision: >-
+      The `QUICKSTART.md` note is adopter-facing and describes only the new model: a program dashboard
+      that overlays the master program graph (feature nodes rolled up to a single status + milestone
+      gate nodes + feature → milestone → feature sequencing) with status from the local `.ai-sdd/runs`
+      snapshot, self-contained with inline-SVG charts, mirroring the existing project-dashboard
+      paragraph's framing (snapshot of local runs, not a shared live team dashboard). No legacy ai-sdd
+      references, no fully-offline-graph claim, no new flag/command introduced in prose.
+    rationale: >-
+      The memory rule "adopter docs focus on the new model" and the slice brief both require new-model,
+      no-legacy framing; mirroring the established project-dashboard wording keeps the two tiers
+      described consistently and avoids overclaiming offline rendering that the shared Mermaid CDN import
+      would contradict.
+files:
+  - QUICKSTART.md
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd
+  - swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/prog.html
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/proj.html
+  - swift run ai-sdd graph .ai-sdd/programs/guardrails
+  - swift run ai-sdd graph .ai-sdd/programs/guardrails --html

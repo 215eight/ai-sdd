@@ -210,6 +210,7 @@ ai-sdd graph .ai-sdd/features/<slug>            # one feature's slice graph
 ai-sdd graph .ai-sdd --project                  # the repo: build pattern + every feature, one index
 ai-sdd graph .ai-sdd --project --out .ai-sdd/graph/index.md   # committed, browsable in the tree
 ai-sdd graph .ai-sdd --project --dashboard --out dashboard.html   # self-contained local status dashboard
+ai-sdd graph .ai-sdd/programs/<slug> --dashboard --out program.html   # a program's master graph as a status dashboard
 ai-sdd graph .ai-sdd/features/<slug> --html --out graph.html   # a self-contained page (any host / open locally)
 ```
 
@@ -217,6 +218,12 @@ The project dashboard overlays the repo factory graphs with status from your loc
 store. It is a snapshot of the runs on your machine, not a shared live team dashboard. Plant-level
 dashboards (`--plant --dashboard`) and live multi-user/team dashboards are out of scope for this
 workflow today.
+
+The program dashboard does the same one tier up: it renders a program's master graph — each
+sub-feature as a single node with its status rolled up from the program run, and the milestone
+validation gates styled distinctly — alongside the same self-contained inline-SVG charts (status
+donut + owner bar chart). Like the project dashboard, it is a snapshot of your local `.ai-sdd/runs`
+store, not a shared live team dashboard.
 
 Across repos, a thin `plant.yaml` lists fragment locations and `ai-sdd graph --plant plant.yaml`
 aggregates them into one program view, grouped by milestone, flagging cross-repo contract-version

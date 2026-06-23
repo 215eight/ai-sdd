@@ -1,0 +1,33 @@
+summary: >-
+  Slice program-dashboard-verification (4 of 4, the LAST, of program-status-dashboard):
+  end-to-end verification of the already-shipped PROGRAM dashboard plus one adopter-facing
+  doc note. NO source or test changes — the pure program rollup projection,
+  `ProgramDashboardAssembler`, the relaxed `Graph.dashboardDoc()` `--dashboard` gate, and the
+  milestone mermaid styling shipped in slices 1-3 and are exercised unchanged. Verified the full
+  pipeline green: `swift build` exit 0, `swift test` exit 0 (184 tests, 6 suites passed),
+  `swift run ai-sdd validate .ai-sdd` exit 0. Verified the program dashboard:
+  `swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/prog.html` exit 0
+  (`✓ wrote /tmp/prog.html`); /tmp/prog.html contains node ids `locks`, `provenance`, `drift`,
+  and `m1-guardrails-integrated`, the three features render `:::status_done`, the milestone
+  renders as a distinct gate shape (`{{`) with `milestone_done`, and the page has two inline
+  `<svg>` charts (status donut + owner bar) with NO external `(src|href)="https?:"` attribute
+  (grep matched nothing; the inline ESM `import mermaid from 'https://cdn.jsdelivr.net/…'` is
+  expected parity with the project dashboard, not an asset attribute). Verified regressions:
+  `swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/proj.html` exit 0 and still
+  shows `Feature ·` sections (8) and NOT `Program ·` (0); plain
+  `swift run ai-sdd graph .ai-sdd/programs/guardrails` exit 0 emits a plain ```mermaid fence with
+  no dashboard HTML, and `--html` exit 0. Added an adopter-facing note to `QUICKSTART.md` in the
+  existing "Visualize the work" section documenting the program-tier invocation
+  `ai-sdd graph .ai-sdd/programs/<slug> --dashboard --out <file>` (new-model framing, no legacy
+  references, no fully-offline-graph claim — mirrors the project-dashboard wording). The only file
+  edited is `QUICKSTART.md`.
+satisfies:
+  - pipeline-green
+  - program-dashboard-renders
+  - program-dashboard-nodes-and-statuses
+  - program-dashboard-self-contained
+  - program-dashboard-escaped
+  - project-dashboard-regression
+  - plain-mermaid-unchanged
+  - quickstart-documents-program-dashboard
+  - diff-in-scope

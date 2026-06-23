@@ -1,0 +1,93 @@
+schema: review.v1
+run: program-dashboard
+slice: program-dashboard-verification
+
+verdict: approve
+summary: >-
+  Independent review of slice program-dashboard-verification (4 of 4, the LAST) against
+  feature-plan.v1 (9 acceptance ids). Verification-only slice plus one adopter doc note. Inspected
+  the real working-tree diff vs HEAD: exactly one file changed — QUICKSTART.md, +7 lines, 0
+  deletions, nothing untracked — so no source/test/other-doc files are touched. Re-ran every gate
+  and CLI command myself rather than trusting the changeset prose: swift build exit 0; swift test
+  "184 tests in 6 suites passed"; `validate .ai-sdd` exit 0; program dashboard, project dashboard,
+  plain mermaid, and --html all behave exactly as the acceptance ids require. Every acceptance id
+  passes and conventions are satisfied.
+
+items:
+  - id: pipeline-green
+    verdict: pass
+    notes: >-
+      Re-ran independently. `swift build` exit 0 ("Build complete!"); `swift test` reported "Test run
+      with 184 tests in 6 suites passed" (every suite/test printed passed); `swift run ai-sdd validate
+      .ai-sdd` printed "✓ ai-sdd-feature: valid — 3 nodes, 3 edges, 4 workers, 8 checks" exit 0.
+  - id: program-dashboard-renders
+    verdict: pass
+    notes: >-
+      `swift run ai-sdd graph .ai-sdd/programs/guardrails --dashboard --out /tmp/rev4.html` printed
+      "✓ wrote /tmp/rev4.html", prog_exit=0; the file exists and is non-empty.
+  - id: program-dashboard-nodes-and-statuses
+    verdict: pass
+    notes: >-
+      /tmp/rev4.html contains node ids locks, provenance, drift, and m1-guardrails-integrated. All
+      three feature nodes carry `:::status_done` (3 matches). Milestone renders the distinct gate shape
+      `{{...}}:::milestone_done` (1 `{{`, 2 `milestone_done`). Sequencing edges present in the mermaid
+      block: `locks --> m1_guardrails_integrated`, `provenance --> m1_guardrails_integrated`,
+      `m1_guardrails_integrated --> drift` (mermaid sanitizes hyphens to underscores in edge ids —
+      cosmetic, the rendered node label keeps `m1-guardrails-integrated`).
+  - id: program-dashboard-self-contained
+    verdict: pass
+    notes: >-
+      /tmp/rev4.html has two inline `<svg>` charts (status donut + owner bar; `<svg` count 2).
+      `grep -E '(src|href)="https?:' /tmp/rev4.html` matched nothing (exit 1). The only network
+      reference is the single inline ESM `import mermaid from 'https://cdn.jsdelivr.net/…'` (1 jsdelivr
+      match) — a JS import statement, not an asset src/href attribute, byte-identical parity with the
+      project dashboard per decision cdn-parity-self-contained. Acceptance wording (inline-SVG charts
+      AND no external src/href, NOT zero network) is honestly satisfied; the QUICKSTART note does not
+      overclaim offline rendering.
+  - id: program-dashboard-escaped
+    verdict: pass
+    notes: >-
+      Dynamic content is HTML-escaped in the real artifact: the milestone node renders
+      `m1-guardrails-integrated&lt;br/&gt;done milestone-gate @maintainer&quot;}}:::milestone_done` and
+      feature nodes render `&quot;…&lt;br/&gt;done slice…`. Escaped entities present (&lt; &gt; &quot;);
+      no raw unescaped `<`/`>`/`&` from dynamic values.
+  - id: project-dashboard-regression
+    verdict: pass
+    notes: >-
+      `swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/rev4proj.html` exit 0
+      ("✓ wrote"). File is the project tier: 8 `Feature ·` sections, 0 `Program ·`. No external
+      src/href attribute (grep exit 1). Unchanged ProjectDashboardAssembler path.
+  - id: plain-mermaid-unchanged
+    verdict: pass
+    notes: >-
+      Plain `swift run ai-sdd graph .ai-sdd/programs/guardrails` exit 0: 1 ```mermaid fence, 0
+      `<!DOCTYPE` (no dashboard HTML leaks into the non-dashboard mode). `--html` variant exit 0 with a
+      `<!DOCTYPE` (full self-contained page), as expected. swift test green corroborates non-dashboard
+      modes untouched.
+  - id: quickstart-documents-program-dashboard
+    verdict: pass
+    notes: >-
+      QUICKSTART.md "Visualize the work" section now has the command line
+      `ai-sdd graph .ai-sdd/programs/<slug> --dashboard --out program.html` directly below the project
+      `--dashboard` line (QUICKSTART.md:213), plus a new paragraph (lines 222-226) describing the
+      program dashboard truthfully: rolled-up sub-feature statuses, milestone gates styled distinctly,
+      "self-contained inline-SVG charts (status donut + owner bar chart)", a snapshot of the local
+      `.ai-sdd/runs` store. It does NOT claim fully-offline graph rendering and mirrors the
+      project-dashboard paragraph's tone/format. No "legacy" token anywhere in the file; new-model
+      framing only.
+  - id: diff-in-scope
+    verdict: pass
+    notes: >-
+      `git diff --stat` shows exactly one file changed: QUICKSTART.md, +7 insertions, 0 deletions. No
+      source, test, or other doc files touched; nothing untracked.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Per swift.md the baseline gates `swift build`, `swift test`, and `swift run ai-sdd
+    validate .ai-sdd` were run and are green. This is a verification + adopter-doc slice with no
+    source/test changes (decision verification-only-no-source-changes); the only edited file,
+    QUICKSTART.md, is the established adopter-facing home for dashboard docs and the memory rule
+    "adopter docs focus on the new model" is honored (no legacy references). Verification reproduced
+    the shipped engine/CLI behavior end-to-end without revealing any defect, so no STOP/revert was
+    needed.
