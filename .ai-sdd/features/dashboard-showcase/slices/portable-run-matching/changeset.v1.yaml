@@ -1,0 +1,29 @@
+summary: >-
+  Made dashboard run-matching machine-independent (slice portable-run-matching, 2 of
+  dashboard-showcase) so a committed fixture with a RELATIVE RunMeta.pipelineDir matches its run on
+  any clone. Added a pure accessor `RunStore.base` to Sources/AISDDEngine/RunStore.swift — the exact
+  inverse of `RunStore.local(under:)` (drops the two trailing path components `runs` then `.ai-sdd`,
+  reusing the same Layout literals structurally, no new path literal). In
+  Sources/AISDDEngine/DashboardProjection.swift, both duplicated `matchedState` copies
+  (ProgramDashboardAssembler and ProjectDashboardAssembler) now compare each run's stored pipelineDir
+  via a new per-copy `resolvedPath(_:base:)` helper: an ABSOLUTE stored pipelineDir
+  (`(stored as NSString).isAbsolutePath`) keeps today's exact `standardizedPath` behavior (base
+  ignored); a RELATIVE stored pipelineDir is resolved with
+  `URL(fileURLWithPath:relativeTo: runStore.base).standardizedFileURL.path` before comparison. The
+  queried side is unchanged (`pipelineDir.standardizedFileURL.path`). The two matchedState/resolvedPath/
+  standardizedPath copies remain byte-identical; no shared cross-assembler matcher introduced. Added
+  five Swift Testing cases in Tests/AISDDEngineTests/EngineTests.swift built via
+  `RunStore.local(under: base)`. No change to how `ai-sdd start` writes runs, no CLI/fixture/docs/Layout
+  change. swift build exit 0, swift test exit 0 (193 tests, 6 suites passed), all pre-existing project +
+  program dashboard tests unchanged.
+satisfies:
+  - absolute-pipelinedir-still-matches
+  - relative-pipelinedir-resolves-against-base-and-matches
+  - non-matching-relative-does-not-match
+  - runstore-base-inverts-local-under
+  - existing-run-matching-tests-unchanged
+  - build-and-test-green
+files:
+  - Sources/AISDDEngine/RunStore.swift
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift

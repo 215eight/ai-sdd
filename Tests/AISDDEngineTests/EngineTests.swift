@@ -2008,6 +2008,109 @@ struct EngineTests {
         }
     }
 
+    // MARK: - Portable run matching (relative pipelineDir resolves against the run-store base)
+
+    @Test func runStoreBaseInvertsLocalUnder() {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-base-\(UUID().uuidString)", isDirectory: true)
+        #expect(RunStore.local(under: base).base.standardizedFileURL.path
+            == base.standardizedFileURL.path)
+    }
+
+    @Test func matchedStateStillMatchesAbsolutePipelineDir() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-portable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let feature = base.appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("alpha", isDirectory: true)
+        try writePipeline(at: feature, name: "alpha", nodes: ["plan", "implement"],
+                          edges: [("plan", "implement")])
+
+        let store = RunStore.local(under: base)
+        // Regression guard: an ABSOLUTE stored pipelineDir still matches (base is irrelevant).
+        try store.create(runId: "abs-run", pipelineDir: feature.standardizedFileURL.path)
+        try store.append(.nodeCompleted(node: "plan", producedArtifacts: []), to: "abs-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: base, runStore: store)
+        let rows = try #require(dashboard.sections.first { $0.heading == "Feature · alpha" }?.projection.rows)
+        #expect(Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.status) }) == [
+            "plan": .done,
+            "implement": .runnable
+        ])
+    }
+
+    @Test func matchedStateResolvesRelativePipelineDirAgainstBase() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-portable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let feature = base.appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("alpha", isDirectory: true)
+        try writePipeline(at: feature, name: "alpha", nodes: ["plan", "implement"],
+                          edges: [("plan", "implement")])
+
+        let store = RunStore.local(under: base)
+        // A committed-fixture-style RELATIVE pipelineDir resolves against the run-store base and
+        // matches the absolute feature dir at <base>/features/alpha.
+        try store.create(runId: "rel-run", pipelineDir: "features/alpha")
+        try store.append(.nodeCompleted(node: "plan", producedArtifacts: []), to: "rel-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: base, runStore: store)
+        let rows = try #require(dashboard.sections.first { $0.heading == "Feature · alpha" }?.projection.rows)
+        #expect(Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.status) }) == [
+            "plan": .done,
+            "implement": .runnable
+        ])
+    }
+
+    @Test func matchedStateResolvesRelativeProgramPipelineDirAgainstBase() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-portable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let programDir = base.appendingPathComponent(Layout.programsDir, isDirectory: true)
+            .appendingPathComponent("guardrails", isDirectory: true)
+        try writeProgramFixture(at: programDir, name: "guardrails")
+
+        let store = RunStore.local(under: base)
+        // A RELATIVE program pipelineDir (e.g. `.ai-sdd/programs/<slug>`-style) resolves against the
+        // base and matches the absolute program dir, so the seeded rollup status renders.
+        try store.create(runId: "prog-rel-run",
+                         pipelineDir: "\(Layout.programsDir)/guardrails")
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "plan", producedArtifacts: [])),
+                         to: "prog-rel-run")
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "implement", producedArtifacts: [])),
+                         to: "prog-rel-run")
+
+        let dashboard = try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        #expect(status(dashboard.sections[0].projection, "locks") == .done)
+    }
+
+    @Test func matchedStateIgnoresNonMatchingRelativePipelineDir() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-portable-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let feature = base.appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("alpha", isDirectory: true)
+        try writePipeline(at: feature, name: "alpha", nodes: ["plan", "implement"],
+                          edges: [("plan", "implement")])
+
+        let store = RunStore.local(under: base)
+        // A RELATIVE pipelineDir that resolves (against the base) to a DIFFERENT dir must NOT match:
+        // the node stays stateless (runnable/pending), not the run's done.
+        try store.create(runId: "mismatch-run", pipelineDir: "features/beta")
+        try store.append(.nodeCompleted(node: "plan", producedArtifacts: []), to: "mismatch-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: base, runStore: store)
+        let rows = try #require(dashboard.sections.first { $0.heading == "Feature · alpha" }?.projection.rows)
+        #expect(Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.status) }) == [
+            "plan": .runnable,
+            "implement": .pending
+        ])
+    }
+
     // MARK: - Milestone gate styling + escaping (pure dashboardMermaid)
 
     @Test func dashboardMermaidStylesMilestonesAsDistinctGates() {

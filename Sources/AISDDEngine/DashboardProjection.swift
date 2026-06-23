@@ -178,11 +178,22 @@ public enum ProgramDashboardAssembler {
         let expected = pipelineDir.standardizedFileURL.path
         for runId in (try? runStore.runIds()) ?? [] {
             guard let meta = try? runStore.meta(of: runId),
-                  standardizedPath(meta.pipelineDir) == expected
+                  resolvedPath(meta.pipelineDir, base: runStore.base) == expected
             else { continue }
             return try? runStore.state(of: runId)
         }
         return nil
+    }
+
+    /// Resolve a stored `RunMeta.pipelineDir` to a comparable standardized path. An ABSOLUTE stored
+    /// path keeps today's exact behavior (base ignored); a RELATIVE stored path is anchored to the
+    /// run-store base before standardizing, so a committed-fixture-style relative run matches on any
+    /// clone.
+    private static func resolvedPath(_ stored: String, base: URL) -> String {
+        if (stored as NSString).isAbsolutePath {
+            return standardizedPath(stored)
+        }
+        return URL(fileURLWithPath: stored, relativeTo: base).standardizedFileURL.path
     }
 
     private static func standardizedPath(_ path: String) -> String {
@@ -262,11 +273,22 @@ public enum ProjectDashboardAssembler {
         let expected = pipelineDir.standardizedFileURL.path
         for runId in (try? runStore.runIds()) ?? [] {
             guard let meta = try? runStore.meta(of: runId),
-                  standardizedPath(meta.pipelineDir) == expected
+                  resolvedPath(meta.pipelineDir, base: runStore.base) == expected
             else { continue }
             return try? runStore.state(of: runId)
         }
         return nil
+    }
+
+    /// Resolve a stored `RunMeta.pipelineDir` to a comparable standardized path. An ABSOLUTE stored
+    /// path keeps today's exact behavior (base ignored); a RELATIVE stored path is anchored to the
+    /// run-store base before standardizing, so a committed-fixture-style relative run matches on any
+    /// clone.
+    private static func resolvedPath(_ stored: String, base: URL) -> String {
+        if (stored as NSString).isAbsolutePath {
+            return standardizedPath(stored)
+        }
+        return URL(fileURLWithPath: stored, relativeTo: base).standardizedFileURL.path
     }
 
     private static func standardizedPath(_ path: String) -> String {

@@ -29,6 +29,13 @@ public struct RunStore: Sendable {
             .appendingPathComponent(Layout.runsDir, isDirectory: true))
     }
 
+    /// The base directory this store hangs off of — the exact inverse of `local(under:)`, which builds
+    /// `root = <base>/Layout.homeDir/Layout.runsDir`. Dropping the two trailing path components
+    /// (`runs`, then `.ai-sdd`) recovers the base structurally, reusing the same `Layout` literals
+    /// `local(under:)` appends. Only meaningful for stores constructed via `local(under:)` (or an
+    /// equivalent `<base>/.ai-sdd/runs` root).
+    public var base: URL { root.deletingLastPathComponent().deletingLastPathComponent() }
+
     public func exists(_ runId: String) -> Bool {
         FileManager.default.fileExists(atPath: layout(runId).meta.path)
     }

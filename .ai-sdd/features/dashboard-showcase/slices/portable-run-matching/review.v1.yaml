@@ -1,0 +1,76 @@
+schema: review.v1
+run: program-dashboard
+slice: portable-run-matching
+
+verdict: approve
+summary: >-
+  Independent review of slice portable-run-matching (2 of dashboard-showcase) against feature-plan.v1
+  (6 acceptance ids). Inspected the real working-tree diff: exactly the three declared files changed
+  (Sources/AISDDEngine/RunStore.swift, Sources/AISDDEngine/DashboardProjection.swift,
+  Tests/AISDDEngineTests/EngineTests.swift) per git status — no Layout/CLI/fixture/doc files touched.
+  Confirmed RunStore.base is the exact structural inverse of local(under:) (appends Layout.homeDir then
+  Layout.runsDir; base drops two trailing components, no inline literal). Confirmed both matchedState
+  copies are byte-identical and route through a per-copy resolvedPath that keeps the absolute branch
+  byte-identical to today and resolves the relative branch against runStore.base. Re-ran the gates
+  myself: swift build exit 0; swift test "193 tests in 6 suites passed" exit 0, including all five new
+  tests. Every acceptance id passes and conventions are satisfied.
+
+items:
+  - id: absolute-pipelinedir-still-matches
+    verdict: pass
+    notes: >-
+      resolvedPath takes the absolute branch via (stored as NSString).isAbsolutePath and returns the
+      unchanged standardizedPath(stored) — byte-identical to today, base ignored. Regression test
+      matchedStateStillMatchesAbsolutePipelineDir seeds an ABSOLUTE pipelineDir and asserts plan=.done,
+      implement=.runnable. All pre-existing absolute-seeding dashboard tests (EngineTests 1159, 1214,
+      1237, and the programDashboardAssembler* tests) still pass. Non-vacuous.
+  - id: relative-pipelinedir-resolves-against-base-and-matches
+    verdict: pass
+    notes: >-
+      Relative branch is URL(fileURLWithPath: stored, relativeTo: runStore.base).standardizedFileURL.path.
+      Test matchedStateResolvesRelativePipelineDirAgainstBase seeds pipelineDir "features/alpha" via a
+      store built with RunStore.local(under: base); feature lives at <base>/features/alpha and
+      assemble(factoryDir: base) scans it; asserts plan=.done. Non-vacuous — a naive standardizedPath
+      would anchor "features/alpha" to CWD, not base, and miss the .done. The program-tier copy is
+      independently exercised by matchedStateResolvesRelativeProgramPipelineDirAgainstBase
+      (pipelineDir "programs/guardrails", asserts locks=.done).
+  - id: non-matching-relative-does-not-match
+    verdict: pass
+    notes: >-
+      Test matchedStateIgnoresNonMatchingRelativePipelineDir seeds relative "features/beta" (resolves to
+      <base>/features/beta) while the queried feature is alpha; asserts plan=.runnable, implement=.pending
+      (stateless, not the run's done). Genuine negative test.
+  - id: runstore-base-inverts-local-under
+    verdict: pass
+    notes: >-
+      var base: URL { root.deletingLastPathComponent().deletingLastPathComponent() } is the exact
+      structural inverse of local(under:), which appends Layout.homeDir (.ai-sdd) then Layout.runsDir
+      (runs). No inline path literal — relies on the same Layout literals structurally. Test
+      runStoreBaseInvertsLocalUnder asserts RunStore.local(under: base).base.standardizedFileURL.path ==
+      base.standardizedFileURL.path.
+  - id: existing-run-matching-tests-unchanged
+    verdict: pass
+    notes: >-
+      All pre-existing projectDashboardAssembler*/programDashboardAssembler* tests use RunStore(root:
+      tmp/runs) with ABSOLUTE seeded pipelineDirs, so they take the absolute branch and never consult
+      base (which would be ill-defined for a non-local root) — zero regression. Full suite green: 193
+      tests, 6 suites, all passed; section order, titles and rollup statuses unchanged.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      Re-ran by the reviewer: swift build -> "Build complete!" exit 0; swift test -> "Test run with 193
+      tests in 6 suites passed" exit 0, including all five new portable-run-matching tests.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Engine-only change under Sources/AISDDEngine with focused tests in
+    Tests/AISDDEngineTests/EngineTests.swift; Swift Testing (@Test/#expect/#require) used. No inline path
+    literals — base uses deletingLastPathComponent and reuses the existing Layout.homeDir/Layout.runsDir
+    structurally; the relative program test references Layout.programsDir. RunStore stays Sendable (base
+    is a pure computed property). The two matchedState/resolvedPath/standardizedPath copies remain
+    byte-identical; no shared cross-assembler matcher introduced (slice 1 surface untouched). Scope
+    respected: exactly the three declared files changed (git status). Baseline gates swift build and
+    swift test are green.
+
+rework: null

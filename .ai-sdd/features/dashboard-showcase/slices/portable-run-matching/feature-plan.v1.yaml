@@ -1,0 +1,195 @@
+summary: >-
+  Make dashboard run-matching machine-independent so a committed fixture matches its run on any clone
+  (slice portable-run-matching, slice 2 of feature dashboard-showcase). In
+  Sources/AISDDEngine/DashboardProjection.swift the per-assembler private helpers `matchedState(for:in:)`
+  and `standardizedPath(_:)` compare a queried pipeline dir against each run's stored
+  `RunMeta.pipelineDir` by standardizing both and testing string equality; today both sides are absolute,
+  so a fixture committed with an absolute `pipelineDir` only matches on the machine that wrote it. This
+  slice changes the matching so an ABSOLUTE stored `pipelineDir` keeps today's exact
+  standardized-absolute comparison (backward compatible — real `ai-sdd start` runs are absolute and
+  single-machine), while a RELATIVE stored `pipelineDir` (e.g. `.ai-sdd/programs/<slug>`) is first
+  resolved against the run-store BASE — the directory that contains `<base>/.ai-sdd/runs` — then
+  standardized and compared. The base is obtained from the `RunStore` the matcher is already given, via a
+  new pure engine accessor `RunStore.base` that inverts `RunStore.local(under:)` (root =
+  `<base>/.ai-sdd/runs`, so `base = root.deletingLastPathComponent().deletingLastPathComponent()`, the two
+  dropped components being `Layout.runsDir` then `Layout.homeDir`). Relative resolution is
+  `URL(fileURLWithPath: meta.pipelineDir, relativeTo: runStore.base).standardizedFileURL.path`;
+  absolute-vs-relative is detected with Foundation's leading-slash semantics
+  (`(meta.pipelineDir as NSString).isAbsolutePath`). Both `ProgramDashboardAssembler.matchedState` and
+  `ProjectDashboardAssembler.matchedState` (the two duplicated copies) gain the same logic; every caller
+  of `matchedState` already passes a `RunStore`, so the base is always derivable. No change to how
+  `ai-sdd start` WRITES runs (still absolute), and no CLI/fixture/docs change — only matching gains
+  relative resolution.
+scope:
+  in:
+    - >-
+      Add a pure accessor `var base: URL { root.deletingLastPathComponent().deletingLastPathComponent() }`
+      to `RunStore` in Sources/AISDDEngine/RunStore.swift, documented as the inverse of
+      `RunStore.local(under:)` (which composes `root = <base>/Layout.homeDir/Layout.runsDir`). It strips
+      the two trailing path components (`runs`, then `.ai-sdd`) and uses no inline path literal — it relies
+      structurally on the same `Layout.homeDir`/`Layout.runsDir` literals `local(under:)` already uses.
+      Public so the dashboard assemblers (same engine module) read it.
+    - >-
+      In Sources/AISDDEngine/DashboardProjection.swift, change `ProgramDashboardAssembler.matchedState(for:in:)`
+      so each run's stored `RunMeta.pipelineDir` is resolved to a comparable standardized path: an ABSOLUTE
+      stored path keeps `standardizedPath(meta.pipelineDir)` (today's behavior, base ignored); a RELATIVE
+      stored path becomes `URL(fileURLWithPath: meta.pipelineDir, relativeTo: runStore.base).standardizedFileURL.path`.
+      The `expected` side (the queried `pipelineDir`) is unchanged: `pipelineDir.standardizedFileURL.path`.
+    - >-
+      Apply the identical change to `ProjectDashboardAssembler.matchedState(for:in:)` (the second
+      duplicated copy at the bottom of the same file) so project-tier and program-tier matching are both
+      portable and stay byte-identical to each other.
+    - >-
+      Keep the absolute branch exactly `URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path`
+      (the existing `standardizedPath(_:)`, unchanged). Add the relative branch via a small sibling helper
+      per copy, `resolvedPath(_ stored: String, base: URL) -> String`, that selects absolute-vs-relative
+      with `(stored as NSString).isAbsolutePath`; `matchedState` calls `resolvedPath(meta.pipelineDir,
+      base: runStore.base)`. Do NOT introduce a shared cross-assembler matcher (out of scope — slice 1
+      deliberately left the two copies duplicated and symmetric).
+    - >-
+      Add Swift Testing coverage in Tests/AISDDEngineTests/EngineTests.swift, reusing the existing temp-dir
+      helpers and driving through the public `ProjectDashboardAssembler.assemble` /
+      `ProgramDashboardAssembler.assemble` entry points (mirroring the existing
+      `projectDashboardAssembler*` / `programDashboardAssembler*` tests): (1) a regression guard that an
+      ABSOLUTE stored `pipelineDir` still matches and renders the seeded status; (2) a RELATIVE stored
+      `pipelineDir` resolved against a `RunStore.local(under: base)` base matches the corresponding absolute
+      pipeline dir under that base and renders the seeded status; (3) a non-matching RELATIVE stored
+      `pipelineDir` does NOT match (node renders stateless `runnable`/`pending`, not the seeded `done`).
+    - >-
+      Add a direct unit assertion that `RunStore.local(under: base).base` is path-equal to
+      `base.standardizedFileURL`, pinning `base` as the exact inverse of `local(under:)`.
+  out:
+    - >-
+      No change to how `ai-sdd start` WRITES runs — `RunStore.create(runId:pipelineDir:)` still stores
+      whatever (absolute) `pipelineDir` it is given; only matching reads gain relative resolution. No
+      RunStore storage/format change beyond the read-only `base` accessor.
+    - >-
+      No change to `DashboardProjection.project(...)` rollup logic, `featureStatus`, `status`,
+      `GraphRenderer.dashboardMermaid`, milestone styling, `DashboardCharts`, or the
+      `programSection`/`featurePipelineLoader` helpers shipped in slice 1.
+    - >-
+      No CLI change in Sources/AISDDCLI/ — no `--runs` flag, no run-store-derivation-from-target (that is
+      the downstream `runstore-from-target` slice). The assemblers keep their existing
+      `(factoryDir:/programDir:, runStore:, fileManager:)` signatures.
+    - >-
+      No committed demo fixture, no fixture builder, no end-to-end CLI integration test, no README change
+      (downstream slices demo-fixture / fixture-integration-tests / readme-showcase).
+    - >-
+      No change to Sources/AISDDEngine/Layout.swift — the `base` accessor reuses the existing
+      `Layout.homeDir`/`Layout.runsDir` structurally via `deletingLastPathComponent`; no new literal is
+      needed.
+    - >-
+      No new error case, no change to `ProjectDashboardError`, `RunMeta`, `RunState`, the reducer, the
+      scheduler, recursive execution, or the milestone-gate worker.
+acceptance:
+  - id: absolute-pipelinedir-still-matches
+    description: >-
+      Regression guard: a run created with an ABSOLUTE `RunMeta.pipelineDir` equal to the standardized
+      absolute path of its feature/program dir still matches via `matchedState`, so the dashboard shows the
+      seeded status (e.g. a completed node renders `done`) — byte-identical to today. The run-store base is
+      irrelevant to absolute matching.
+  - id: relative-pipelinedir-resolves-against-base-and-matches
+    description: >-
+      A run created with a RELATIVE `RunMeta.pipelineDir` (e.g. `features/alpha` or
+      `.ai-sdd/programs/<slug>`) matches the feature/program dir whose absolute path equals
+      `<runStore.base>/<relative>` standardized — `matchedState` resolves the relative stored path against
+      `runStore.base` (a store built via `RunStore.local(under: base)`) before comparing — so the dashboard
+      shows the seeded status from the committed-fixture-style relative run.
+  - id: non-matching-relative-does-not-match
+    description: >-
+      A RELATIVE `RunMeta.pipelineDir` that resolves (against the base) to a different dir than the queried
+      pipeline dir does NOT match: the dashboard shows no seeded status for that node (its status is the
+      stateless `runnable`/`pending`, not the run's `done`).
+  - id: runstore-base-inverts-local-under
+    description: >-
+      `RunStore.local(under: base).base` is path-equal to `base` (standardized), pinning `base` as the
+      exact inverse of `local(under:)` (`root = <base>/.ai-sdd/runs`).
+  - id: existing-run-matching-tests-unchanged
+    description: >-
+      Every pre-existing `projectDashboardAssembler*` and `programDashboardAssembler*` test (which seed
+      absolute `pipelineDir`s) passes unchanged — no regression to absolute matching, section order,
+      titles, or rollup statuses.
+  - id: build-and-test-green
+    description: swift build and swift test both pass.
+decisions:
+  - id: runstore-base-accessor
+    status: closed
+    decision: >-
+      Add `public var base: URL { root.deletingLastPathComponent().deletingLastPathComponent() }` to
+      `RunStore` in Sources/AISDDEngine/RunStore.swift, documented as the inverse of
+      `RunStore.local(under:)` (which builds `root = base/Layout.homeDir/Layout.runsDir`). The matcher
+      obtains the base from the `RunStore` it is already given (every `matchedState` caller passes one),
+      rather than computing it inline in `matchedState`.
+    rationale: >-
+      The slice recommends, and grounding confirms, a small pure accessor: `local(under:)` appends exactly
+      `Layout.homeDir` then `Layout.runsDir` to the base, so dropping the last two path components inverts
+      it precisely. Putting it on `RunStore` keeps the inverse next to the forward composition so they stay
+      in sync, avoids duplicating the inversion in the two `matchedState` copies, and needs no new path
+      literal (it is structural, reusing the same `Layout` literals `local(under:)` uses). It is pure and
+      trivially unit-testable (`local(under: base).base == base`). Computing the base inline in each
+      `matchedState` would duplicate the structural assumption in two places — worse for the
+      already-duplicated helpers.
+  - id: base-accessor-correct-only-for-local-under-stores
+    status: closed
+    decision: >-
+      `RunStore.base` is the strict inverse of `RunStore.local(under:)` and is only meaningful for stores
+      constructed that way (or with an equivalent `<base>/.ai-sdd/runs` root). It is consumed ONLY in the
+      relative-`pipelineDir` branch; the absolute branch never uses it, so existing tests that build
+      `RunStore(root: tmp/runs)` directly (a non-`local` root) are unaffected because they seed ABSOLUTE
+      pipelineDirs. The new relative-resolution tests construct the store via `RunStore.local(under: base)`
+      so `base` is well-defined.
+    rationale: >-
+      Grounding the existing tests (EngineTests.swift ~lines 1158, 1195, 1213) shows they use
+      `RunStore(root: tmp/runs)`, a one-level root, not `local(under:)`. For those `base` would not equal
+      `tmp`; but they only exercise absolute matching, which ignores `base`, so there is zero regression.
+      Making the contract explicit (base = inverse of `local(under:)`) keeps the accessor honest and steers
+      the new relative tests to build the store the portable way — matching how the real CLI/fixture path
+      will construct the store in the downstream `runstore-from-target` slice.
+  - id: absolute-vs-relative-detection-and-resolution
+    status: closed
+    decision: >-
+      Detect absolute with Foundation: a stored `pipelineDir` is absolute iff
+      `(meta.pipelineDir as NSString).isAbsolutePath` (true when it has a leading `/`). Absolute → resolve
+      as today: `URL(fileURLWithPath: meta.pipelineDir, isDirectory: true).standardizedFileURL.path` (the
+      existing `standardizedPath(_:)`). Relative → resolve against the run-store base:
+      `URL(fileURLWithPath: meta.pipelineDir, relativeTo: runStore.base).standardizedFileURL.path`. The
+      queried/expected side stays `pipelineDir.standardizedFileURL.path`; compare the two resolved strings
+      for equality, exactly as today.
+    rationale: >-
+      `NSString.isAbsolutePath` is the canonical Foundation leading-slash check and matches how
+      `RunMeta.pipelineDir` is stored (absolute paths start with `/`). `URL(fileURLWithPath:relativeTo:)`
+      is the standard way to anchor a relative path to a base; `.standardizedFileURL.path` then applies the
+      same canonical normalization (`.`/`..`/trailing-slash) the absolute path already gets, so the
+      comparison stays apples-to-apples. Branching explicitly preserves the exact absolute behavior and
+      keeps the intent legible.
+  - id: edit-both-duplicated-matchedstate-copies
+    status: closed
+    decision: >-
+      Apply the same change to BOTH `ProgramDashboardAssembler.matchedState`/`standardizedPath` (lines
+      ~177-190) and `ProjectDashboardAssembler.matchedState`/`standardizedPath` (lines ~261-274), keeping
+      the two copies byte-identical. Do NOT introduce a shared cross-assembler matcher in this slice.
+    rationale: >-
+      Both helpers are private duplicates that slice 1 deliberately kept separate; both callers already pass
+      a `RunStore`, so both can derive the base. Making both portable keeps program-tier and project-tier
+      matching consistent (the project assembler also calls `programSection`, which uses the program copy).
+      Extracting a shared matcher is a larger refactor outside this tight slice's scope and would touch the
+      slice-1 surface; keeping the edit symmetric and minimal respects the diff-in-scope gate.
+  - id: files-and-tests-scope
+    status: closed
+    decision: >-
+      Touched source files are exactly Sources/AISDDEngine/DashboardProjection.swift (both matchedState
+      copies) and Sources/AISDDEngine/RunStore.swift (the `base` accessor); tests go in
+      Tests/AISDDEngineTests/EngineTests.swift. No CLI, fixture, docs, or Layout change. Verification is
+      `swift build` then `swift test`.
+    rationale: >-
+      The slice constrains files to precisely these three and tests to `swift build`/`swift test`. The
+      `base` accessor belongs in RunStore.swift (next to `local(under:)`); the matching change belongs in
+      DashboardProjection.swift; the tests live with the existing dashboard/run-store tests in the single
+      Swift Testing file (the repo's exemplar location per the conventions).
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Sources/AISDDEngine/RunStore.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
