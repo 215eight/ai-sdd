@@ -199,8 +199,18 @@ struct Cheatsheet: ParsableCommand {
           next renders the worker → your agent does the work via its skill
           → submit runs the gates and advances (or routes to rework). ↺
 
-        See:  ai-sdd status <id>   ·   ai-sdd graph <dir>
-              ai-sdd <command> --help   ·   QUICKSTART.md (full adopter docs)
+        ── VISUALIZE ───────────────────────────────────────────────────
+          $ ai-sdd graph <feature|program dir>     # Mermaid dep graph
+          $ ai-sdd graph <dir> --html --out g.html       # standalone page
+          $ ai-sdd graph .ai-sdd --project --dashboard --out repo.html
+              whole-repo status dashboard (every feature + programs)
+          $ ai-sdd graph <program dir> --dashboard --out prog.html
+              one program's dashboard (sub-features + milestone gates)
+          $ ai-sdd graph --plant <plant.yaml>      # multi-repo aggregate
+          Dashboards overlay status from your local .ai-sdd/runs store.
+
+        See:  ai-sdd status <id>   ·   ai-sdd <command> --help
+              QUICKSTART.md (full adopter docs)
         """)
     }
 }

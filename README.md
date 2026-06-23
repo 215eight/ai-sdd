@@ -107,7 +107,7 @@ whole features sequenced by milestone gates with owners, driven by the same engi
 
 | Command | What it does |
 |---|---|
-| `ai-sdd guide` | print the built-in getting-started guide (travels with the binary) |
+| `ai-sdd cheatsheet` | print the diagram-driven workflow cheatsheet (travels with the binary) |
 | `ai-sdd validate <dir>` | load + check a workspace (refs, edge types, acyclicity) |
 | `ai-sdd start <dir> --id <id>` | begin a run |
 | `ai-sdd next <id>` | render the runnable worker (`--json` for drivers) |
