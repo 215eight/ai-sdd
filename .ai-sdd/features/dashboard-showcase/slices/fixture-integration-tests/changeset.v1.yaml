@@ -1,0 +1,29 @@
+summary: >-
+  Added Tests/AISDDEngineTests/FixtureIntegrationTests.swift — a `@Suite("Fixture integration")` of
+  five Swift Testing tests that exercise the real engine/assembler surface against the COMMITTED demo
+  fixture at docs/examples/demo-factory/. The fixture is located machine-independently from `#filePath`
+  (three `deletingLastPathComponent()` to repo root, then docs/examples/demo-factory + Layout.homeDir /
+  Layout.programsDir / demo) — no absolute machine path — and the run store is built exactly like the
+  shipped CLI dashboard path, `RunStore.local(under: RunStore.base(forTarget: target))`, so the
+  committed RELATIVE pipelineDir (.ai-sdd/programs/demo) resolves on any clone. Tests assert: the
+  fixture program validates via SpecLoader().loadBundle + SpecValidator.validate (no issues) and every
+  feature pipeline + the build pattern load; the whole-repo ProjectDashboardAssembler returns
+  Feature·auth/billing/search AND Program·demo sections with the committed status mix (auth .done,
+  billing .inProgress, m1-core-integrated .pending, search .pending) on projection.rows — proving the
+  run RESOLVED, not all-static; ProgramDashboardAssembler returns the one master-graph section with the
+  same statuses; GraphRenderer.mermaid renders a fenced ```mermaid flowchart for the auth feature
+  (signup/login) and the program (auth/m1-core-integrated); and GraphRenderer.dashboardPage carries
+  inline <svg charts (dashboard-status-donut, dashboard-grouped-bars) with HTML-escaped dynamic values
+  (status-in-progress class, <title> element). TESTS ONLY — no Sources/, no fixture, no EngineTests
+  changes. swift build + swift test green (202 tests, 7 suites).
+satisfies:
+  - fixture-validates-via-engine
+  - whole-repo-has-features-and-program
+  - whole-repo-statuses-resolved
+  - program-dashboard-statuses
+  - single-graph-mermaid
+  - inline-svg-charts-and-escaping
+  - machine-independent
+  - build-and-test-green
+files:
+  - Tests/AISDDEngineTests/FixtureIntegrationTests.swift

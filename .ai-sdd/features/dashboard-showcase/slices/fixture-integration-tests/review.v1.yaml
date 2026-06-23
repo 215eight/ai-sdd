@@ -1,0 +1,106 @@
+schema: review.v1
+run: program-dashboard
+slice: fixture-integration-tests
+
+verdict: approve
+summary: >-
+  Independent review of slice fixture-integration-tests (5 of dashboard-showcase) against
+  feature-plan.v1 (8 acceptance ids). ONLY Tests/AISDDEngineTests/FixtureIntegrationTests.swift was
+  added (git status: single untracked file; no Sources/, no fixture, no EngineTests/SchemaCompilerTests
+  changes). I verified the tests are GENUINE and MACHINE-INDEPENDENT, not vacuous or all-static. The
+  fixture is located from `#filePath` (three deletingLastPathComponent() to repo root, then
+  docs/examples/demo-factory + Layout.homeDir/Layout.programsDir) — grep of the test file for /Users,
+  /home, currentDirectoryPath, FileManager → NONE, so CI/fresh-clone safe. The RunStore is built via
+  `RunStore.local(under: RunStore.base(forTarget: target))` (the shipped CLI dashboard wiring); I read
+  RunStore.swift and confirmed base(forTarget:) ascends to the nearest `.ai-sdd` and returns its parent
+  (fixtureBase), so the committed RELATIVE pipelineDir ".ai-sdd/programs/demo" (verified in run.json)
+  resolves against the store base — NOT a hardcoded cwd store that would go all-static. Status
+  assertions are made on the STRUCTURED projection.rows (not HTML substring greps) for both the
+  whole-repo ProjectDashboardAssembler and ProgramDashboardAssembler: auth==.done, billing==.inProgress,
+  m1-core-integrated==.pending, search==.pending. I read the committed event log
+  (runs/demo-program-run/events/*.json): runStarted, nodeStarted+nodeCompleted for auth, and a SCOPED
+  nodeStarted into slice billing/node invoices — so auth==.done specifically proves the committed run
+  RESOLVED (an all-static projection would render auth runnable/pending, not done). The program topology
+  (auth→m1, billing→m1, m1→search) makes m1/search==.pending correct. The Mermaid test asserts node ids
+  that exist (auth feature: signup/login; program: auth/m1-core-integrated). The inline-SVG + escaping
+  assertions are on the real rendered dashboardPage. validate uses the real SpecLoader().loadBundle +
+  SpecValidator.validate pair (no CLI shell-out). I ran the gates: swift build → Build complete; swift
+  test → 202 tests in 7 suites passed, including the new "Fixture integration" suite (all 5 tests). All
+  8 acceptance ids pass; conventions satisfied.
+
+items:
+  - id: fixture-validates-via-engine
+    verdict: pass
+    notes: >-
+      `fixtureFactoryLoadsAndValidatesCleanly` runs the same engine pair the CLI Validate command runs —
+      `SpecLoader().loadBundle(at: programDir)` then
+      `SpecValidator.validate(pipeline:workers:checks:)` with `#expect(issues.isEmpty)` — plus a
+      `loadPipeline(atDirectory:)` non-nil check per feature (auth/billing/search) and the build pattern.
+      No Process/swift run shell-out. Signatures verified against Sources. Passes: the program dir's
+      milestone-gate worker + validation-result.structure check resolve to zero ValidationIssues.
+  - id: whole-repo-has-features-and-program
+    verdict: pass
+    notes: >-
+      `wholeRepoDashboardHasFeaturesAndProgramWithCommittedStatuses` asserts
+      `dashboard.sections.map(\.heading)` contains "Feature · auth", "Feature · billing",
+      "Feature · search", AND "Program · demo". Headings are built exactly so in DashboardProjection.swift
+      (`heading: "Feature · \(name)"`, `heading: "Program · \(programName)"`). Non-vacuous; passes.
+  - id: whole-repo-statuses-resolved
+    verdict: pass
+    notes: >-
+      Asserted on the STRUCTURED program.projection.rows (not HTML), via the status(_:_:) helper:
+      auth==.done, billing==.inProgress, m1-core-integrated==.pending, search==.pending. GENUINE oracle
+      confirmed against the committed event log (nodeCompleted auth; scoped nodeStarted into billing/
+      invoices) — auth==.done proves the run RESOLVED, not all-static. run.json carries the RELATIVE
+      pipelineDir ".ai-sdd/programs/demo", so resolution depends on RunStore.base(forTarget:) +
+      relative-pipelineDir matching, not a hardcoded root. Passes.
+  - id: program-dashboard-statuses
+    verdict: pass
+    notes: >-
+      `programDashboardRendersMasterGraphWithStatuses` requires exactly one section
+      (sections.count == 1, heading "Program · demo") and asserts the same node→status map on
+      section.projection.rows. Same genuine oracle; m1/search==.pending is correct given edges auth→m1,
+      billing→m1 (billing not complete), m1→search. Passes.
+  - id: single-graph-mermaid
+    verdict: pass
+    notes: >-
+      `singleGraphMermaidRendersForFeatureAndProgram` calls GraphRenderer.mermaid on the auth feature and
+      the program, asserting hasPrefix("```mermaid"), contains("flowchart"), and the expected node ids.
+      Verified topology: auth pipeline has signup/login; program has auth and m1-core-integrated. Real
+      renderer surface, non-vacuous. Passes.
+  - id: inline-svg-charts-and-escaping
+    verdict: pass
+    notes: >-
+      `dashboardPageEmbedsInlineSvgChartsAndEscapesDynamicValues` renders GraphRenderer.dashboardPage and
+      asserts inline "<svg", chart class markers "dashboard-status-donut" and "dashboard-grouped-bars",
+      the escaped dynamic status class "status-in-progress" (billing's in-progress), and a "<title>"
+      element. Real rendered HTML, real escaping evidence. Passes.
+  - id: machine-independent
+    verdict: pass
+    notes: >-
+      Fixture located via URL(fileURLWithPath: #filePath) + three deletingLastPathComponent() to repo
+      root, then docs/examples/demo-factory + Layout.homeDir/Layout.programsDir/"demo". RunStore built via
+      RunStore.local(under: RunStore.base(forTarget: target)) — the shipped CLI wiring — not a hardcoded
+      cwd root. grep of the test file for /Users, /home, currentDirectoryPath, FileManager → NONE.
+      #filePath is absolute at compile time but the derivation is structural (fixed 3-parents offset), so
+      the suite is CI/fresh-clone safe. Passes.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      `swift build` → "Build complete!". `swift test` → "Test run with 202 tests in 7 suites passed",
+      including the new "Fixture integration" suite (all 5 tests). No existing
+      EngineTests/SchemaCompilerTests regressed. Scope confirmed via git status: only
+      Tests/AISDDEngineTests/FixtureIntegrationTests.swift added; no Sources/, no fixture changes. Passes.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Tests-only slice using Swift Testing (@Test/#expect/#require, @testable import) per the
+    confirmed Test convention, in the established Tests/AISDDEngineTests/ location, in its own file
+    alongside EngineTests.swift/SchemaCompilerTests.swift (SwiftPM globs the dir, so no Package.swift
+    change). No new path literal added to Layout.swift — the repo-relative example-tree segments (docs,
+    examples, demo-factory, demo) are test infrastructure into a committed example tree, and existing
+    Layout names (homeDir, programsDir) are reused. No Sources/CLI/engine edits. Baseline gates swift
+    build and swift test are green.
+
+rework: null

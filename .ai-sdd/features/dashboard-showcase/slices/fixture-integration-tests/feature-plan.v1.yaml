@@ -1,0 +1,262 @@
+summary: >-
+  Add machine-independent Swift Testing tests under `Tests/AISDDEngineTests/` that exercise the real
+  engine/assembler surface against the COMMITTED demo fixture at `docs/examples/demo-factory/` and
+  assert on its output (slice fixture-integration-tests, slice 5 of feature dashboard-showcase; depends
+  on demo-fixture, shipped). TESTS ONLY — no `Sources/`, no CLI, no fixture changes. A new file
+  `Tests/AISDDEngineTests/FixtureIntegrationTests.swift` adds a `@Suite` whose tests (1) locate the
+  committed fixture by a REPO-RELATIVE path derived from `#filePath` (the test file lives at
+  `Tests/AISDDEngineTests/FixtureIntegrationTests.swift`, so the repo root is 3 parents up; append
+  `docs/examples/demo-factory`) — NO absolute machine path, so the suite passes on a fresh clone / CI;
+  (2) build the run store the SAME way the shipped CLI does for dashboards,
+  `RunStore.local(under: RunStore.base(forTarget: <target>))`, so the fixture's RELATIVE `pipelineDir`
+  (`.ai-sdd/programs/demo`) resolves against the run-store base `docs/examples/demo-factory` and the
+  committed program run matches; and assert: the fixture factory loads/validates cleanly
+  (`SpecLoader().loadBundle` + `SpecValidator.validate` returns no issues for the program dir, and the
+  three feature pipelines + build pattern load); the whole-repo `ProjectDashboardAssembler.assemble`
+  over `docs/examples/demo-factory/.ai-sdd` returns BOTH `Feature ·` sections (auth, billing, search)
+  AND a `Program · demo` section, with the committed statuses resolved from the fixture's OWN runs
+  (auth done, billing in-progress, search pending, m1-core-integrated pending — i.e. the run resolved,
+  not all-static); `ProgramDashboardAssembler.assemble` over `docs/examples/demo-factory/.ai-sdd/programs/demo`
+  returns the one master-graph section with those statuses; single-graph Mermaid renders (a fenced
+  ```mermaid block) for a fixture feature and for the program via `GraphRenderer.mermaid`; and the
+  rendered `GraphRenderer.dashboardPage` carries INLINE SVG charts (`<svg ...>`) with dynamic values
+  HTML-escaped. Status assertions are made on the structured `projection.rows` (node → status);
+  inline-SVG presence and escaping are asserted on the rendered HTML page.
+scope:
+  in:
+    - >-
+      Add a new test file `Tests/AISDDEngineTests/FixtureIntegrationTests.swift` containing a single
+      `@Suite("Fixture integration")` struct of `@Test` functions (Swift Testing: `@Test`/`#expect`/
+      `#require`, exact typed errors) that imports `Testing`, `Foundation`, `AISDDEngine`, and
+      `AISDDModels`, following the existing `EngineTests.swift` style.
+    - >-
+      A private fixture-locator helper on the suite that computes the committed fixture base from
+      `#filePath`: `URL(fileURLWithPath: #filePath)` is the absolute path of THIS test file
+      (`<repoRoot>/Tests/AISDDEngineTests/FixtureIntegrationTests.swift`); drop the trailing three
+      components (`FixtureIntegrationTests.swift`, `AISDDEngineTests`, `Tests`) via three
+      `deletingLastPathComponent()` calls to recover `<repoRoot>`, then append `docs`, `examples`,
+      `demo-factory` to get the fixture base, and `Layout.homeDir` for the factory dir. Expose
+      `fixtureBase` (the dir holding `.ai-sdd`), `factoryDir` (= `fixtureBase/.ai-sdd`), and `programDir`
+      (= `factoryDir/<Layout.programsDir>/demo`) as computed helpers. NO absolute machine path appears in
+      source; the only filesystem literals are the repo-relative segments `docs`, `examples`,
+      `demo-factory`, `demo` (test infra paths into a committed example tree, NOT production `Layout` path
+      names), reusing `Layout.homeDir`/`Layout.programsDir` from the engine where a name already exists.
+    - >-
+      A run-store helper that mirrors the shipped CLI dashboard wiring exactly:
+      `RunStore.local(under: RunStore.base(forTarget: target))`. For the whole-repo test pass
+      `target = factoryDir`; for the program test pass `target = programDir`. `RunStore.base(forTarget:)`
+      ascends to the nearest `.ai-sdd` ancestor and returns its parent — `fixtureBase`
+      (`docs/examples/demo-factory`) in both cases — so the store is rooted at `fixtureBase/.ai-sdd/runs`
+      and `runStore.base == fixtureBase`, against which the committed RELATIVE `pipelineDir`
+      `.ai-sdd/programs/demo` resolves to the absolute program dir on any clone.
+    - >-
+      A test `fixtureFactoryLoadsAndValidatesCleanly` that asserts the fixture validates WITHOUT shelling
+      out: `let bundle = try SpecLoader().loadBundle(at: programDir)` then
+      `#expect(SpecValidator.validate(pipeline: bundle.pipeline.spec, workers: bundle.workers, checks: bundle.checks).isEmpty)`
+      — the program dir's `milestone-gate` worker and its `validation-result.structure` check resolve, so
+      referential/edge-type/acyclicity validation yields zero `ValidationIssue`s. Additionally, for each
+      feature dir (auth, billing, search) and the build pattern dir, assert
+      `#expect((try? SpecLoader().loadPipeline(atDirectory: <dir>)) != nil)`, confirming every fixture
+      pipeline loads (the assembler-loads-cleanly criterion). This grounds the "fixture validates"
+      acceptance via the engine validator entry point — the same `SpecLoader.loadBundle` +
+      `SpecValidator.validate` the CLI `Validate` command runs (`Sources/AISDDCLI/main.swift:143-144`).
+    - >-
+      A test `wholeRepoDashboardHasFeaturesAndProgramWithCommittedStatuses` that calls
+      `try ProjectDashboardAssembler.assemble(factoryDir: factoryDir, runStore: storeFor(target: factoryDir))`
+      and asserts the section headings (`dashboard.sections.map(\.heading)`) contain `Feature · auth`,
+      `Feature · billing`, `Feature · search`, AND `Program · demo`. Then, on the `Program · demo`
+      section's `projection.rows` (node → status), asserts the committed status MIX: `auth == .done`,
+      `billing == .inProgress`, `m1-core-integrated == .pending`, `search == .pending` — proving the
+      program run RESOLVED via the relative-`pipelineDir` match (not all-pending/static). Also assert at
+      least one `Feature ·` section's rows are non-empty, showing the feature sub-pipelines loaded.
+    - >-
+      A test `programDashboardRendersMasterGraphWithStatuses` that calls
+      `try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: storeFor(target: programDir))`,
+      requires exactly one section whose heading is `Program · demo`, and asserts the same node→status map
+      on `sections[0].projection.rows`: auth done, billing in-progress, m1-core-integrated pending, search
+      pending. Uses a private `status(_ rows:, _ node:)` helper (mirrors the `status(_:_:)` helper in
+      `EngineTests.swift`).
+    - >-
+      A test `singleGraphMermaidRendersForFeatureAndProgram` that loads a fixture feature and the program
+      via `SpecLoader().loadPipeline(atDirectory:)` and asserts `GraphRenderer.mermaid(env.spec)` returns
+      a fenced Mermaid block — `#expect(out.hasPrefix("```mermaid"))` and `#expect(out.contains("flowchart"))`
+      — and names the expected node ids (the program graph contains `auth` and `m1-core-integrated`; the
+      auth feature graph contains `signup` and `login`). Exercises the single-graph (plain-Mermaid)
+      modality against the fixture.
+    - >-
+      A test `dashboardPageEmbedsInlineSvgChartsAndEscapesDynamicValues` that renders the whole-repo
+      dashboard to HTML via `GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)`
+      and asserts: inline SVG charts are present — `#expect(html.contains("<svg"))` plus the chart class
+      markers `dashboard-status-donut` and `dashboard-grouped-bars` (emitted by
+      `DashboardCharts.statusDonut`/`groupedBarChart`, embedded inline in `dashboardPage`); and that
+      dynamic values are HTML-escaped — the page contains a `<title>` element and the escaped status class
+      `status-in-progress` (billing's status, the escaped dynamic class derived from `DashboardStatus.inProgress`),
+      demonstrating dynamic node/status content is run through `escapeHTML`.
+  out:
+    - >-
+      NO changes under `Sources/` (engine, CLI, models) and NO changes to `docs/examples/demo-factory/`.
+      The fixture and the engine/CLI behavior it exercises (`--project --dashboard` including programs,
+      `RunStore.base`/`RunStore.base(forTarget:)`, relative-`pipelineDir` matching) all shipped in prior
+      slices (project-dashboard-programs, portable-run-matching, runstore-from-target, demo-fixture).
+    - >-
+      No shelling out to the `ai-sdd` CLI binary (no `Process`/`swift run` invocation) for assertions.
+      The tests drive the engine/assembler APIs directly — deterministic, fast, the canonical surface.
+      (The `swift run ai-sdd graph/validate` commands are NOT added to this slice's `tests:`; they remain
+      a human/CI sanity cross-check documented in the fixture README from the prior slice.)
+    - >-
+      No edits to `EngineTests.swift` or `SchemaCompilerTests.swift`; the new tests live in their own
+      file so the integration layer is reviewable in isolation and existing tests are untouched.
+    - >-
+      No README "Visualizing the factory" showcase section in the repo-root README — that is the
+      downstream `readme-showcase` slice.
+    - >-
+      No new path literal added to `Sources/AISDDEngine/Layout.swift`. The repo-relative fixture segments
+      (`docs`, `examples`, `demo-factory`) are TEST infrastructure (a path into a committed example tree,
+      computed from `#filePath`), not production on-disk path names; the convention "all on-disk path
+      names live in `Layout.swift`" governs engine code. Where a name already exists in `Layout`
+      (`homeDir`, `programsDir`), the test reuses it.
+    - >-
+      No defect fix folded in. If a test surfaces a real engine/CLI/fixture defect, STOP and report it
+      (it belongs in the relevant prior slice or a revert slice), per the slice brief.
+acceptance:
+  - id: fixture-validates-via-engine
+    description: >-
+      `fixtureFactoryLoadsAndValidatesCleanly` passes: `SpecLoader().loadBundle(at: programDir)` succeeds
+      and `SpecValidator.validate(...)` returns an empty `[ValidationIssue]` for the fixture program, and
+      each of the three feature pipelines (auth, billing, search) and the build pattern load without
+      throwing — asserting fixture validity via the engine entry point, no CLI shell-out.
+  - id: whole-repo-has-features-and-program
+    description: >-
+      `wholeRepoDashboardHasFeaturesAndProgramWithCommittedStatuses` passes: the whole-repo
+      `ProjectDashboardAssembler.assemble` section headings include `Feature · auth`, `Feature · billing`,
+      `Feature · search`, AND `Program · demo`.
+  - id: whole-repo-statuses-resolved
+    description: >-
+      In that same test, the `Program · demo` section's `projection.rows` show the committed status mix —
+      auth `.done`, billing `.inProgress`, m1-core-integrated `.pending`, search `.pending` — proving the
+      committed program run was resolved via the target-derived run store + relative-`pipelineDir`
+      matching (NOT an all-pending/static projection).
+  - id: program-dashboard-statuses
+    description: >-
+      `programDashboardRendersMasterGraphWithStatuses` passes: `ProgramDashboardAssembler.assemble` over
+      the fixture program returns exactly one `Program · demo` section whose rows carry the same committed
+      status mix (auth done, billing in-progress, m1-core-integrated pending, search pending).
+  - id: single-graph-mermaid
+    description: >-
+      `singleGraphMermaidRendersForFeatureAndProgram` passes: `GraphRenderer.mermaid` of a fixture feature
+      pipeline and of the program pipeline each return a fenced ```mermaid `flowchart` block naming the
+      expected node ids (feature: signup/login; program: auth/m1-core-integrated).
+  - id: inline-svg-charts-and-escaping
+    description: >-
+      `dashboardPageEmbedsInlineSvgChartsAndEscapesDynamicValues` passes: the rendered
+      `GraphRenderer.dashboardPage` HTML contains inline `<svg` chart markup (donut + grouped-bar
+      classes) and shows dynamic values HTML-escaped (the escaped status class `status-in-progress` and a
+      `<title>` element), demonstrating charts are inline SVG and dynamic content is escaped.
+  - id: machine-independent
+    description: >-
+      No assertion or helper uses an absolute machine path; the fixture is located via `#filePath` → repo
+      root (3 parents up) → `docs/examples/demo-factory`, so the suite would pass on a fresh clone and in
+      CI. `RunStore` is built via `RunStore.local(under: RunStore.base(forTarget:))` (the shipped CLI
+      wiring), not a hard-coded root.
+  - id: build-and-test-green
+    description: >-
+      `swift build` and `swift test` both pass; the new file adds tests only and does not regress any
+      existing `EngineTests`/`SchemaCompilerTests` test.
+decisions:
+  - id: new-test-file
+    status: closed
+    decision: >-
+      Add a NEW file `Tests/AISDDEngineTests/FixtureIntegrationTests.swift` (a `@Suite("Fixture
+      integration")` struct) rather than appending to the ~189 KB `EngineTests.swift`. It imports
+      `Testing`, `Foundation`, `AISDDEngine`, `AISDDModels` and uses Swift Testing `@Test`/`#expect`/
+      `#require`.
+    rationale: >-
+      The end-to-end, fixture-backed integration layer is conceptually distinct from the unit tests in
+      `EngineTests.swift` and benefits from isolation (reviewable diff, clear failure attribution, no risk
+      of perturbing existing tests). The slice brief and constraints recommend a new file for clarity.
+      SwiftPM globs `Tests/AISDDEngineTests/*.swift` (SchemaCompilerTests.swift already coexists with
+      EngineTests.swift), so no `Package.swift` change is needed.
+  - id: fixture-path-from-filepath
+    status: closed
+    decision: >-
+      Locate the committed fixture by deriving the repo root from `#filePath` at the test call site, NOT
+      from `currentDirectoryPath` or any absolute literal. `URL(fileURLWithPath: #filePath)` is
+      `<repoRoot>/Tests/AISDDEngineTests/FixtureIntegrationTests.swift`; three `deletingLastPathComponent()`
+      calls recover `<repoRoot>`; appending `docs/examples/demo-factory` gives the fixture base, and
+      `Layout.homeDir` gives `factoryDir`. `Layout.programsDir` + `demo` give `programDir`.
+    rationale: >-
+      `#filePath` is the source file's path baked in at compile time and is stable regardless of the
+      process cwd, so the locator is machine-independent and CI-safe on a fresh clone — unlike
+      `currentDirectoryPath`, which depends on where `swift test` runs. The 3-parents offset is fixed by
+      the file's committed location under `Tests/AISDDEngineTests/`. Matches the existing precedent:
+      `EngineTests.swift` already asserts about the `docs/examples/demo-factory` path shape (around line
+      2048), confirming the fixture is the intended portable anchor; this slice operationalizes locating
+      it from `#filePath`. The path segments are test infra, not production `Layout` names, so no
+      `Layout.swift` entry is added.
+  - id: runstore-construction-mirrors-cli
+    status: closed
+    decision: >-
+      Build the run store EXACTLY as the shipped CLI dashboard path does:
+      `RunStore.local(under: RunStore.base(forTarget: target))`, with `target = factoryDir` for the
+      whole-repo test and `target = programDir` for the program test. Do NOT construct `RunStore(root:)`
+      directly with a hand-built runs path.
+    rationale: >-
+      Grounded in `RunStore.swift`: `base(forTarget:)` ascends to the nearest `.ai-sdd` ancestor and
+      returns its parent (`docs/examples/demo-factory` for both `factoryDir` and `programDir`), and
+      `local(under:)` roots the store at `<base>/.ai-sdd/runs` with `store.base == <base>`. The
+      assemblers' `matchedState`/`resolvedPath` resolve the committed RELATIVE `pipelineDir`
+      (`.ai-sdd/programs/demo`) against `store.base` via `URL(fileURLWithPath:relativeTo:)`, yielding the
+      absolute program dir the program section expects — so the committed run matches on any clone.
+      Mirroring the CLI wiring makes the test exercise the REAL resolution chain end to end rather than a
+      synthetic store, and is portable (base is derived, not literal). Verified the same construction in
+      existing tests (`RunStore.local(under: base)` at EngineTests.swift ~2075, 2098, 2121).
+  - id: validate-entry-point
+    status: closed
+    decision: >-
+      Assert fixture validity via the ENGINE validator the CLI uses — `SpecLoader().loadBundle(at:
+      programDir)` then `SpecValidator.validate(pipeline:workers:checks:)` expecting an empty
+      `[ValidationIssue]` — plus a `loadPipeline(atDirectory:)` non-nil check per feature pipeline and the
+      build pattern. No shelling out to `ai-sdd validate`.
+    rationale: >-
+      The CLI `Validate` command (Sources/AISDDCLI/main.swift:143-144) is itself
+      `SpecLoader().loadBundle(at:)` + `SpecValidator.validate(...)`; calling those engine APIs directly
+      reproduces validation deterministically in-process. `validate` operates on ONE pipeline dir and
+      does not recurse into sub-pipelines, so loading the program dir (which resolves its milestone-gate
+      worker + check) plus separately loading each feature pipeline covers the fixture's loadability. The
+      `swift run ai-sdd validate docs/examples/demo-factory/.ai-sdd` command stays a documented CI
+      cross-check, but the Swift assertion is the canonical, fast gate.
+  - id: assert-on-projection-rows-plus-one-html-page
+    status: closed
+    decision: >-
+      Make status assertions on the STRUCTURED `projection.rows` (node → `DashboardStatus`) of the
+      relevant section, using a private `status(_ rows:, _ node:)` helper. Render
+      `GraphRenderer.dashboardPage` only for the inline-SVG + escaping assertions; assert the page
+      contains `<svg`, the chart class markers, the escaped status class (`status-in-progress`), and a
+      `<title>` element.
+    rationale: >-
+      Structured rows are the precise, stable surface for status (avoids brittle HTML scraping for the mix
+      assertions), per the slice's "prefer projection rows over HTML where possible." The slice still
+      requires at least one inline-SVG + escaping assertion, which must come from the rendered page:
+      `dashboardPage` embeds `DashboardCharts.statusDonut`/`groupedBarChart` inline (both emit `<svg ...>`
+      with `dashboard-status-donut`/`dashboard-grouped-bars` classes), and all dynamic node/status/owner
+      values pass through `escapeHTML`/`escape`. Grounded in GraphRenderer.swift (dashboardPage lines
+      ~179-226) and DashboardCharts.swift (statusDonut/groupedBarChart emit inline `<svg>`).
+  - id: committed-status-mix-is-the-oracle
+    status: closed
+    decision: >-
+      The expected program status mix asserted is auth `.done`, billing `.inProgress`, m1-core-integrated
+      `.pending`, search `.pending`, taken from the committed fixture run state.
+    rationale: >-
+      Verified against the committed event log
+      (`docs/examples/demo-factory/.ai-sdd/runs/demo-program-run/events/*.json`): `runStarted`,
+      `nodeStarted`+`nodeCompleted` for `auth` (top-level ⇒ featureStatus returns done), a `scoped`
+      `nodeStarted` into slice `billing` node `invoices` (⇒ the billing sub-pipeline has a started
+      sub-node ⇒ featureStatus descends to in-progress), and nothing for `search`/`m1-core-integrated`.
+      Per Scheduler.runnable, `m1-core-integrated` has incoming edges from auth (complete) AND billing
+      (not complete) ⇒ not runnable ⇒ `.pending`; `search` is gated on m1 ⇒ `.pending`. So the mix is a
+      genuine done/in-progress/pending spread, satisfying the "run resolved, not all-static" criterion.
+files:
+  - Tests/AISDDEngineTests/FixtureIntegrationTests.swift
+tests:
+  - swift build
+  - swift test
