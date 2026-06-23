@@ -27,12 +27,29 @@ The engine is provider-neutral: it's a CLI any agent (Claude Code, Codex, …) d
 ## Step 1 — Install the engine (a copyable binary)
 
 Build the **release** binary once, then put it on your PATH. The binary is self-contained — copy it to
-any machine or repo; no Swift needed afterward:
+any machine or repo; no Swift needed afterward.
+
+**macOS — use the installer.** After cloning, `cd` in and run [`scripts/install.sh`](scripts/install.sh).
+It reports your shell, ensures Swift is present (installing the Xcode Command Line Tools if missing),
+compiles the release binary, copies it to `~/.local/bin/ai-sdd`, and adds that dir to your PATH
+(idempotent — safe to re-run):
 
 ```sh
 git clone <ai-sdd> && cd ai-sdd
-swift build -c release                              # produces .build/release/ai-sdd
-cp .build/release/ai-sdd /usr/local/bin/ai-sdd     # or any dir on your PATH
+./scripts/install.sh
+# then open a new terminal, or `source` the rc file it printed
+```
+
+If Swift is missing, the installer launches the Command Line Tools dialog and exits — click **Install**,
+then re-run `./scripts/install.sh`.
+
+**Manual (any platform), if you'd rather not use the script:**
+
+```sh
+git clone <ai-sdd> && cd ai-sdd
+swift build -c release                                          # compile the release binary
+cp "$(swift build -c release --show-bin-path)/ai-sdd" \
+   ~/.local/bin/ai-sdd                                          # or any dir on your PATH
 ```
 
 **Confirm `ai-sdd` resolves from any directory** — compiled gates invoke `ai-sdd check` / `ai-sdd
