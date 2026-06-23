@@ -1,0 +1,204 @@
+summary: >-
+  Add the thin `ai-sdd-cheatsheet` wrapper skill and complete the `guide` →
+  `cheatsheet` rename across the docs (the second and final slice of the cheatsheet
+  feature; slice 1 already renamed the CLI command in Sources/AISDDCLI/main.swift and
+  is committed). Author one SKILL.md — frontmatter `name: ai-sdd-cheatsheet` plus a
+  one-line `description:`, body a thin shell that runs `ai-sdd cheatsheet` from the repo
+  root (on-PATH binary, falling back to `.build/debug/ai-sdd cheatsheet`) and relays the
+  output verbatim, with an OPTIONAL single `You're here: <step> → <command>` line when
+  the conversation makes the current step obvious and NO CLI state detection. Because
+  `ai-sdd surface` discovers framework skills from `.ai-sdd/skills/` (Layout.skillsSource)
+  while the repo's distributed framework-source copies live under top-level `skills/`,
+  the skill is authored in BOTH locations (matching the existing dual-copy pattern for
+  the other five `ai-sdd-*` skills), so that `ai-sdd surface` links it into
+  `.agents/skills/ai-sdd-cheatsheet` and `.claude/skills/ai-sdd-cheatsheet`. Update the
+  `ai-sdd guide` invocation lines and the command-table row in QUICKSTART.md and the
+  `guide · validate · …` CLI command list in docs/decisions.md so the command-reference
+  grep for `ai-sdd guide` over the declared doc surfaces returns nothing. No source,
+  CLI, or surfacing-engine changes.
+
+scope:
+  in:
+    - >-
+      Create `skills/ai-sdd-cheatsheet/SKILL.md` — the repo's distributed framework-source
+      copy — with valid frontmatter (`name: ai-sdd-cheatsheet` and a one-line
+      `description:`) matching the shape of skills/ai-sdd-run/SKILL.md.
+    - >-
+      Create `.ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md` with identical content — this is
+      the copy `ai-sdd surface` actually discovers (Layout.skillsSource = `.ai-sdd/skills`),
+      mirroring the dual-copy pattern the other `ai-sdd-*` skills already follow.
+    - >-
+      Author the skill body as a thin shell: instruct the agent to run `ai-sdd cheatsheet`
+      from the repo root, preferring the on-PATH binary and falling back to
+      `.build/debug/ai-sdd cheatsheet` (mirroring how skills/ai-sdd-run/SKILL.md documents
+      the `.build/debug/ai-sdd` fallback), and relay the output verbatim; all content lives
+      in the CLI and the skill must not re-derive or reformat it.
+    - >-
+      Document the OPTIONAL light touch: when the conversation already makes the user's
+      current workflow step obvious, prepend a SINGLE line
+      `You're here: <step> → <command>` before the relayed output; otherwise add nothing.
+      Explicitly: no CLI/state detection, no disk reads.
+    - >-
+      As a POST-gate step (after the implement diff passes the scope gate — see D-SCOPE-SYMLINKS),
+      run `ai-sdd surface` so it creates the symlinks
+      `.agents/skills/ai-sdd-cheatsheet -> ../../.ai-sdd/skills/ai-sdd-cheatsheet` and
+      `.claude/skills/ai-sdd-cheatsheet -> ../../.ai-sdd/skills/ai-sdd-cheatsheet`
+      (idempotent; surfacing logic itself is NOT modified). The `.claude/skills/` symlink is
+      NOT a declared file (the schema regex forbids `.claude/`), so surface must run outside
+      the gated diff window.
+    - >-
+      Update QUICKSTART.md: replace the `ai-sdd guide` invocation line (~line 60), the
+      surrounding prose reference (~line 64), and the command-table row (~line 253) to use
+      `ai-sdd cheatsheet`.
+    - >-
+      Update docs/decisions.md: in the ADR CLI command list (~line 838) replace `guide`
+      with `cheatsheet` in `guide · validate · start · status · …`.
+  out:
+    - >-
+      Any change to Sources/AISDDCLI/main.swift — the Guide→Cheatsheet rename and the
+      command body were completed and committed in slice 1 (cli-cheatsheet).
+    - >-
+      Any change to the surfacing engine (Sources/AISDDEngine/SkillSurface.swift,
+      Layout.swift) — `ai-sdd surface` already picks up `ai-sdd-*` skills by prefix.
+    - >-
+      The `ai-sdd guide` reference in scripts/install.sh — `scripts/` is outside the
+      diff-in-scope manifest and the planner file regex; handled per decision D6.
+    - Any new flags, context detection, or state/disk reads in the skill or CLI.
+    - Network, graph rendering, or multi-repo aggregation.
+
+acceptance:
+  - id: A1
+    description: >-
+      `skills/ai-sdd-cheatsheet/SKILL.md` exists with valid YAML frontmatter whose `name`
+      is `ai-sdd-cheatsheet` and which has a non-empty one-line `description:`.
+  - id: A2
+    description: >-
+      `.ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md` exists with identical content to the
+      top-level copy (the copy `ai-sdd surface` discovers).
+  - id: A3
+    description: >-
+      The skill body instructs running `ai-sdd cheatsheet` from the repo root, documents
+      the `.build/debug/ai-sdd cheatsheet` fallback, and states the output is relayed
+      verbatim.
+  - id: A4
+    description: >-
+      The skill documents the OPTIONAL single `You're here: <step> → <command>` line and
+      explicitly states it performs no CLI/state detection (verbatim relay is the default).
+  - id: A5
+    description: >-
+      After `ai-sdd surface`, both `.agents/skills/ai-sdd-cheatsheet` and
+      `.claude/skills/ai-sdd-cheatsheet` exist as symlinks pointing to
+      `../../.ai-sdd/skills/ai-sdd-cheatsheet`; `ai-sdd surface --check` then exits 0
+      (reconciled).
+  - id: A6
+    description: >-
+      `grep -rn "ai-sdd guide" QUICKSTART.md docs/decisions.md` returns nothing, and
+      `grep -rn "ai-sdd guide" .` excluding `.build/`, `.ai-sdd/`, and `scripts/` returns
+      nothing; QUICKSTART.md and docs/decisions.md reference `cheatsheet` instead.
+  - id: A7
+    description: >-
+      `swift build` and `swift test` are green.
+  - id: A8
+    description: >-
+      `ai-sdd validate .ai-sdd/features/cheatsheet` exits 0 (clean).
+  - id: A9
+    description: >-
+      Before `ai-sdd surface` runs, `ai-sdd scope --plan .ai-sdd/artifacts/feature-plan.v1.yaml
+      --repo .` reports no out-of-scope files (the gated diff is only the two SKILL.md copies +
+      QUICKSTART.md + docs/decisions.md). The surface symlinks are materialized as a post-gate
+      step per D-SCOPE-SYMLINKS and committed with the slice.
+
+decisions:
+  - id: D1
+    title: Doc-side completion of the `guide` removal (mirrors slice-1 D1).
+    status: closed
+    detail: >-
+      Slice 1 completed the code-side removal of `guide` (Guide→Cheatsheet, no alias) in
+      main.swift. This slice finishes the rename's doc surfaces: QUICKSTART.md (invocation
+      line, prose reference, command-table row) and docs/decisions.md (the
+      `guide · validate · …` CLI command list) now say `cheatsheet`, so the
+      command-reference grep over the declared doc surfaces is empty.
+  - id: D4
+    title: Thin wrapper skill; verbatim relay with one optional pointer (mirrors requirements D4).
+    status: closed
+    detail: >-
+      The skill is a thin shell — it runs `ai-sdd cheatsheet` from the repo root (on-PATH
+      binary, `.build/debug/ai-sdd cheatsheet` fallback exactly as ai-sdd-run documents it)
+      and relays the output verbatim. All content lives in the CLI. The only permitted
+      embellishment is a SINGLE optional `You're here: <step> → <command>` line prepended
+      when the chat makes the current step obvious; there is no CLI/state detection and no
+      disk read. Frontmatter and fallback wording mirror skills/ai-sdd-run/SKILL.md.
+  - id: D5
+    title: Surfacing is automatic via the `ai-sdd-` prefix; no surfacing-logic change (mirrors requirements D5/note).
+    status: closed
+    detail: >-
+      Naming the skill dir `ai-sdd-cheatsheet` (the framework prefix) means
+      SkillSurface.frameworkSkills discovers it and `ai-sdd surface` links it into every
+      agent dir. This slice runs `ai-sdd surface` to materialize the symlinks but does NOT
+      modify SkillSurface.swift or Layout.swift.
+  - id: D-DUAL
+    title: Author the skill in BOTH `.ai-sdd/skills/` and top-level `skills/`.
+    status: closed
+    detail: >-
+      Verified empirically — `ai-sdd surface` discovers from
+      `Layout.skillsSource = ".ai-sdd/skills"`, NOT the top-level `skills/` dir. The repo
+      keeps two synced copies of every `ai-sdd-*` framework skill: top-level `skills/<name>`
+      (the framework source distributed by the binary/bootstrap) and `.ai-sdd/skills/<name>`
+      (the dogfooding factory home surface reads). `diff` confirmed the existing five pairs
+      are content-identical (compile-schema has a known benign in-repo divergence). The new
+      skill MUST exist at `.ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md` for surfacing to work;
+      the top-level copy keeps the distributed set complete. The implementer writes identical
+      content to both paths.
+  - id: D-SCOPE-SYMLINKS
+    title: Run `ai-sdd surface` AFTER the slice's gated diff/commit; `.claude/` cannot be declared.
+    status: closed
+    detail: >-
+      Two verified constraints collide and dictate the sequencing. (1) The diff-in-scope gate
+      (ScopeChecker.outOfScope) flags every changed path — including the untracked symlinks
+      `ai-sdd surface` creates — unless covered by the plan's `files:` manifest, where a
+      trailing-`/` entry is a directory prefix. (2) The feature-plan schema's `files` regex
+      `^(Sources|Tests|docs|skills|\.ai-sdd|\.agents|\.github|AGENTS\.md|README\.md|
+      QUICKSTART\.md|Package\.swift|Package\.resolved|\.gitignore)(/|$)` admits `.agents/` but
+      NOT `.claude/`. So the `.claude/skills/ai-sdd-cheatsheet` symlink that `surface` always
+      creates (Layout.agentSkillSurfaces lists both codex `.agents/skills` and claude
+      `.claude/skills`) can never be a declared file — declaring it fails the schema
+      (verified: `files[..] must match …` error). Resolution: the slice's GATED change is
+      ONLY the four authored/edited files (two SKILL.md copies + QUICKSTART.md +
+      docs/decisions.md). `ai-sdd surface` is run as a POST-step — after the implement diff
+      passes the scope gate (and as part of slice-completion / verification), NOT inside the
+      gated diff. `.agents/skills/` is kept as a declared prefix as a safety margin (it is
+      schema-legal); `.claude/skills/` is intentionally omitted and the surface step is
+      sequenced out of the gate window. Both surface dirs are committed
+      (.gitignore: `!.claude/skills/`, and `.agents/skills/` tracked) so the symlinks land in
+      the slice commit even though they are not in the plan manifest.
+  - id: D6
+    title: scripts/install.sh `ai-sdd guide` is out of this slice's scope; correct forward.
+    status: closed
+    detail: >-
+      `scripts/install.sh:131` still reads `ai-sdd guide`. `scripts/` is outside both the
+      diff-in-scope manifest and the planner `files` regex, and the brief scopes this slice's
+      doc targets to QUICKSTART.md + docs/decisions.md. Therefore the slice's grep assertion
+      is scoped to exclude `scripts/` (and `.build/`, `.ai-sdd/`). The implementer must NOT
+      edit install.sh in this slice; the stale `ai-sdd guide` string there is flagged as a
+      follow-up (a separate `scripts`-scoped slice) so the diff-in-scope gate stays green.
+
+files:
+  - skills/ai-sdd-cheatsheet/SKILL.md
+  - .ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md
+  - QUICKSTART.md
+  - docs/decisions.md
+  - .agents/skills/
+
+tests:
+  - swift build
+  - swift test
+  - "test -f skills/ai-sdd-cheatsheet/SKILL.md && test -f .ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md"
+  - "diff skills/ai-sdd-cheatsheet/SKILL.md .ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md"
+  - "head -4 .ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md | grep -q 'name: ai-sdd-cheatsheet'"
+  - "grep -rn 'ai-sdd guide' QUICKSTART.md docs/decisions.md && echo 'FAIL: ai-sdd guide still in docs' && exit 1 || echo OK"
+  - "grep -rn 'ai-sdd guide' . | grep -v '\\.build/' | grep -v '\\.ai-sdd/' | grep -v 'scripts/' && echo 'FAIL: ai-sdd guide remains' && exit 1 || echo OK"
+  - ./.build/debug/ai-sdd validate .ai-sdd/features/cheatsheet
+  - "./.build/debug/ai-sdd scope --plan .ai-sdd/artifacts/feature-plan.v1.yaml --repo .   # run BEFORE surface — gated diff only"
+  - "./.build/debug/ai-sdd surface .   # POST-gate: materialize the symlinks"
+  - ./.build/debug/ai-sdd surface . --check
+  - ls -la .agents/skills/ai-sdd-cheatsheet .claude/skills/ai-sdd-cheatsheet

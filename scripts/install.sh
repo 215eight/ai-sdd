@@ -128,7 +128,7 @@ fi
 # ---------------------------------------------------------------------------
 step "Done"
 if command -v "$BIN_NAME" >/dev/null 2>&1; then
-  info "${GREEN}ai-sdd is on your PATH.${RESET} Try: ${BOLD}ai-sdd guide${RESET}"
+  info "${GREEN}ai-sdd is on your PATH.${RESET} Try: ${BOLD}ai-sdd cheatsheet${RESET}"
 else
   info "Installed, but ai-sdd isn't resolvable in this shell yet."
 fi

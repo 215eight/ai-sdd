@@ -835,7 +835,7 @@ the self-similar model, ADR-0002 — seed mode is a mode of bootstrap, not a new
 **Context.** Bootstrap/re-bootstrap (ADR-0029) and hand-edits to `.ai-sdd/` change artifacts of wildly
 different blast radius — refreshing a `conventions/<stack>.md` is local and safe, but editing a schema is
 a **contract change that ripples to every consumer worker** (ADR-0009: artifacts are typed handles on
-edges). The framework surfaces none of this. The CLI is `guide · validate · start · status · next ·
+edges). The framework surfaces none of this. The CLI is `cheatsheet · validate · start · status · next ·
 submit · check · scope · cover · graph` — **no `plan`, no `diff`, no `lock`, no drift**. The only safety
 net is `git diff` plus operator discipline, which carries **no blast-radius semantics**: an adopter
 re-bootstrapping or editing cannot tell a safe convention refresh from a contract break, and nothing

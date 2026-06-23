@@ -1,0 +1,76 @@
+verdict: approve
+summary: >-
+  Final slice (surface-and-docs) of the cheatsheet feature. Independently verified the
+  thin `ai-sdd-cheatsheet` wrapper skill (authored identically in both
+  skills/ai-sdd-cheatsheet/SKILL.md and .ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md), the
+  doc-side guide→cheatsheet rename in QUICKSTART.md and docs/decisions.md, and the
+  post-gate surfacing that materialized the .agents/ and .claude/ symlinks. All nine plan
+  acceptance ids pass; conventions (swift build + swift test) hold. Approve.
+
+items:
+  - id: A1
+    verdict: pass
+    notes: >-
+      skills/ai-sdd-cheatsheet/SKILL.md exists. `head -6` shows valid YAML frontmatter with
+      `name: ai-sdd-cheatsheet` and a non-empty one-line `description:` (the cheatsheet
+      blurb). Frontmatter shape matches skills/ai-sdd-run/SKILL.md.
+  - id: A2
+    verdict: pass
+    notes: >-
+      .ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md exists and is byte-identical to the
+      top-level copy — `diff skills/ai-sdd-cheatsheet/SKILL.md
+      .ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md` returned exit 0 (no output).
+  - id: A3
+    verdict: pass
+    notes: >-
+      Body is an explicit thin shell: step 1 instructs running `ai-sdd cheatsheet` from the
+      repo root preferring the on-PATH binary with `.build/debug/ai-sdd cheatsheet` as the
+      documented fallback; step 2 says "Relay the command's output VERBATIM." States the CLI
+      is the single source of truth and not to re-derive/reformat. `ai-sdd cheatsheet` was
+      run and prints the full cheatsheet (exit 0), confirming the content lives in the binary.
+  - id: A4
+    verdict: pass
+    notes: >-
+      "Optional light touch" section documents prepending a SINGLE
+      `You're here: <step> → <command>` line only when the conversation already makes the step
+      obvious, and a bold "NO CLI/state detection" paragraph forbids inspecting disk, reading
+      .ai-sdd/, or running status/next to guess state. Verbatim relay is the stated default.
+  - id: A5
+    verdict: pass
+    notes: >-
+      `ls -la` shows .agents/skills/ai-sdd-cheatsheet and .claude/skills/ai-sdd-cheatsheet
+      both as symlinks → ../../.ai-sdd/skills/ai-sdd-cheatsheet; both resolve to a real
+      SKILL.md (test -f via the link succeeds). `ai-sdd surface . --check` lists
+      ai-sdd-cheatsheet as "unchanged" in both agent dirs and prints "surfaces reconciled —
+      nothing to do", exit 0.
+  - id: A6
+    verdict: pass
+    notes: >-
+      `grep -rn 'ai-sdd guide' QUICKSTART.md docs/decisions.md` exit 1 (no matches).
+      Repo-wide grep excluding .build/, .ai-sdd/, scripts/ also exit 1 (no matches). The diff
+      shows QUICKSTART.md (invocation line, prose, command-table row, plus the seed loop and
+      two toolkit enumerations) and docs/decisions.md (CLI command list) now say cheatsheet.
+      scripts/install.sh retaining `ai-sdd guide` is intentionally out of scope per D6.
+  - id: A7
+    verdict: pass
+    notes: >-
+      `swift build` → "Build complete!" exit 0. `swift test` → 162 tests in 6 suites passed,
+      exit 0 (includes the surface suite: idempotent, check-mode, prune-stale, correct-
+      symlinks-in-every-agent-dir).
+  - id: A8
+    verdict: pass
+    notes: >-
+      `./.build/debug/ai-sdd validate .ai-sdd/features/cheatsheet` → "✓ cheatsheet: valid —
+      2 nodes, 1 edges, 0 workers, 0 checks", exit 0.
+  - id: A9
+    verdict: pass
+    notes: >-
+      The gated diff is exactly the four declared paths (QUICKSTART.md, docs/decisions.md,
+      skills/ai-sdd-cheatsheet/, .ai-sdd/skills/ai-sdd-cheatsheet/) plus the .agents/ symlink
+      (declared prefix). `ai-sdd scope` now reports a single out-of-scope path,
+      .claude/skills/ai-sdd-cheatsheet — this is the schema-undeclarable .claude/ symlink that
+      D-SCOPE-SYMLINKS specifies must be materialized by `ai-sdd surface` AFTER the gate, which
+      the driver did per the slice's post-gate sequencing. It is committable (git check-ignore
+      confirms .gitignore's `!.claude/skills/` un-ignores it), so it lands in the slice commit
+      as designed. The pre-surface gated diff was clean; the lone flag reflects the expected
+      post-surface state, not an out-of-scope authored change. Acceptance satisfied.

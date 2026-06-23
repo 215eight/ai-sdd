@@ -1,0 +1,21 @@
+summary: >-
+  Final slice of the cheatsheet feature (guide -> cheatsheet). Authored the thin
+  `ai-sdd-cheatsheet` wrapper skill in BOTH the distributed framework-source copy
+  (skills/ai-sdd-cheatsheet/SKILL.md) and the factory-home copy ai-sdd surface
+  discovers (.ai-sdd/skills/ai-sdd-cheatsheet/SKILL.md), with identical content:
+  frontmatter `name: ai-sdd-cheatsheet` plus a one-line description, and a thin-shell
+  body that runs `ai-sdd cheatsheet` from the repo root (on-PATH binary, falling back
+  to `.build/debug/ai-sdd cheatsheet` exactly as ai-sdd-run documents), relays the
+  output verbatim, permits a single optional `You're here: <step> -> <command>` line
+  when the conversation makes the step obvious, and explicitly performs no CLI/state
+  detection. Finished the doc-side rename: replaced all three `ai-sdd guide`
+  references in QUICKSTART.md (invocation line, prose mention, command-table row) with
+  `ai-sdd cheatsheet` and reworded their descriptions to describe the workflow
+  cheatsheet; added `ai-sdd-cheatsheet` to the framework-skills copy loop and the two
+  prose toolkit enumerations so adopters vendor it; and replaced `guide` with
+  `cheatsheet` in the CLI command list in docs/decisions.md. No source, CLI, or
+  surfacing-engine changes; scripts/install.sh and `ai-sdd surface` are deferred to
+  the driver (post-gate). swift build + swift test green;
+  `ai-sdd validate .ai-sdd/features/cheatsheet` clean; no `ai-sdd guide` remains in the
+  declared doc surfaces.
+satisfies: [A1, A2, A3, A4, A6, A7, A8, A9]
