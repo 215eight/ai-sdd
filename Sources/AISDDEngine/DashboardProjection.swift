@@ -28,9 +28,14 @@ public struct DashboardProjectionRow: Codable, Equatable, Sendable {
     public var dependencyCount: Int
     public var status: DashboardStatus
     public var nextActionHint: DashboardNextActionHint
+    // A gate marker (program-tier milestone-gate node), distinct from `milestone` (the correlation
+    // join-key). Defaulted to false and decoded as false when absent, so the project-tier projection
+    // and existing serialized rows are unchanged.
+    public var isMilestone: Bool
 
     public init(node: String, stack: String?, owner: String, lane: String?, milestone: String?,
-                dependencyCount: Int, status: DashboardStatus, nextActionHint: DashboardNextActionHint) {
+                dependencyCount: Int, status: DashboardStatus, nextActionHint: DashboardNextActionHint,
+                isMilestone: Bool = false) {
         self.node = node
         self.stack = stack
         self.owner = owner
@@ -39,6 +44,20 @@ public struct DashboardProjectionRow: Codable, Equatable, Sendable {
         self.dependencyCount = dependencyCount
         self.status = status
         self.nextActionHint = nextActionHint
+        self.isMilestone = isMilestone
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        node = try container.decode(String.self, forKey: .node)
+        stack = try container.decodeIfPresent(String.self, forKey: .stack)
+        owner = try container.decode(String.self, forKey: .owner)
+        lane = try container.decodeIfPresent(String.self, forKey: .lane)
+        milestone = try container.decodeIfPresent(String.self, forKey: .milestone)
+        dependencyCount = try container.decode(Int.self, forKey: .dependencyCount)
+        status = try container.decode(DashboardStatus.self, forKey: .status)
+        nextActionHint = try container.decode(DashboardNextActionHint.self, forKey: .nextActionHint)
+        isMilestone = try container.decodeIfPresent(Bool.self, forKey: .isMilestone) ?? false
     }
 }
 
@@ -200,6 +219,70 @@ public enum DashboardProjection {
                 totalNodeCount: rows.count,
                 doneCount: totals[.done, default: 0],
                 statusTotals: totals))
+    }
+
+    /// A pure PROGRAM-tier rollup: maps each program node (feature ⇔ kind == "pipeline",
+    /// milestone/gate ⇔ worker == "milestone-gate") to one row and aggregates the same summary
+    /// shape as the project-tier projection. `featurePipeline` injects sub-pipeline loading so the
+    /// engine stays pure (returns nil ⇒ degrade to program-tier signals). No file IO, no rendering.
+    public static func project(program: PipelineSpec, metadata: SpecMetadata, state: RunState? = nil,
+                               featurePipeline: (PipelineNode) -> (spec: PipelineSpec, metadata: SpecMetadata)? = { _ in nil })
+        -> DashboardProjectionResult {
+        let runState = state ?? RunState()
+        let runnable = Set(Scheduler.runnable(runState, program))
+        let rows = program.nodes.map { node -> DashboardProjectionRow in
+            let isMilestone = node.kind != "pipeline" && node.worker == "milestone-gate"
+            let nodeStatus: DashboardStatus
+            if node.kind == "pipeline" {
+                nodeStatus = featureStatus(for: node, state: state, runnable: runnable,
+                                           featurePipeline: featurePipeline)
+            } else {
+                // Milestone/gate (and any other plain node): the existing plain-node precedence.
+                nodeStatus = status(for: node.id, state: state, runnable: runnable)
+            }
+            return DashboardProjectionRow(
+                node: node.id,
+                stack: node.stack,
+                owner: ownerLabel(for: node, metadata: metadata),
+                lane: metadata.factory,
+                milestone: metadata.correlation,
+                dependencyCount: dependencyCount(for: node.id, in: program),
+                status: nodeStatus,
+                nextActionHint: nextActionHint(for: nodeStatus),
+                isMilestone: isMilestone)
+        }
+        let totals = statusTotals(rows)
+        return DashboardProjectionResult(
+            rows: rows,
+            summary: DashboardProjectionSummary(
+                totalFeatureCount: 1,
+                totalNodeCount: rows.count,
+                doneCount: totals[.done, default: 0],
+                statusTotals: totals))
+    }
+
+    /// Roll up a feature node (kind == "pipeline") to a single status by precedence:
+    /// escalated → rework → top-level done → descend & collapse the sub-pipeline → program-tier readiness.
+    private static func featureStatus(for node: PipelineNode, state: RunState?, runnable: Set<String>,
+                                      featurePipeline: (PipelineNode) -> (spec: PipelineSpec, metadata: SpecMetadata)?)
+        -> DashboardStatus {
+        if let state {
+            if state.escalatedNodes.contains(node.id) { return .escalated }
+            if state.failedChecks[node.id] != nil { return .rework }
+            if state.completedNodes.contains(node.id) { return .done }
+        }
+        if let sub = featurePipeline(node) {
+            let subResult = project(pipeline: sub.spec, metadata: sub.metadata,
+                                    state: state?.slices[node.id])
+            let started: Set<DashboardStatus> = [.done, .inProgress, .rework, .escalated]
+            if !subResult.rows.isEmpty, subResult.rows.allSatisfy({ $0.status == .done }) {
+                return .done
+            }
+            if subResult.rows.contains(where: { started.contains($0.status) }) {
+                return .inProgress
+            }
+        }
+        return runnable.contains(node.id) ? .runnable : .pending
     }
 
     private static func status(for node: String, state: RunState?, runnable: Set<String>) -> DashboardStatus {

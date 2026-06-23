@@ -1,0 +1,33 @@
+summary: >-
+  Added a pure program-tier dashboard rollup to AISDDEngine (slice program-status-rollup).
+  In Sources/AISDDEngine/DashboardProjection.swift: added a defaulted stored property
+  `isMilestone: Bool` to DashboardProjectionRow (default false in the initializer, decoded as
+  false when absent via a custom init(from:) so the type stays Codable/Equatable/Sendable and the
+  project-tier project(pipeline:metadata:state:) output is byte-for-byte unchanged), and added a new
+  static func project(program:metadata:state:featurePipeline:) on the DashboardProjection enum. The
+  program projection emits one DashboardProjectionRow per program node: feature nodes (kind ==
+  "pipeline") roll up by precedence (escalated -> rework -> top-level done -> descend the injected
+  sub-pipeline via the existing project(pipeline:) over state.slices[node.id] and collapse [non-empty
+  all-done => done; any started => in-progress] -> program-tier Scheduler.runnable readiness =>
+  runnable/pending); milestone/gate nodes (worker == "milestone-gate", not kind pipeline) use the
+  existing plain-node status precedence and carry isMilestone=true. owner/lane/milestone/
+  dependencyCount/nextActionHint and the DashboardProjectionSummary (totalFeatureCount=1) reuse the
+  existing private helpers. Pure: no file IO, no RunStore, no rendering. Added 14 Swift Testing tests
+  in Tests/AISDDEngineTests/EngineTests.swift (struct EngineTests) over an inline guardrails-shaped
+  program fixture, an inline featurePipeline closure, and inline RunState. swift build and swift test
+  both green (175 tests, 6 suites passed).
+satisfies:
+  - program-entry-point
+  - feature-escalated
+  - feature-rework
+  - feature-top-level-done
+  - feature-nested-all-done
+  - feature-nested-any-started
+  - feature-program-tier-runnable
+  - feature-program-tier-pending
+  - no-run-static
+  - missing-sub-pipeline-degrades
+  - milestone-gate-status
+  - milestone-row-flagged
+  - summary-counts
+  - pure-no-io

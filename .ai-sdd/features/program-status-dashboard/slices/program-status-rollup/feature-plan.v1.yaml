@@ -1,0 +1,129 @@
+summary: >-
+  Add a pure engine-level PROGRAM dashboard rollup in AISDDEngine (slice program-status-rollup, the
+  first of program-status-dashboard's four slices): a static function that turns a program
+  PipelineSpec (whose feature nodes carry kind "pipeline" and whose gate nodes run the
+  "milestone-gate" worker) plus its nested RunState into a DashboardProjectionResult. Each program
+  node becomes one DashboardProjectionRow. Feature nodes roll up to a single DashboardStatus by
+  precedence (escalated, rework, top-level done, then descend into the feature sub-pipeline via an
+  injected loader closure + state.slices[node.id] and collapse, else program-tier dependency
+  readiness via Scheduler.runnable). Milestone nodes use the existing plain-node precedence and are
+  flagged so a later renderer can style them distinctly as gates. The same DashboardProjectionSummary
+  is aggregated so the donut/bar charts work unchanged. No file IO, no rendering, no CLI — those are
+  downstream slices.
+scope:
+  in:
+    - Add a pure program projection entry point on the existing DashboardProjection enum that maps each program PipelineNode to a DashboardProjectionRow and aggregates a DashboardProjectionSummary.
+    - "Inject feature sub-pipeline loading as a pure closure (PipelineNode) -> (spec, metadata)? so the engine stays pure and unit-testable without file IO."
+    - Roll up a feature node (kind == "pipeline") to one DashboardStatus by precedence escalated, rework, top-level completed, descend-and-collapse the feature sub-pipeline, else program-tier runnable/pending.
+    - Derive milestone nodes (worker == "milestone-gate", not kind pipeline) using the existing plain-node status precedence (escalated, rework, in-progress, done, runnable, pending) over state plus the runnable set.
+    - Add a minimal, defaulted, Codable/Equatable/Sendable signal on DashboardProjectionRow that identifies milestone/gate rows so the later renderer can style them distinctly.
+    - Populate owner (node owner, then metadata owner, then name/stack fallback), dependencyCount, milestone, lane, and nextActionHint consistently with the existing project-tier DashboardProjection.
+    - Handle no-program-run static degradation (sources runnable, downstream pending) and missing feature sub-pipeline (closure returns nil) degradation to program-tier signals without crashing.
+    - Add focused Swift Testing coverage in Tests/AISDDEngineTests for every rollup precedence case, no-run static behavior, missing-sub-pipeline degradation, milestone gate status, and summary counts.
+  out:
+    - No ProgramDashboardAssembler, RunStore scanning, run-to-program matching, SpecLoader use, or any file IO (that is the downstream assembler slice).
+    - No GraphRenderer, DashboardSection, HTML, Mermaid, CSS, SVG, or chart rendering changes (downstream renderer slice).
+    - No CLI flag changes or ai-sdd graph command wiring, including the --dashboard gate relaxation (downstream cli slice).
+    - No changes to the project dashboard, plant dashboard, single-graph, --html, or plain Mermaid behavior (additive only; existing project-tier project() output stays byte-for-byte unchanged).
+    - No changes to pipeline, worker, check, or schema spec formats, to RunState storage, to recursive execution, or to the milestone-gate worker.
+    - No end-to-end verification against the real guardrails program or run (downstream verification slice).
+acceptance:
+  - id: program-entry-point
+    description: AISDDEngine exposes a pure static project function taking a program PipelineSpec, SpecMetadata, optional RunState, and a defaulted featurePipeline closure returning a per-node (spec, metadata) or nil, and returns a DashboardProjectionResult with one row per program node.
+  - id: feature-escalated
+    description: A feature node (kind == "pipeline") whose id is in state.escalatedNodes rolls up to escalated, ahead of all other feature signals.
+  - id: feature-rework
+    description: A feature node with an entry in state.failedChecks rolls up to rework when not escalated.
+  - id: feature-top-level-done
+    description: A feature node in state.completedNodes rolls up to done when not escalated or in rework, without needing to descend into the sub-pipeline.
+  - id: feature-nested-all-done
+    description: A feature node not flagged done at the top level, whose injected sub-pipeline (projected with state.slices[node.id]) yields a non-empty set of rows that are all done, rolls up to done.
+  - id: feature-nested-any-started
+    description: A feature node whose injected sub-pipeline has any started row (done, in-progress, rework, or escalated) but is not all-done rolls up to in-progress.
+  - id: feature-program-tier-runnable
+    description: A feature node with no escalated/rework/top-level-done signal and no started nested work resolves to runnable when it is a program-tier source or its program dependencies are met (via Scheduler.runnable).
+  - id: feature-program-tier-pending
+    description: A feature node whose program-tier dependencies are unmet (not in the runnable set) and which has no run signal or started nested work resolves to pending.
+  - id: no-run-static
+    description: With no program RunState (state nil), feature and milestone nodes resolve statically — program-tier source nodes are runnable and dependent nodes are pending — with no crash.
+  - id: missing-sub-pipeline-degrades
+    description: When the featurePipeline closure returns nil for a feature node (missing or broken sub-pipeline), the node falls back to program-tier signals (top-level done/escalated/rework if present, else runnable/pending) and never crashes.
+  - id: milestone-gate-status
+    description: A milestone node (worker == "milestone-gate", not kind pipeline) derives its status from the existing plain-node precedence (escalated, rework, in-progress, done, runnable, pending) over state plus the runnable set.
+  - id: milestone-row-flagged
+    description: Milestone/gate rows carry a testable signal distinguishing them from feature rows, and feature rows do not carry that signal, so a renderer can style gates distinctly.
+  - id: summary-counts
+    description: The DashboardProjectionSummary reflects the program rows — totalNodeCount equals the program node count, doneCount equals the number of done rows, and statusTotals sum to the row count.
+  - id: pure-no-io
+    description: The program projection performs no file IO, does not read RunStore or the filesystem, does not render, and produces deterministic results from its inputs; new and changed types remain Codable, Equatable, and Sendable.
+decisions:
+  - id: projection-symbol
+    status: closed
+    decision: >-
+      Add the program rollup as a new static function on the existing DashboardProjection enum with
+      signature static func project(program: PipelineSpec, metadata: SpecMetadata, state: RunState? = nil,
+      featurePipeline: (PipelineNode) -> (spec: PipelineSpec, metadata: SpecMetadata)? = { _ in nil })
+      -> DashboardProjectionResult.
+    rationale: >-
+      Keeps program rollup beside the project-tier project(pipeline:metadata:state:) so the two share
+      the row/summary/result types and private helpers (status precedence, ownerLabel, dependencyCount,
+      nextActionHint, statusTotals) without duplication; the distinct first argument label (program:)
+      avoids overload ambiguity. The slice brief explicitly allows extending DashboardProjection.
+  - id: projection-file
+    status: closed
+    decision: Implement the new function (and the row flag change) in the existing Sources/AISDDEngine/DashboardProjection.swift.
+    rationale: That file already owns DashboardProjection, the row/summary/result types, and the plain-node status precedence helper this slice reuses; co-locating keeps the rollup logic with the helpers it shares.
+  - id: feature-pipeline-injection
+    status: closed
+    decision: >-
+      Take feature sub-pipeline loading as an injected closure
+      (PipelineNode) -> (spec: PipelineSpec, metadata: SpecMetadata)? defaulting to a closure that
+      returns nil, rather than reading specs from disk.
+    rationale: Keeps the engine pure and unit-testable with inline fixtures; the downstream assembler slice supplies the real file-loading closure (SpecLoader). A nil return is the degradation path covered by missing-sub-pipeline-degrades.
+  - id: milestone-row-flag
+    status: closed
+    decision: >-
+      Add a new stored property isMilestone: Bool to DashboardProjectionRow, defaulted to false in the
+      initializer (and decoded as false when absent for backward compatibility), set true only for
+      milestone-gate nodes. Do not overload the existing milestone: String? field, which carries the
+      SpecMetadata.correlation join-key and is semantically unrelated to gate identity.
+    rationale: >-
+      The existing milestone field is the correlation/program join-key, not a gate marker, so reusing it
+      would conflate two meanings and could collide with the project-tier projection. A dedicated boolean
+      is the minimal, explicit, testable surface; defaulting it preserves the project-tier project() output
+      and existing dashboard tests unchanged, and keeps the row Codable/Equatable/Sendable.
+  - id: feature-vs-milestone-classification
+    status: closed
+    decision: Classify a program node as a feature when node.kind == "pipeline", and as a milestone/gate when node.worker == "milestone-gate" (and kind is not "pipeline"); any other node falls through to the plain-node (non-milestone) status path.
+    rationale: Matches the program graph grounded in .ai-sdd/programs/guardrails/pipeline.yaml (feature nodes set kind:pipeline; the gate sets worker:milestone-gate) and the requirements' closed decisions 2 and 3.
+  - id: nested-rollup-collapse
+    status: closed
+    decision: >-
+      For a feature node past the escalated/rework/top-level-done checks, when featurePipeline returns a
+      sub-pipeline, project it via the existing DashboardProjection.project(pipeline:metadata:state:) with
+      state.slices[node.id] (or no state when the program state is nil), then collapse — non-empty and all
+      rows done => done; any row done, in-progress, rework, or escalated => in-progress; otherwise fall
+      through to program-tier readiness.
+    rationale: Reuses the shipped, tested project-tier projection for the descent and implements requirements decision 2's collapse rule exactly; empty/no-signal sub-pipelines correctly defer to program-tier runnable/pending.
+  - id: program-tier-readiness
+    status: closed
+    decision: Compute program-tier runnable/pending via Scheduler.runnable over the program PipelineSpec with the supplied RunState (or an empty RunState when state is nil), reusing the existing private status helper for milestone nodes and the runnable-set fallback for features.
+    rationale: Keeps readiness semantics aligned with the engine's dependency model (as the project-tier projection already does) instead of duplicating dependency rules; the empty-state path yields the no-run static degradation (sources runnable, dependents pending).
+  - id: summary-feature-count
+    status: closed
+    decision: Set the summary's totalFeatureCount to 1 (the single program graph), keeping totalNodeCount, doneCount, and statusTotals derived from the program rows exactly as the project-tier projection does.
+    rationale: One program is projected per call, mirroring the project-tier convention of totalFeatureCount = 1 per projected graph; the assembler slice aggregates across sections later if needed.
+  - id: tests-location
+    status: closed
+    decision: Add the new tests to Tests/AISDDEngineTests/EngineTests.swift using Swift Testing (@Test, #expect, #require) with inline PipelineSpec, RunState, and an inline featurePipeline map.
+    rationale: The repo keeps engine behavior tests (including the existing dashboard projection tests) in this Swift Testing file; inline fixtures keep the rollup tests pure and file-IO-free, matching the conventions.
+  - id: no-typed-error-this-slice
+    status: closed
+    decision: This slice does not throw a typed empty-program error; the pure function returns a (possibly empty) DashboardProjectionResult, and the empty/invalid-program typed error analogous to ProjectDashboardError.noGraphs lives with the file-loading assembler slice.
+    rationale: A pure projection over an in-memory PipelineSpec has nothing to fail on; that typed error belongs to the assembler that loads specs from disk (requirements decision 5), keeping this slice's scope tight.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test

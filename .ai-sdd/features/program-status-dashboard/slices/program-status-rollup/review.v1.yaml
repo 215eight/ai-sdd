@@ -1,0 +1,122 @@
+schema: review.v1
+run: program-dashboard
+slice: program-status-rollup
+
+summary: >-
+  Independent review of slice program-status-rollup against feature-plan.v1 (14 acceptance ids) by
+  inspecting the real working-tree diff vs HEAD and the source/tests, not the changeset prose. Exactly
+  the two planned files changed (Sources/AISDDEngine/DashboardProjection.swift,
+  Tests/AISDDEngineTests/EngineTests.swift). The pure program-tier rollup
+  project(program:metadata:state:featurePipeline:) is implemented with the exact planned signature
+  (state defaulted nil, featurePipeline defaulted to a nil-returning closure) and is genuinely PURE —
+  no FileManager/RunStore/URL/Process and no rendering in the program path; it is a deterministic map
+  over in-memory inputs. Feature-node precedence (escalated → rework → top-level done → descend
+  state.slices[node.id] via the EXISTING project(pipeline:metadata:state:) and collapse [non-empty
+  all-done ⇒ done; any started ⇒ in-progress] → Scheduler.runnable readiness ⇒ runnable/pending) is
+  correct and matches the closed decisions. Milestone/gate nodes (worker == "milestone-gate", kind !=
+  "pipeline") route to the existing plain-node status(for:) helper and carry isMilestone=true; feature
+  rows carry isMilestone=false. isMilestone is an additive, defaulted Codable property with a custom
+  init(from:) decoding it as false when absent, so the project-tier projection result is unchanged.
+  Conventions satisfied (engine logic in AISDDEngine, Swift Testing @Test/#expect/#require, types stay
+  Codable/Equatable/Sendable, no inline path literals). Ran the gates myself: swift build exit 0;
+  swift test exit 0 (175 tests, 6 suites passed, including 14 new program-rollup tests in EngineTests).
+
+items:
+  - id: program-entry-point
+    verdict: pass
+    notes: >-
+      project(program:metadata:state:featurePipeline:) exists with the exact planned signature and
+      maps each program node to one DashboardProjectionRow (program.nodes.map) returning a
+      DashboardProjectionResult. Test programProjectionEmitsOneRowPerNode asserts one row per node in
+      declaration order and totalNodeCount == 4.
+  - id: feature-escalated
+    verdict: pass
+    notes: >-
+      featureStatus checks state.escalatedNodes first, ahead of rework/done/descent. Test
+      programFeatureEscalatedTakesPrecedence sets escalated AND failedChecks AND completedNodes AND an
+      all-done slice for locks and asserts .escalated — a genuine precedence test, not vacuous.
+  - id: feature-rework
+    verdict: pass
+    notes: >-
+      state.failedChecks[node.id] != nil ⇒ .rework, after the escalated check. Test
+      programFeatureReworkWhenNotEscalated (failedChecks only) asserts .rework.
+  - id: feature-top-level-done
+    verdict: pass
+    notes: >-
+      state.completedNodes.contains(node.id) ⇒ .done before any descent. Test
+      programFeatureTopLevelDoneWithoutDescent sets completedNodes=[locks] while the slice has an
+      in-progress node, and asserts .done — proving the top-level signal short-circuits descent.
+  - id: feature-nested-all-done
+    verdict: pass
+    notes: >-
+      Descent projects the sub-pipeline over state.slices[node.id]; non-empty AND all rows .done ⇒
+      .done. Test programFeatureNestedAllDoneRollsUpDone (slice completedNodes=[plan,implement], no
+      top-level signal) asserts .done. The descent calls the EXISTING project(pipeline:metadata:state:).
+  - id: feature-nested-any-started
+    verdict: pass
+    notes: >-
+      Any sub-row in {done,in-progress,rework,escalated} but not all-done ⇒ .inProgress. Test
+      programFeatureNestedAnyStartedRollsUpInProgress (slice inProgress=[implement], plan still
+      runnable) asserts .inProgress. The all-done vs any-started boundary is genuinely exercised by
+      this test paired with feature-nested-all-done.
+  - id: feature-program-tier-runnable
+    verdict: pass
+    notes: >-
+      With no run/nested signal, falls to runnable.contains(node.id) via Scheduler.runnable over the
+      program spec. Test programFeatureProgramTierRunnableForSource (empty RunState, empty slice)
+      asserts locks (a program source) is .runnable.
+  - id: feature-program-tier-pending
+    verdict: pass
+    notes: >-
+      Unmet program dependencies ⇒ not in runnable set ⇒ .pending. Test
+      programFeatureProgramTierPendingForGatedNode asserts drift (gated behind the milestone) is
+      .pending under an empty RunState.
+  - id: no-run-static
+    verdict: pass
+    notes: >-
+      state nil ⇒ runState = RunState(); both feature and milestone nodes resolve via the runnable
+      set with no crash. Test programNoRunResolvesStaticallyWithoutCrash asserts sources
+      locks/provenance runnable and milestone/drift pending.
+  - id: missing-sub-pipeline-degrades
+    verdict: pass
+    notes: >-
+      featurePipeline returning nil skips descent and falls through to top-level/program-tier signals.
+      Test programMissingSubPipelineDegradesToProgramTier (default nil closure, completedNodes=[locks])
+      asserts locks .done (top-level), provenance .runnable (source), drift .pending (gated), no crash.
+      Degradation path genuinely covered.
+  - id: milestone-gate-status
+    verdict: pass
+    notes: >-
+      Milestone nodes (worker=="milestone-gate", kind != "pipeline") route to the existing plain-node
+      status(for:) helper. Test programMilestoneGateUsesPlainNodePrecedence covers the runnable, done,
+      and escalated branches. Borderline-but-pass: the test does not directly assert the in-progress
+      and rework branches for the milestone node, but those branches live entirely in the pre-existing,
+      separately-tested status(for:) helper that the project-tier projection already exercises; this
+      slice's responsibility is correct routing to that helper, which the three distinct outcomes
+      confirm. Not vacuous.
+  - id: milestone-row-flagged
+    verdict: pass
+    notes: >-
+      isMilestone is set true only for milestone-gate nodes and false otherwise — a dedicated boolean
+      distinct from the milestone correlation field (per decision milestone-row-flag). Test
+      programMilestoneRowIsFlaggedAndFeaturesAreNot asserts the gate row isMilestone and the locks
+      feature row is not.
+  - id: summary-counts
+    verdict: pass
+    notes: >-
+      Summary derives totalNodeCount=rows.count, doneCount=totals[.done], statusTotals via
+      statusTotals(rows); totalFeatureCount=1 per decision summary-feature-count. Test
+      programSummaryCountsReflectRows asserts totalNodeCount==4, doneCount==2, per-status totals, and
+      that statusTotals sum to rows.count.
+  - id: pure-no-io
+    verdict: pass
+    notes: >-
+      The program path uses only in-memory inputs (PipelineSpec, SpecMetadata, RunState, injected
+      closure) — no FileManager, RunStore, URL, Process, or rendering; the result is a deterministic
+      map over inputs. DashboardProjectionRow/Summary/Result remain Codable/Equatable/Sendable
+      (compiler-enforced; the added init(from:) keeps Codable round-trip consistent with the
+      synthesized encoder). No dedicated purity assertion test, but purity is structural and the
+      175-test suite (including existing serialization/dashboard tests) is green.
+
+verdict: approve
+rework: []

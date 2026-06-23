@@ -1579,6 +1579,180 @@ struct EngineTests {
         #expect(!git.arguments.contains("add"))
         #expect(!git.arguments.contains("commit"))
     }
+
+    // MARK: - Program dashboard rollup projection
+
+    /// Models the guardrails program shape: two feature nodes (kind: pipeline) joined through a
+    /// milestone-gate node, then a third feature gated on the milestone.
+    private func programPipeline() -> PipelineSpec {
+        PipelineSpec(
+            semantics: "enabler",
+            nodes: [
+                PipelineNode(id: "locks", kind: "pipeline", pipeline: "../../features/locks",
+                             stack: "swift", owner: ["maintainer"]),
+                PipelineNode(id: "provenance", kind: "pipeline", pipeline: "../../features/provenance",
+                             stack: "swift", owner: ["maintainer"]),
+                PipelineNode(id: "m1-guardrails-integrated", worker: "milestone-gate", owner: ["maintainer"]),
+                PipelineNode(id: "drift", kind: "pipeline", pipeline: "../../features/drift",
+                             stack: "swift", owner: ["maintainer"])
+            ],
+            edges: [
+                PipelineEdge(from: OneOrMany(["locks"]), to: "m1-guardrails-integrated"),
+                PipelineEdge(from: OneOrMany(["provenance"]), to: "m1-guardrails-integrated"),
+                PipelineEdge(from: OneOrMany(["m1-guardrails-integrated"]), to: "drift")
+            ])
+    }
+
+    /// A simple two-node sub-pipeline used as an injected feature pipeline.
+    private func featureSubPipeline() -> (spec: PipelineSpec, metadata: SpecMetadata) {
+        (PipelineSpec(
+            nodes: [PipelineNode(id: "plan"), PipelineNode(id: "implement")],
+            edges: [PipelineEdge(from: OneOrMany(["plan"]), to: "implement")]),
+         SpecMetadata(name: "feature"))
+    }
+
+    @Test func programProjectionEmitsOneRowPerNode() {
+        let result = DashboardProjection.project(
+            program: programPipeline(),
+            metadata: SpecMetadata(name: "guardrails"))
+
+        #expect(result.rows.map(\.node) ==
+            ["locks", "provenance", "m1-guardrails-integrated", "drift"])
+        #expect(result.summary.totalFeatureCount == 1)
+        #expect(result.summary.totalNodeCount == 4)
+    }
+
+    @Test func programFeatureEscalatedTakesPrecedence() {
+        let state = RunState(
+            completedNodes: ["locks"],
+            failedChecks: ["locks": ["unit"]],
+            escalatedNodes: ["locks"],
+            slices: ["locks": RunState(completedNodes: ["plan", "implement"])])
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: state,
+            featurePipeline: { _ in self.featureSubPipeline() })
+        #expect(status(result, "locks") == .escalated)
+    }
+
+    @Test func programFeatureReworkWhenNotEscalated() {
+        let state = RunState(failedChecks: ["locks": ["unit"]])
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: state,
+            featurePipeline: { _ in self.featureSubPipeline() })
+        #expect(status(result, "locks") == .rework)
+    }
+
+    @Test func programFeatureTopLevelDoneWithoutDescent() {
+        // completedNodes marks locks done; the sub-pipeline (all started) must NOT downgrade it.
+        let state = RunState(
+            completedNodes: ["locks"],
+            slices: ["locks": RunState(inProgressNodes: ["implement"])])
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: state,
+            featurePipeline: { _ in self.featureSubPipeline() })
+        #expect(status(result, "locks") == .done)
+    }
+
+    @Test func programFeatureNestedAllDoneRollsUpDone() {
+        let state = RunState(
+            slices: ["locks": RunState(completedNodes: ["plan", "implement"])])
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: state,
+            featurePipeline: { _ in self.featureSubPipeline() })
+        #expect(status(result, "locks") == .done)
+    }
+
+    @Test func programFeatureNestedAnyStartedRollsUpInProgress() {
+        let state = RunState(
+            slices: ["locks": RunState(inProgressNodes: ["implement"])])
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: state,
+            featurePipeline: { _ in self.featureSubPipeline() })
+        #expect(status(result, "locks") == .inProgress)
+    }
+
+    @Test func programFeatureProgramTierRunnableForSource() {
+        // No run signal and an empty nested sub-pipeline state ⇒ program-tier readiness.
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: RunState(),
+            featurePipeline: { _ in self.featureSubPipeline() })
+        // locks is a program-tier source ⇒ runnable.
+        #expect(status(result, "locks") == .runnable)
+    }
+
+    @Test func programFeatureProgramTierPendingForGatedNode() {
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: RunState(),
+            featurePipeline: { _ in self.featureSubPipeline() })
+        // drift depends on the milestone, which is not complete ⇒ pending.
+        #expect(status(result, "drift") == .pending)
+    }
+
+    @Test func programNoRunResolvesStaticallyWithoutCrash() {
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"))
+        #expect(status(result, "locks") == .runnable)
+        #expect(status(result, "provenance") == .runnable)
+        #expect(status(result, "m1-guardrails-integrated") == .pending)
+        #expect(status(result, "drift") == .pending)
+    }
+
+    @Test func programMissingSubPipelineDegradesToProgramTier() {
+        // Closure returns nil ⇒ no descent; top-level/program-tier signals only, no crash.
+        let state = RunState(completedNodes: ["locks"])
+        let degraded = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: state)
+        #expect(status(degraded, "locks") == .done)        // top-level signal still applies
+        #expect(status(degraded, "provenance") == .runnable) // program-tier source
+        #expect(status(degraded, "drift") == .pending)       // gated ⇒ pending, no crash
+    }
+
+    @Test func programMilestoneGateUsesPlainNodePrecedence() {
+        let runnableState = RunState(completedNodes: ["locks", "provenance"])
+        let runnableResult = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: runnableState)
+        #expect(status(runnableResult, "m1-guardrails-integrated") == .runnable)
+
+        let doneState = RunState(completedNodes: ["locks", "provenance", "m1-guardrails-integrated"])
+        let doneResult = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: doneState)
+        #expect(status(doneResult, "m1-guardrails-integrated") == .done)
+
+        let escalatedState = RunState(escalatedNodes: ["m1-guardrails-integrated"])
+        let escalatedResult = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: escalatedState)
+        #expect(status(escalatedResult, "m1-guardrails-integrated") == .escalated)
+    }
+
+    @Test func programMilestoneRowIsFlaggedAndFeaturesAreNot() throws {
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"))
+        let gate = try #require(result.rows.first { $0.node == "m1-guardrails-integrated" })
+        #expect(gate.isMilestone)
+        let locks = try #require(result.rows.first { $0.node == "locks" })
+        #expect(!locks.isMilestone)
+    }
+
+    @Test func programSummaryCountsReflectRows() {
+        let state = RunState(
+            completedNodes: ["locks", "provenance"],
+            slices: [:])
+        let result = DashboardProjection.project(
+            program: programPipeline(), metadata: SpecMetadata(name: "guardrails"), state: state)
+        #expect(result.summary.totalNodeCount == 4)
+        // locks done, provenance done, milestone runnable, drift pending.
+        #expect(result.summary.doneCount == 2)
+        let total = result.summary.statusTotals.values.reduce(0, +)
+        #expect(total == result.rows.count)
+        #expect(result.summary.statusTotals[.done] == 2)
+        #expect(result.summary.statusTotals[.runnable] == 1)
+        #expect(result.summary.statusTotals[.pending] == 1)
+    }
+
+    /// Convenience: the status of a named row in a program projection.
+    private func status(_ result: DashboardProjectionResult, _ node: String) -> DashboardStatus? {
+        result.rows.first { $0.node == node }?.status
+    }
 }
 
 private extension SpecLoadError {
