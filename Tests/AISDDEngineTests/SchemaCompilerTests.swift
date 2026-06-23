@@ -181,4 +181,43 @@ struct SchemaCompilerTests {
         #expect(env.spec.rules?.last?.isBlocking == false)
         #expect(env.spec.judge?.first?.rubric == "is it sound?")
     }
+
+    // MARK: - Failure path: a malformed schema is rejected cleanly
+
+    /// `ai-sdd compile` loads the schema before compiling. A not-well-formed schema must fail at that
+    /// load boundary with the typed `SpecLoadError` (→ the CLI exits non-zero) — it never reaches the
+    /// compiler and never yields a bogus check.
+    @Test func malformedSchemaYAMLIsRejectedAtLoad() {
+        let notWellFormed = """
+        apiVersion: ai-sdd/v1
+        kind: Schema
+        metadata: { name: broken
+        spec:
+          format: yaml
+          fields: { x: { type: string } }
+        """  // unterminated flow mapping on the metadata line
+        #expect(throws: SpecLoadError.self) {
+            try loader.loadSchemaYAML(notWellFormed)
+        }
+    }
+
+    /// Well-formed YAML that does not match the Schema shape (`fields` is a scalar, not a mapping) is
+    /// a `.schema` load error — likewise caught before the compiler runs, not a crash or silent pass.
+    @Test func schemaWithWrongShapeIsRejectedAtLoad() {
+        let wrongShape = """
+        apiVersion: ai-sdd/v1
+        kind: Schema
+        metadata: { name: bad-shape, version: 1 }
+        spec:
+          format: yaml
+          fields: not-a-mapping
+        """
+        let thrown = #expect(throws: SpecLoadError.self) {
+            try loader.loadSchemaYAML(wrongShape)
+        }
+        guard case .schema? = thrown else {
+            Issue.record("expected SpecLoadError.schema, got \(String(describing: thrown))")
+            return
+        }
+    }
 }
