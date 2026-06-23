@@ -1,0 +1,33 @@
+summary: >-
+  Gave the convention Discovery Record a typed, machine-readable evidence format and converted the
+  real `swift.md` to it — markdown only, no Swift source change. Citations now live in the Evidence
+  cell as labeled-prefix backticked tokens `` `path:<repo-relative-path>` `` (existence-checkable) and
+  `` `cmd:<command>` `` (exit-0-checkable); a parser reads only known-prefix tokens, while all other
+  backticked vocabulary (`@Test`, `swiftlint`, `env:`) and prose are ignored, and commit SHAs stay
+  prose. Touched exactly three files. (1) `.ai-sdd/conventions/swift.md`: added a note above the
+  Discovery Record explaining the `path:`/`cmd:` token convention, then rewrote every confirmed row to
+  carry typed tokens — Build `path:Package.swift` + `cmd:swift build`; both Test rows
+  `path:Tests/AISDDEngineTests/EngineTests.swift` (path-only, keeping drift cheap; `@Test`/`#expect`/
+  `#require` kept as vocabulary); Run commands `path:AGENTS.md` + `path:Sources/AISDDCLI/main.swift`;
+  Module/feature `path:Package.swift`; Model/entity `path:Sources/AISDDModels/Spec.swift`;
+  Config/secrets `path:README.md` + `path:docs/examples/sdlc-plant/resources/github.resource.yaml`
+  (the glob `*.resource.yaml` replaced with that concrete existing file); Dependency/package
+  `path:Package.swift` + `path:Package.resolved`; Naming/layering `path:AGENTS.md` +
+  `path:Sources/AISDDEngine/Layout.swift` + `path:Package.swift`. Commit SHAs and commit ranges moved
+  to parenthetical prose (not tokenized). The four open-gap rows (Lint, Migration, Endpoint,
+  CI/release) carry zero typed tokens, keeping their descriptive prose and `open gap` status (the
+  hypothetical `.github` stays prose, never a `path:` token). (2) `skills/ai-sdd-bootstrap/SKILL.md`:
+  updated §1 step 3 "Verify groundedness" and the "Record, per change-type" guidance to mandate the
+  typed format — citations as `path:`/`cmd:` tokens a parser reads with no heuristics, concrete paths
+  only (no globs), SHAs/other evidence stay prose, open-gap rows carry no token (drift skips them).
+  (3) `.ai-sdd/skills/ai-sdd-bootstrap/SKILL.md`: copied verbatim; `diff` reports the two bootstrap
+  copies byte-for-byte identical. Verified each token by hand: every `path:` file exists, `cmd:swift
+  build` exits 0, every open-gap row has zero tokens. Gates green: `swift build` exit 0, `swift test`
+  exit 0 (156 tests), `swift run ai-sdd validate .ai-sdd` exit 0, `diff` of the two SKILL.md copies
+  exit 0. `git status` shows only the three planned files modified.
+satisfies:
+  - AC-BOOTSTRAP-PRESCRIBES-FORMAT
+  - AC-BOOTSTRAP-COPIES-IDENTICAL
+  - AC-SWIFT-CONVERTED
+  - AC-CITATIONS-PASS
+  - AC-NO-ENGINE-CHANGE

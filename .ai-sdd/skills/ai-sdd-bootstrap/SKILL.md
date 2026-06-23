@@ -21,19 +21,30 @@ to a three-step contract so the output is **grounded, not guessed**:
 2. **Synthesize the convention (AI).** Generalize each change-type's pattern **from that evidence** —
    abstract the pattern from a real exemplar. Faithful abstraction is fine; introducing a step **no
    exemplar supports** is not.
-3. **Verify groundedness, flag the rest.** Every convention must **cite its evidence** (a file, a
-   commit, a manifest entry). Check citations mechanically where possible (the path exists, the
-   command exits 0). Any change-type with **no evidence**, or any claim not traceable to evidence, is
-   **flagged and confirmed with the user** (or filled from ecosystem priors) — never silently
-   written. "No clear convention found" is a valid, expected outcome — surface it, don't guess.
+3. **Verify groundedness, flag the rest.** Every convention must **cite its evidence** as **typed,
+   machine-readable tokens** so drift can re-check it later with **zero heuristics**. Record citations
+   in the Evidence cell as backticked tokens whose content begins with a known prefix immediately
+   followed by a colon — `` `path:<concrete-repo-relative-path>` `` (drift checks the path exists) and
+   `` `cmd:<command>` `` (drift checks the command exits 0). A parser collects **only** known-prefix
+   tokens; every other backticked token is convention **vocabulary** (e.g. `@Test`, `swiftlint`,
+   `env:`) and is ignored, as is all surrounding prose. Use **concrete paths only — no globs** (a glob
+   is not existence-checkable; name one concrete existing file instead). Commit SHAs and any other
+   evidence stay **ordinary prose** — not tokenized, not drift-checked (a historical SHA existing is
+   not a staleness signal). Check tokens mechanically (the path exists, the command exits 0). Any
+   change-type with **no evidence**, or any claim not traceable to evidence, is **flagged and confirmed
+   with the user** (or filled from ecosystem priors) — never silently written. "No clear convention
+   found" is a valid, expected outcome — surface it, don't guess.
 
 Cover this **checklist** of change-types — don't skip one for lack of an obvious example; flag it:
 build / test / lint / run commands · add a **module/feature** · a **model/entity** · a **migration**
 · a **test** · an **endpoint** · **config/secrets** · **a dependency / new package** (read the
 manifest + any existing local packages) · naming + layering · CI/release.
 
-Record, per change-type: the **evidence**, the **convention**, and whether it was **confirmed** or
-left an **open gap**. That record seeds the discovery eval set (see *Discovery quality* below).
+Record, per change-type, a Discovery Record table row: the **evidence** (as typed `path:`/`cmd:`
+tokens in the Evidence cell), the **convention**, and whether it was **confirmed** or left an **open
+gap**. A confirmed row carries at least one `path:`/`cmd:` token; an **open-gap row carries no typed
+token** (zero tokens ⇒ nothing to verify ⇒ drift skips it) — it keeps its descriptive prose and `open
+gap` status. That record seeds the discovery eval set (see *Discovery quality* below).
 
 ## 2. Scaffold the `.ai-sdd/` home
 

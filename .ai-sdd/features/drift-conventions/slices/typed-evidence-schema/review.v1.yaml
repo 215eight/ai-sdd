@@ -1,0 +1,65 @@
+schema: review.v1
+run: drift-conventions
+slice: typed-evidence-schema
+
+summary: >-
+  Reviewed the typed-evidence-schema slice (Part 1 of drift-conventions) against feature-plan.v1
+  (AC-BOOTSTRAP-PRESCRIBES-FORMAT .. AC-NO-ENGINE-CHANGE; decisions DC1-DC5, all closed) by inspecting
+  the real working-tree diff vs HEAD, not the changeset prose. Exactly the three planned markdown files
+  changed (.ai-sdd/conventions/swift.md, both ai-sdd-bootstrap SKILL.md copies); no Sources/** or
+  Tests/** touched. Every `path:` token in swift.md resolves to an existing file (9/9), the single
+  `cmd:swift build` token exits 0, no `path:` token is a glob, and all four open-gap rows (Lint,
+  Migration, Endpoint, CI/release) carry zero typed tokens. Both bootstrap copies are byte-for-byte
+  identical and prescribe the typed format in §1 step 3 and the "Record, per change-type" guidance.
+  Gates green: swift build (exit 0), swift test (156 tests, 5 suites, exit 0), swift run ai-sdd validate
+  .ai-sdd (exit 0).
+
+items:
+  - id: AC-BOOTSTRAP-PRESCRIBES-FORMAT
+    verdict: pass
+    notes: >-
+      Both bootstrap SKILL.md copies, §1 step 3 "Verify groundedness" and the "Record, per change-type"
+      guidance, now mandate the typed format: citations in the Evidence cell as
+      `` `path:<concrete-repo-relative-path>` `` and `` `cmd:<command>` `` backticked tokens; a parser
+      collects only known-prefix tokens while all other backticked vocabulary (`@Test`, `swiftlint`,
+      `env:`) and prose is ignored; concrete paths only — no globs; commit SHAs / other evidence stay
+      prose (not drift-checked); open-gap rows carry no typed token (drift skips them). Matches
+      DC1/DC2/DC3/DC4.
+  - id: AC-BOOTSTRAP-COPIES-IDENTICAL
+    verdict: pass
+    notes: >-
+      `diff skills/ai-sdd-bootstrap/SKILL.md .ai-sdd/skills/ai-sdd-bootstrap/SKILL.md` reports no
+      differences — byte-for-byte identical (both new blobs hash 4ae6404; both diffs vs HEAD are the
+      same hunk).
+  - id: AC-SWIFT-CONVERTED
+    verdict: pass
+    notes: >-
+      .ai-sdd/conventions/swift.md Discovery Record fully converted. A note above the table explains the
+      token grammar. Every confirmed row carries at least one typed token: Build (`path:Package.swift`,
+      `cmd:swift build`); both Test rows (`path:Tests/AISDDEngineTests/EngineTests.swift`); Run commands
+      (`path:AGENTS.md`, `path:Sources/AISDDCLI/main.swift`); Module/feature (`path:Package.swift`);
+      Model/entity (`path:Sources/AISDDModels/Spec.swift`); Config/secrets (`path:README.md`,
+      `path:docs/examples/sdlc-plant/resources/github.resource.yaml` — glob replaced with a concrete
+      existing file per DC4); Dependency/package (`path:Package.swift`, `path:Package.resolved`);
+      Naming/layering (`path:AGENTS.md`, `path:Sources/AISDDEngine/Layout.swift`, `path:Package.swift`).
+      The four open-gap rows carry zero typed tokens. Commit SHAs moved to parenthetical prose (DC2).
+  - id: AC-CITATIONS-PASS
+    verdict: pass
+    notes: >-
+      Verified every token by hand. All 9 distinct `path:` files exist (test -f): Package.swift,
+      Tests/AISDDEngineTests/EngineTests.swift, AGENTS.md, Sources/AISDDCLI/main.swift,
+      Sources/AISDDModels/Spec.swift, README.md,
+      docs/examples/sdlc-plant/resources/github.resource.yaml, Package.resolved,
+      Sources/AISDDEngine/Layout.swift. No table `path:` token contains a glob (the `path:`/`cmd:`
+      placeholders in the explanatory note are grammar examples, not citations). The single
+      `cmd:swift build` token exits 0. Open-gap rows (Lint, Migration, Endpoint, CI/release) carry zero
+      typed tokens.
+  - id: AC-NO-ENGINE-CHANGE
+    verdict: pass
+    notes: >-
+      No Sources/** or Tests/** file changed (git diff --name-only shows only the 3 planned markdown
+      files). Gates green: swift build exit 0; swift test exit 0 (156 tests, 5 suites);
+      swift run ai-sdd validate .ai-sdd exit 0.
+
+verdict: approve
+rework: []

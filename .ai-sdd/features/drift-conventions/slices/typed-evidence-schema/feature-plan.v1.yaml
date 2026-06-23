@@ -1,0 +1,150 @@
+summary: >-
+  Part 1 of feature `drift-conventions` (slice `typed-evidence-schema`): give the convention Discovery
+  Record a typed, machine-readable evidence format so a parser reads citations with ZERO heuristics,
+  then convert the real `swift.md` to it — leaving the repo reconciled. The format (DC1): each Discovery
+  Record row carries its citations in the Evidence cell as labeled-prefix backticked tokens —
+  `` `path:<repo-relative-path>` `` (existence-checkable) and `` `cmd:<command>` `` (exit-0-checkable). A
+  parser collects ONLY tokens whose backtick content begins with a known prefix (`path:` / `cmd:`); every
+  other backticked token (convention vocabulary like `` `@Test` ``, `` `swiftlint` ``) and all prose is
+  ignored. Open-gap / "no X found" rows carry NO typed token (DC3) — zero tokens ⇒ nothing to verify.
+  This slice is conventions + skill markdown ONLY (no Swift source change). It updates the bootstrap
+  skill that AUTHORS conventions — BOTH copies kept byte-for-byte identical
+  (`skills/ai-sdd-bootstrap/SKILL.md` and the vendored `.ai-sdd/skills/ai-sdd-bootstrap/SKILL.md`, §1
+  "Discover the repo" + the prescribed Discovery Record format) so a future re-bootstrap emits the typed
+  format — explaining: cite evidence as `path:`/`cmd:` tokens (machine-checkable); concrete paths only
+  (no globs, DC4); commit SHAs / other evidence stay prose (not drift-checked, DC2); open-gap rows carry
+  no token. It then rewrites `.ai-sdd/conventions/swift.md`'s Discovery Record into the typed format,
+  where every `path:` token points at a file that EXISTS and every `cmd:` token EXITS 0, and the four
+  open-gap rows (Lint, Migration, Endpoint, CI/release) carry no token. No engine behavior changes yet
+  (drift Kind 3 itself lands in Part 2, slice `drift-kind3`).
+
+scope:
+  in:
+    - >-
+      Update `skills/ai-sdd-bootstrap/SKILL.md` §1 "Discover the repo" and the Discovery Record format it
+      prescribes to mandate the typed evidence format: citations in the Evidence cell as `path:`/`cmd:`
+      backticked tokens, parser collects only known-prefix tokens (all other backticked vocabulary +
+      prose ignored), concrete repo-relative paths only (no globs), commit SHAs / other evidence stay
+      prose, open-gap rows carry no typed token.
+    - >-
+      Update the vendored copy `.ai-sdd/skills/ai-sdd-bootstrap/SKILL.md` with the IDENTICAL edit — keep
+      the two files byte-for-byte the same (they are byte-identical today; verify with `diff` after the
+      edit).
+    - >-
+      Rewrite `.ai-sdd/conventions/swift.md`'s Discovery Record into the typed format: each confirmed row
+      carries `path:` and/or `cmd:` tokens in its Evidence cell; the four open-gap rows (Lint, Migration,
+      Endpoint, CI/release) carry no typed token (they keep descriptive prose + `open gap` status).
+    - >-
+      Verify every citation by hand before finishing: each `path:` token points at a file that exists,
+      each `cmd:` token exits 0, and every open-gap row has no token.
+  out:
+    - >-
+      Any Swift source change — no `Sources/**` or `Tests/**` edit. Drift Kind 3 (the
+      `conventionCitation` DriftKind case and its parser) is Part 2 (slice `drift-kind3`,
+      `depends_on: typed-evidence-schema`), NOT this slice.
+    - >-
+      Changing Kind 1/2 drift behavior, the engine, the CLI, or any schema/check.
+    - >-
+      Other stacks' convention files — only `swift.md` exists today.
+    - >-
+      Re-checking commit-SHA evidence as a drift signal (DC2 — a historical SHA existing is not a
+      staleness signal); SHAs remain ordinary prose, never a typed token.
+    - >-
+      Globs as citations (DC4 — globs are not existence-checkable); concrete repo-relative paths only.
+
+acceptance:
+  - id: AC-BOOTSTRAP-PRESCRIBES-FORMAT
+    description: >-
+      `skills/ai-sdd-bootstrap/SKILL.md` §1 "Discover the repo" (and the Discovery Record format it
+      prescribes) mandates the typed evidence format: citations live in the Evidence cell as
+      `` `path:<repo-relative-path>` `` and `` `cmd:<command>` `` backticked tokens; a parser collects
+      only known-prefix tokens while all other backticked vocabulary and prose is ignored; concrete
+      repo-relative paths only (no globs); commit SHAs / other evidence stay prose (not drift-checked);
+      open-gap rows carry no typed token.
+  - id: AC-BOOTSTRAP-COPIES-IDENTICAL
+    description: >-
+      `.ai-sdd/skills/ai-sdd-bootstrap/SKILL.md` carries the identical edit and
+      `diff skills/ai-sdd-bootstrap/SKILL.md .ai-sdd/skills/ai-sdd-bootstrap/SKILL.md` reports no
+      differences (the two files are byte-for-byte identical).
+  - id: AC-SWIFT-CONVERTED
+    description: >-
+      `.ai-sdd/conventions/swift.md`'s Discovery Record is fully converted to the typed format: every
+      previously-confirmed row carries at least one `path:` and/or `cmd:` token in its Evidence cell, and
+      the four open-gap rows (Lint, Migration, Endpoint, CI/release) carry no typed token.
+  - id: AC-CITATIONS-PASS
+    description: >-
+      Spot-checking each token in the converted `swift.md`: every cited `path:` points at a file that
+      exists in the repo, every cited `cmd:` exits 0, and no open-gap row carries a token (zero tokens ⇒
+      nothing to verify).
+  - id: AC-NO-ENGINE-CHANGE
+    description: >-
+      No Swift source or test file is touched; `swift build`, `swift test`, and
+      `swift run ai-sdd validate .ai-sdd` stay green (this slice is docs/conventions/skill markdown
+      only).
+
+decisions:
+  - id: DC1
+    question: How/where do typed citations live?
+    decision: >-
+      In the Discovery Record table's Evidence cell, as labeled-prefix backticked tokens —
+      `` `path:<repo-relative-path>` `` and `` `cmd:<command>` ``. The token grammar is a backtick-quoted
+      string whose content begins with a known prefix immediately followed by a colon: `path:` then a
+      repo-relative path, or `cmd:` then a shell command. A parser collects ONLY tokens with a known
+      prefix; every other backticked token (convention vocabulary like `` `@Test` ``, `` `swiftlint` ``,
+      `` `swift build` `` written as plain vocabulary without a prefix) and all surrounding prose is
+      ignored. One human+machine-readable source — no separate block to desync.
+    status: closed
+  - id: DC2
+    question: Which citation types are drift-checked?
+    decision: >-
+      Exactly two prefixes: `path:` (existence-checkable) and `cmd:` (exit-0-checkable). Commit SHAs and
+      any other evidence are NOT typed citations and stay as ordinary prose if a row references one — a
+      historical SHA existing is not a staleness signal. This slice writes no SHA as a token; existing
+      SHA prose in `swift.md` rows is either kept as prose or dropped, never tokenized.
+    status: closed
+  - id: DC3
+    question: How is "no checkable citation" expressed?
+    decision: >-
+      A row with NO typed token in its Evidence cell has nothing to verify and will be skipped (never
+      flagged) by drift. Open-gap rows keep their descriptive prose and `open gap` status and carry no
+      `path:`/`cmd:` token. The skip rule keys purely off "zero typed tokens" — no heuristic. In the
+      converted `swift.md`, the Lint, Migration, Endpoint, and CI/release rows carry no token.
+    status: closed
+  - id: DC4
+    question: Real-repo evidence — globs & command cost.
+    decision: >-
+      Concrete repo-relative paths ONLY (no globs — globs are not existence-checkable). Where a row's
+      evidence pointed at a glob/family (e.g. `docs/examples/sdlc-plant/resources/*.resource.yaml`), the
+      token names one concrete existing file (e.g. `docs/examples/sdlc-plant/resources/github.resource.yaml`).
+      Commands are cited as `cmd:` faithfully where a convention IS a command (e.g. Build →
+      `` `cmd:swift build` ``); keeping cited commands to ones that exit 0 (preferably quickly) where
+      possible.
+    status: closed
+  - id: DC5
+    question: Slicing.
+    decision: >-
+      Two slices: `typed-evidence-schema` (Part 1 — this slice, the schema + conversion, no `depends_on`)
+      → `drift-kind3` (Part 2, `depends_on: typed-evidence-schema`). This plan realizes Part 1 only; the
+      `conventionCitation` DriftKind and its parser are out of scope here.
+    status: closed
+
+files:
+  - .ai-sdd/conventions/swift.md
+  - skills/ai-sdd-bootstrap/SKILL.md
+  - .ai-sdd/skills/ai-sdd-bootstrap/SKILL.md
+
+tests:
+  - >-
+    Manual per-citation verification: for every `path:` token in the converted
+    `.ai-sdd/conventions/swift.md`, confirm the file exists (e.g. `ls <path>`); for every `cmd:` token,
+    run the command and confirm it exits 0.
+  - >-
+    Confirm each open-gap row (Lint, Migration, Endpoint, CI/release) in `.ai-sdd/conventions/swift.md`
+    carries NO `path:`/`cmd:` token.
+  - >-
+    diff skills/ai-sdd-bootstrap/SKILL.md .ai-sdd/skills/ai-sdd-bootstrap/SKILL.md  (must report no
+    differences — the two bootstrap copies stay byte-for-byte identical).
+  - swift run ai-sdd validate .ai-sdd
+  - >-
+    Correctness anchor (verified once Part 2 / drift Kind 3 lands): `swift run ai-sdd drift .` reports no
+    convention findings on the real converted `swift.md`.
