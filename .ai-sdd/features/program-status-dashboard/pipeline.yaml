@@ -1,0 +1,18 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata:
+  name: program-status-dashboard
+  version: 1
+  correlation: ai-sdd/program-status-dashboard
+  factory: code
+spec:
+  semantics: enabler
+  nodes:
+    - { id: program-status-rollup, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: program-dashboard-assembler, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: program-dashboard-cli, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: program-dashboard-verification, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: program-status-rollup, to: program-dashboard-assembler }
+    - { from: program-dashboard-assembler, to: program-dashboard-cli }
+    - { from: program-dashboard-cli, to: program-dashboard-verification }
