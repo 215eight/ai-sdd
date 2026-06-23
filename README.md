@@ -1,10 +1,22 @@
 # ai-sdd
 
-Enterprise Spec-Driven Development workflow tooling.
+A software factory that turns a feature request into **a verifiable change a human reviews rather than redoes**.
 
-This repository is the Swift implementation for the `ai-sdd` framework. The
-current MVP is CLI-first and builds toward a shared `SDDCore` used by sibling CLI
-and MCP interfaces.
+A deterministic engine (`ai-sdd`) plans the work and gates every step; your coding agent (Claude Code,
+Codex, …) does the work via skills. The loop is always:
+
+```
+ai-sdd next   → engine renders the runnable worker (role + its skill + inputs + gates)
+   ↓  your agent does that work via the worker's skill
+ai-sdd submit → engine validates the output, runs the gates, advances — or routes to rework
+   ↺  repeat until the run reports ✓ done
+```
+
+The factory lives in a `.ai-sdd/` home in your repo — a pipeline, the worker roles, per-artifact
+schemas compiled into deterministic gates, your learned conventions, and the worker skills. The engine
+is a single copyable Swift binary (`ai-sdd`); it is provider-neutral and any agent drives it over a
+shell. **New here? Start with [QUICKSTART.md](QUICKSTART.md)** — install the binary, seed the framework
+skills, bootstrap your repo, then plan and build a feature.
 
 ## Visualizing the factory
 
@@ -61,70 +73,62 @@ tiers, so a generated page is not fully offline. For the run-store overlay seman
 (these dashboards are a snapshot of your local `.ai-sdd/runs` store, not a shared live team
 dashboard), see QUICKSTART's [Visualize the work (for you and your team)](QUICKSTART.md#visualize-the-work-for-you-and-your-team).
 
-## MVP Shape
+## The `.ai-sdd/` home
 
-- `SDDModels`: public domain contracts and JSON shapes.
-- `SDDCore`: Swift workflow graph, OpenSpec artifact adapter, local telemetry
-  sink, and workflow operations.
-- `SDDCLI`: `sdd` command with JSON output.
-- `SDDMCP`: placeholder package for the future MCP server.
-
-The durable workflow source of truth is OpenSpec:
+`ai-sdd-bootstrap` scaffolds the factory in your repo and `ai-sdd validate .ai-sdd` checks it:
 
 ```text
-openspec/changes/<feature_slug>/
+.ai-sdd/
+  pipeline.yaml      the build pattern (e.g. architect → implementer → reviewer)
+  workers/           the roles (signature + which skill each runs)
+  schemas/           per-artifact structure + rules + judge  (makes gates deterministic)
+  conventions/       your house style, learned from the codebase
+  skills/            worker skills + the copied framework skills
+  checks/            the compiled gates (generated from schemas)
+  features/          planned features — requirements.md + the slice graph (per feature)
+  programs/          planned programs — the master graph (features sequenced by milestones)
+  runs/ artifacts/   runtime — gitignored
 ```
 
-Local MVP telemetry is written to:
+Plan and build with the framework skills (run from your repo root):
 
-```text
-.sdd/telemetry/events.jsonl
+```sh
+/ai-sdd-bootstrap                              # stand up (or refresh) the factory in this repo
+/ai-sdd-plan "<your feature brief>"            # → requirements + slice graph in .ai-sdd/features/<slug>
+ai-sdd start .ai-sdd/features/<slug> --id <slug>
+/ai-sdd-run <slug>                             # the agent loops next → work → submit until ✓ done
 ```
 
-Workspace configuration can be supplied at `.sdd/config.json`:
+For multi-feature, multi-person work, plan a **program** (`/ai-sdd-plan-program`) — a master graph of
+whole features sequenced by milestone gates with owners, driven by the same engine. See
+[QUICKSTART.md](QUICKSTART.md) for the full walkthrough.
 
-```json
-{
-  "openspec_root": "openspec",
-  "telemetry_path": ".sdd/telemetry/events.jsonl",
-  "repo_id": "org/repo",
-  "workspace_id": "local-workspace",
-  "stack": "swift",
-  "machine_id": "developer-machine",
-  "organization_id": "optional-org",
-  "secrets": {
-    "telemetry_api_key": "env:SDD_TELEMETRY_API_KEY"
-  }
-}
+## Engine command reference
+
+| Command | What it does |
+|---|---|
+| `ai-sdd guide` | print the built-in getting-started guide (travels with the binary) |
+| `ai-sdd validate <dir>` | load + check a workspace (refs, edge types, acyclicity) |
+| `ai-sdd start <dir> --id <id>` | begin a run |
+| `ai-sdd next <id>` | render the runnable worker (`--json` for drivers) |
+| `ai-sdd submit <id>` | validate output, run gates, advance or rework |
+| `ai-sdd status <id>` | run state + what's runnable (nested for slices) |
+| `ai-sdd check <schema> <artifact>` | run a Tier-1 structure/verdict gate standalone |
+| `ai-sdd scope --plan <plan> --repo <dir>` | run the Tier-2 scope gate standalone |
+| `ai-sdd cover --plan <plan> --review <review>` | check the review judged every acceptance item |
+| `ai-sdd graph <dir>` | render the dependency graph as Mermaid (`--project`, `--plant`, `--dashboard`, `--html`) |
+
+## Build and test
+
+The engine is a single Swift package (`AISDDModels` + `AISDDEngine` libraries, `ai-sdd` executable).
+To work on it from source:
+
+```sh
+swift test                                     # run the engine test suite
+swift build -c release                         # compile the release binary
+./scripts/install.sh                           # macOS: build + put ai-sdd on your PATH (idempotent)
+ai-sdd --version                               # → ai-sdd 0.4.0
 ```
 
-## Build And Test
-
-```bash
-swift test
-swift run sdd capabilities --json
-swift run sdd validate-workspace --json
-swift run sdd validate-secrets --json
-```
-
-Useful MVP commands:
-
-```bash
-swift run sdd validate-workspace --json
-swift run sdd validate-secrets --json
-swift run sdd run --feature checkout-flow --owner agent-session --actor-type agent --json
-swift run sdd start --feature checkout-flow --owner agent-session --actor-type agent --json
-swift run sdd start --intake-file docs/intake/checkout.md --json
-swift run sdd normalize-intake --file docs/intake/checkout.md --json
-swift run sdd list-artifacts --feature checkout-flow --json
-swift run sdd get-artifact --feature checkout-flow --type openspec_design --json
-swift run sdd validate-artifacts --feature checkout-flow --json
-swift run sdd next --run-id <run_id> --json
-swift run sdd prepare-execution --run-id <run_id> --json
-swift run sdd reject-gate --run-id <run_id> --phase plan --reason "Plan needs changes." --json
-swift run sdd clear-lock --run-id <run_id> --json
-swift run sdd mark-blocked --run-id <run_id> --reason missing_input --message "Waiting for input." --json
-swift run sdd retry-action --run-id <run_id> --json
-swift run sdd get-run-summary --run-id <run_id> --json
-swift run sdd list-run-events --run-id <run_id> --json
-```
+Using ai-sdd in another repo doesn't require Swift — build the binary once and copy it onto your PATH.
+See [QUICKSTART.md](QUICKSTART.md) Step 1 for details.
