@@ -1,0 +1,14 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata:
+  name: cheatsheet
+  version: 1
+  correlation: ai-sdd/cheatsheet
+  factory: code
+spec:
+  semantics: enabler
+  nodes:
+    - { id: cli-cheatsheet, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: surface-and-docs, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: cli-cheatsheet, to: surface-and-docs }
