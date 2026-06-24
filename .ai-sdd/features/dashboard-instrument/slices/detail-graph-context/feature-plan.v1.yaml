@@ -1,0 +1,74 @@
+summary: >-
+  Make the per-feature DETAIL band drive execution: pair each feature's dependency
+  graph with its master-requirements DEFINITION (the feature's requirements.md goal/
+  summary, read by the assembler and threaded onto the section), surface the exact
+  SLICE IDENTIFIER on every graph node (the id a coding agent references, e.g.
+  align-to-tag-action — not a prettified label), and mark S2's critical path on those
+  nodes in the same render pass. The renderer stays pure (no file I/O, no wall clock);
+  the single file read happens in ProjectDashboardAssembler, mirroring how staleRun
+  and runnableRanking were threaded onto DashboardSection. Missing/absent requirements
+  text degrades gracefully — the graph still renders.
+scope:
+  in:
+    - Thread the feature's master-requirements DEFINITION onto GraphRenderer.DashboardSection via a new defaulted field (mirroring how staleRun and runnableRanking were added), so existing call sites and Equatable stay source-stable.
+    - In ProjectDashboardAssembler.assemble, for each loadable feature directory entry, read <entry>/requirements.md by path and extract its definition (the requirements Goal/summary section) in the assembler — the file read lives in the assembler, not the renderer.
+    - Extract the definition deterministically from the markdown -- take the feature's Goal section (the `## Goal` body, the established requirements.md shape), trimmed; return nil when the file is absent, unreadable, or has no extractable definition.
+    - Thread DashboardCriticalPath.criticalPath(spec) onto GraphRenderer.DashboardSection as a new defaulted field (a list/set of critical-path node ids), populated by the assemblers where the spec lives, so the renderer marks it without recomputing.
+    - In the per-feature detail render (sectionHTML), render the requirements definition alongside the graph when present; render the graph alone when absent (graceful degradation).
+    - Surface the slice id on every graph node as the exact node.id — confirm dashboardMermaid and the graphHTML fallback present the raw kebab-case id (not a prettified label) so an agent can reference it; the fixture asserts the id text appears on nodes.
+    - Mark the critical-path nodes in dashboardMermaid (a distinct class/marker keyed off the threaded critical-path set) and in the graphHTML fallback, in the same pass that renders the node id.
+    - Keep all render/projection functions pure and deterministic — no wall clock, no new I/O inside the renderer; identical inputs yield byte-identical output.
+    - Add focused Swift Testing coverage for definition extraction, the threaded section fields, slice-id-on-nodes, critical-path marking, and graceful degradation when requirements.md is missing.
+  out:
+    - No phase-2 / temporal-band work (cycle time, WIP aging, velocity, ETA, burndown, what-changed-since-T-7d) — that is S5/S6/S7 after the m1-no-data-band milestone.
+    - No changes to the verdict, attention, or portfolio bands (S1/S2/S3 scope); no changes to trajectory derivation, run matching, owner fallback, status precedence, RunState, RunStore, Scheduler, or Reducer.
+    - No new dashboard rendering path — reuse the shipped GraphRenderer.dashboardPage / dashboardMermaid; no second dashboard.
+    - No new CLI flag or command-surface change; ai-sdd graph --project --dashboard keeps its current invocation.
+    - No file read inside any pure renderer or gate/check; no wall-clock read anywhere in this slice.
+    - No new architecture decision or ADR edit; no changes to DashboardProjectionRow/Result/Summary serialized shapes beyond additive defaulted DashboardSection fields.
+acceptance:
+  - id: graph-paired-with-requirements-definition
+    description: Each per-feature detail section renders the feature's dependency graph AND its master-requirements DEFINITION (the requirements.md Goal/summary) when that definition is present, read from <feature>/requirements.md by the assembler.
+  - id: every-node-shows-slice-id
+    description: Every graph node displays its exact slice identifier (the raw node.id, e.g. align-to-tag-action, not a prettified label); a fixture asserts the slice-id text appears on the rendered nodes.
+  - id: critical-path-marked
+    description: The critical path computed by DashboardCriticalPath.criticalPath is threaded onto the section and marked on those nodes in the same render pass (a distinct marker in mermaid and in the graphHTML fallback).
+  - id: missing-requirements-degrades-gracefully
+    description: When a feature's requirements.md is absent, unreadable, or has no extractable definition, the section still renders the graph and nodes; only the definition pane is omitted — generation does not fail.
+  - id: deterministic
+    description: Definition extraction, critical-path marking, and node rendering are pure and deterministic — no wall clock, no new renderer I/O — so identical inputs yield byte-identical output; swift build and swift test are green.
+decisions:
+  - id: requirements-read-location
+    status: closed
+    decision: Read <feature>/requirements.md by path inside ProjectDashboardAssembler.assemble (which already enumerates features/* and holds each feature dir URL and does file I/O), thread the extracted definition onto DashboardSection, and keep GraphRenderer pure with no file read.
+    rationale: The renderer is a pure deterministic transform (no I/O, no wall clock) per the convention and the existing dashboardPage contract; the assembler is the established file-aware boundary, exactly as staleRun and runnableRanking were assembled there and threaded onto the section.
+  - id: definition-extraction
+    status: closed
+    decision: Extract the definition as the feature's `## Goal` section body from requirements.md (the established requirements.md shape — `# Title`, `## Source Brief`, `## Goal`, `## In Scope`, …), trimmed; return nil (no definition) when the file is absent, unreadable, or has no `## Goal` body.
+    rationale: Goal is the master-requirements "why" the brief asks to pair with the graph, present and consistently named across feature requirements.md files; nil-on-absence is the graceful-degradation contract.
+  - id: section-threading-shape
+    status: closed
+    decision: Add the requirements definition and the critical-path node set to GraphRenderer.DashboardSection as new defaulted fields (definition defaulting to nil/none, critical-path defaulting to empty), mirroring how staleRun and runnableRanking were added, so existing call sites and Equatable stay source-stable.
+    rationale: Additive defaulted fields keep ProgramDashboardAssembler and all other DashboardSection constructors unchanged while letting the project assembler populate the new context.
+  - id: slice-id-on-nodes
+    status: closed
+    decision: Surface the exact node.id on every node — the dashboardMermaid label already emits node.id as its first line and graphHTML emits it as node-id; keep it the raw kebab-case id (not prettified) and assert via a fixture that the id text appears on the rendered nodes.
+    rationale: The id is what a coding agent references; the brief requires it be the exact id surfaced on every node with a fixture assertion, which the existing raw-id label already satisfies and the fixture pins.
+  - id: critical-path-marking
+    status: closed
+    decision: Thread DashboardCriticalPath.criticalPath(spec) onto the section (populated by the assemblers where the spec lives) and mark those nodes in dashboardMermaid via a distinct class and in the graphHTML fallback, in the same pass that renders the node id, so the renderer marks without recomputing.
+    rationale: Mirrors S2's runnableRanking threading; keeping computation in the assembler and marking in the renderer keeps the renderer pure and avoids drift between the path and the dashboard.
+  - id: files-scope
+    status: closed
+    decision: Limit changes to GraphRenderer.swift (section fields + render marking + definition pane), DashboardProjection.swift (assembler definition read/extract + critical-path threading), and EngineTests.swift (coverage); no CLI, schema, or other source changes.
+    rationale: All projection, critical-path, run-match, and CLI behavior already exist; this slice only threads new context and renders it, matching the sibling slices' minimal footprint.
+files:
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/dashboard-instrument
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/db.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

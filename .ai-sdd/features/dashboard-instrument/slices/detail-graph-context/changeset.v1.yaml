@@ -1,0 +1,34 @@
+summary: >-
+  Make the per-feature DETAIL band drive execution. ProjectDashboardAssembler reads each feature's
+  requirements.md and extracts its `## Goal` body (nil when absent/unreadable/no-Goal — graceful
+  degradation), and computes DashboardCriticalPath.criticalPath once where the spec lives; both are
+  threaded onto GraphRenderer.DashboardSection via new defaulted fields (requirementsDefinition:
+  String? = nil, criticalPathNodes: Set<String> = []) mirroring how staleRun and runnableRanking were
+  added, so existing call sites and Equatable stay source-stable. The renderer stays pure (no file
+  read, no wall clock): sectionHTML renders a Definition pane above the graph when present, and the
+  graphHTML fallback marks critical-path nodes with a `critical-path` class + data-critical-path flag.
+  REVIEW FIX (critical-path marking in mermaid): the prior implementation layered the critical-path
+  class via a chained second `:::` shorthand (`...]:::status_runnable:::critical_path`), which the
+  real mermaid 11.15.0 parser rejects as a grammar error (`:::` accepts only ONE class per node), so
+  every per-feature graph with a critical path emitted an unrenderable block. dashboardMermaid now
+  keeps each node's STATUS class as its `:::status_*`/`:::milestone_*` shorthand and applies the
+  critical-path class via a SEPARATE `class a,b,c critical_path` statement (mermaid's multi-class
+  form), keyed off the same safeID(node.id), with the classDef critical_path definition retained — the
+  status color is preserved. Verified: the rendered block parses and renders to SVG under mermaid
+  11.15.0 (exit 0). Every node already surfaces its exact kebab-case slice id (node.id) as the first
+  mermaid label line / node-id text; a fixture pins that. Added Swift Testing coverage including a
+  WELL-FORMEDNESS assertion with teeth: no mermaid line carries two `:::` segments
+  (line.components(separatedBy: ":::").count <= 2) AND a `class ... critical_path` statement is
+  emitted — catching the rejected-rework regression the prior substring-only test passed over. No
+  temporal (phase 2) work. Files: GraphRenderer.swift (section fields + definition pane +
+  critical-path marking via separate class statement in mermaid + HTML fallback + CSS),
+  DashboardProjection.swift (assembler requirements read/extract + critical-path threading),
+  EngineTests.swift (new tests + hardened well-formedness assertion). swift build, swift test (256
+  tests, 8 suites), ai-sdd validate .ai-sdd/features/dashboard-instrument, and the graph dashboard
+  render all pass.
+satisfies:
+  - graph-paired-with-requirements-definition
+  - every-node-shows-slice-id
+  - critical-path-marked
+  - missing-requirements-degrades-gracefully
+  - deterministic

@@ -140,27 +140,56 @@ public enum GraphRenderer {
         // call sites and `Equatable` are source-stable, and a section with no ranking simply contributes
         // no unblockers to the attention band.
         public var runnableRanking: [RankedRunnable]
+        // The feature's master-requirements DEFINITION — the `## Goal` body of its requirements.md,
+        // read and extracted by `ProjectDashboardAssembler` (the file-aware boundary) and threaded
+        // here so the renderer stays pure. Defaulted to nil — mirroring how `staleRun` and
+        // `runnableRanking` were added — so existing `DashboardSection` call sites and `Equatable`
+        // are source-stable; nil ⇒ no definition pane (graceful degradation when requirements.md is
+        // absent/unreadable/has no Goal).
+        public var requirementsDefinition: String?
+        // The critical-path node ids (`DashboardCriticalPath.criticalPath` over this section's spec),
+        // populated by the assemblers where the spec lives so the renderer marks those nodes without
+        // recomputing. Defaulted to [] so existing call sites and `Equatable` stay source-stable; an
+        // empty set marks nothing.
+        public var criticalPathNodes: Set<String>
 
         public init(heading: String, projection: DashboardProjectionResult, mermaid: String? = nil,
-                    staleRun: Bool = false, runnableRanking: [RankedRunnable] = []) {
+                    staleRun: Bool = false, runnableRanking: [RankedRunnable] = [],
+                    requirementsDefinition: String? = nil, criticalPathNodes: Set<String> = []) {
             self.heading = heading
             self.projection = projection
             self.mermaid = mermaid
             self.staleRun = staleRun
             self.runnableRanking = runnableRanking
+            self.requirementsDefinition = requirementsDefinition
+            self.criticalPathNodes = criticalPathNodes
         }
     }
 
+    /// `criticalPath` is the threaded set of critical-path node ids (from
+    /// `DashboardCriticalPath.criticalPath`, populated by the assemblers); nodes in it carry an extra
+    /// `critical_path` class — applied via a SEPARATE `class <id,...> critical_path` statement, since
+    /// mermaid's `:::` shorthand takes only ONE class per node — so the longest dependency chain is
+    /// visibly marked while each node keeps its status color. Defaulted to `[]` so existing call sites
+    /// stay source-stable and an empty set marks nothing.
     public static func dashboardMermaid(_ pipeline: PipelineSpec, rows: [DashboardProjectionRow],
                                         direction: String = "TD",
-                                        inheritedOwner: [String] = []) -> String {
+                                        inheritedOwner: [String] = [],
+                                        criticalPath: Set<String> = []) -> String {
         let statuses = Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.status) })
         let milestones = Dictionary(uniqueKeysWithValues: rows.map { ($0.node, $0.isMilestone) })
         var lines = ["flowchart \(direction)"]
         var milestoneStatuses: Set<DashboardStatus> = []
+        // The safe ids of nodes on the critical path, collected so the extra `critical_path` class is
+        // applied via SEPARATE `class <id,...> critical_path` statements. The `:::` shorthand accepts
+        // only ONE class per node — chaining a second `:::` is a mermaid grammar error — so the node
+        // keeps its status/milestone class as `:::status_*`/`:::milestone_*` and the critical-path
+        // class is layered on with mermaid's multi-class `class` form.
+        var criticalSafeIDs: [String] = []
         for node in pipeline.nodes {
             let status = statuses[node.id] ?? .pending
             let labelBody = dashboardLabelBody(node, status: status, inheritedOwner: inheritedOwner)
+            if criticalPath.contains(node.id) { criticalSafeIDs.append(safeID(node.id)) }
             if milestones[node.id] == true {
                 // A milestone/gate renders as a distinct hexagon gate shape (id{{"label"}}) with a
                 // status-keyed milestone class so pass vs blocked still reads via the status color.
@@ -186,6 +215,15 @@ public enum GraphRenderer {
         for status in DashboardStatus.allCases where milestoneStatuses.contains(status) {
             let color = DashboardCharts.defaultColors[status] ?? "#9e9e9e"
             lines.append("    classDef \(milestoneClass(status)) fill:#f6f8fa,stroke:\(color),stroke-width:4px,color:#1f2328,stroke-dasharray:0")
+        }
+        // A single critical-path classDef (only when at least one node is on the path): a distinct
+        // amber edge-tinted marker layered over the per-status class so the chain reads at a glance
+        // while each node keeps its status color via its first class. The class is applied via a
+        // SEPARATE `class a,b,c critical_path` statement (mermaid's multi-class form) rather than a
+        // chained second `:::`, which mermaid rejects as a grammar error.
+        if !criticalSafeIDs.isEmpty {
+            lines.append("    classDef \(criticalPathClass) stroke:#d97706,stroke-width:4px,stroke-dasharray:6 3")
+            lines.append("    class \(criticalSafeIDs.joined(separator: ",")) \(criticalPathClass)")
         }
         return lines.joined(separator: "\n")
     }
@@ -641,10 +679,16 @@ public enum GraphRenderer {
             "        <p>\(section.projection.summary.doneCount)/\(section.projection.summary.totalNodeCount) done</p>",
             "      </header>"
         ]
+        // The master-requirements DEFINITION (the feature's `## Goal`) pairs the "why" with the
+        // graph's "what depends on what", rendered above the graph when present. Absent (nil) ⇒ the
+        // pane is omitted and the graph still renders (graceful degradation).
+        if let definition = definitionPaneHTML(section.requirementsDefinition) {
+            parts.append(definition)
+        }
         if let mermaid = section.mermaid {
             parts.append(mermaidHTML(mermaid))
         } else {
-            parts.append(graphHTML(rows: section.projection.rows))
+            parts.append(graphHTML(rows: section.projection.rows, criticalPath: section.criticalPathNodes))
         }
         parts += [
             tableHTML(rows: section.projection.rows),
@@ -663,10 +707,32 @@ public enum GraphRenderer {
         ].joined(separator: "\n")
     }
 
-    private static func graphHTML(rows: [DashboardProjectionRow]) -> String {
+    /// The definition pane: the feature's `## Goal` body rendered above its graph. Returns nil when
+    /// the threaded definition is nil OR trims to empty, so a feature with no extractable Goal omits
+    /// the pane entirely (graceful degradation) rather than rendering an empty box.
+    private static func definitionPaneHTML(_ definition: String?) -> String? {
+        guard let definition,
+              !definition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let trimmed = definition.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [
+            "      <section class=\"definition-pane\" aria-label=\"Requirements definition\">",
+            "        <h3>Definition</h3>",
+            "        <p>\(escapeHTML(trimmed))</p>",
+            "      </section>"
+        ].joined(separator: "\n")
+    }
+
+    /// `criticalPath` is the threaded set of critical-path node ids; nodes in it get an extra
+    /// `critical-path` class + a `data-critical-path` flag so the longest dependency chain is marked
+    /// in the HTML fallback exactly as it is in the mermaid graph. Defaulted to `[]` ⇒ marks nothing.
+    private static func graphHTML(rows: [DashboardProjectionRow],
+                                  criticalPath: Set<String> = []) -> String {
         let nodes = rows.map { row in
-            [
-                "          <li class=\"dashboard-node status-\(escapeHTML(row.status.rawValue))\" data-status=\"\(escapeHTML(row.status.rawValue))\">",
+            let onCritical = criticalPath.contains(row.node)
+            let criticalClass = onCritical ? " critical-path" : ""
+            let criticalAttr = onCritical ? " data-critical-path=\"true\"" : ""
+            return [
+                "          <li class=\"dashboard-node status-\(escapeHTML(row.status.rawValue))\(criticalClass)\" data-status=\"\(escapeHTML(row.status.rawValue))\"\(criticalAttr)>",
                 "            <span class=\"node-id\">\(escapeHTML(row.node))</span>",
                 "            <span class=\"node-status\">\(escapeHTML(row.status.rawValue))</span>",
                 "          </li>"
@@ -766,6 +832,10 @@ public enum GraphRenderer {
         .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
         .dashboard-section > header p { color: var(--muted); margin: 0; }
         .stale-run-marker { color: var(--status-rework); font-size: 0.8rem; font-weight: 700; margin-left: 10px; white-space: nowrap; }
+        .definition-pane { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid #d97706; border-radius: 8px; margin-bottom: 16px; padding: 12px 16px; }
+        .definition-pane h3 { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; margin: 0 0 6px; text-transform: uppercase; }
+        .definition-pane p { margin: 0; white-space: pre-line; }
+        .dashboard-node.critical-path { border-left-color: #d97706; box-shadow: inset 0 0 0 1px #d97706; }
         .verdict-band { border: 1px solid var(--line); border-radius: 8px; margin: 24px 0 18px; padding: 18px 20px; }
         .verdict-kicker { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
         .verdict-trajectory { font-size: 1.5rem; font-weight: 700; margin: 6px 0 10px; }
@@ -857,6 +927,12 @@ public enum GraphRenderer {
     private static func milestoneClass(_ status: DashboardStatus) -> String {
         "milestone_\(status.rawValue.replacingOccurrences(of: "-", with: "_"))"
     }
+
+    /// The dedicated critical-path mermaid class, layered over a node's status/milestone class via a
+    /// SEPARATE `class <id,...> critical_path` statement (mermaid's multi-class form — a chained
+    /// second `:::` is a grammar error) so the longest dependency chain reads while each node keeps
+    /// its status color via its `:::status_*`/`:::milestone_*` shorthand.
+    private static let criticalPathClass = "critical_path"
 
     private static func escapeMermaidLabel(_ value: String) -> String {
         value

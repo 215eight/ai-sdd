@@ -224,13 +224,19 @@ public enum ProjectDashboardAssembler {
                     pipeline: env.spec,
                     metadata: env.metadata,
                     state: match.state)
+                // The critical path is computed once here (where the spec lives) and threaded onto
+                // the section + passed to the mermaid render, so the renderer marks without recomputing.
+                let criticalPath = Set(DashboardCriticalPath.criticalPath(env.spec))
                 sections.append(.init(
                     heading: "Feature · \(name)",
                     projection: projection,
                     mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
-                                                            inheritedOwner: env.metadata.owner ?? []),
+                                                            inheritedOwner: env.metadata.owner ?? [],
+                                                            criticalPath: criticalPath),
                     staleRun: match.stale,
-                    runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state)))
+                    runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state),
+                    requirementsDefinition: requirementsDefinition(at: entry, fileManager: fileManager),
+                    criticalPathNodes: criticalPath))
             } else {
                 sections.append(.init(heading: "Feature · \(name)", projection: emptyProjection()))
             }
@@ -280,6 +286,42 @@ public enum ProjectDashboardAssembler {
                 totalNodeCount: 0,
                 doneCount: 0,
                 statusTotals: Dictionary(uniqueKeysWithValues: DashboardStatus.allCases.map { ($0, 0) })))
+    }
+
+    /// The feature's master-requirements DEFINITION: the `## Goal` body of `<feature>/requirements.md`,
+    /// trimmed. The single file read lives HERE in the assembler (the established file-aware boundary,
+    /// exactly like the run-store reads) so `GraphRenderer` stays pure. Returns nil — the
+    /// graceful-degradation contract — when the file is absent, unreadable, or has no extractable
+    /// `## Goal` body, in which case the section renders the graph alone.
+    static func requirementsDefinition(at featureDir: URL, fileManager: FileManager = .default) -> String? {
+        let url = featureDir.appendingPathComponent("requirements.md")
+        guard let markdown = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return goalSection(from: markdown)
+    }
+
+    /// Extract the `## Goal` section body from a requirements.md: every line after the `## Goal`
+    /// heading up to (but not including) the next `## ` heading or EOF, trimmed. Returns nil when
+    /// there is no `## Goal` heading or its body is empty — the graceful-degradation signal. Pure /
+    /// deterministic (no I/O, no wall clock); the same markdown always yields the same definition.
+    static func goalSection(from markdown: String) -> String? {
+        let lines = markdown.components(separatedBy: "\n")
+        var body: [String] = []
+        var inGoal = false
+        for line in lines {
+            let isHeading2 = line.hasPrefix("## ")
+            if isHeading2 {
+                if inGoal { break }   // next ## ends the Goal body
+                // Match `## Goal` exactly (ignoring trailing whitespace), not `## Goals` etc.
+                if line.dropFirst(3).trimmingCharacters(in: .whitespaces) == "Goal" {
+                    inGoal = true
+                }
+                continue
+            }
+            if inGoal { body.append(line) }
+        }
+        guard inGoal else { return nil }
+        let trimmed = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

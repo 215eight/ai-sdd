@@ -1,0 +1,88 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: detail-graph-context
+
+verdict: approve
+summary: >-
+  Re-review of slice detail-graph-context (dashboard-instrument, Part B, S4) after rework, against
+  feature-plan.v1 (5 acceptance ids) and changeset.v1. The prior rejection was a malformed-mermaid
+  defect: critical-path nodes chained a second `:::` shorthand class
+  (`...]:::status_runnable:::critical_path`), invalid mermaid grammar — so every per-feature graph with
+  a critical path emitted an unrenderable block. THE FIX IS CORRECT AND VERIFIED. dashboardMermaid now
+  keeps each node's single status/milestone class as its `:::status_*`/`:::milestone_*` shorthand and
+  applies the critical-path class via a SEPARATE `class <ids> critical_path` statement (mermaid's
+  multi-class form), with the `classDef critical_path` retained and status color preserved. Verified by
+  rendering the real dashboard (ai-sdd graph --project --dashboard): 14 mermaid blocks, 12 carry a
+  critical path, and ZERO lines carry two `:::` segments; each node keeps one `:::status_*` shorthand
+  plus a trailing `class a,b,... critical_path` line. ACTUALLY PARSED: extracted a per-feature
+  critical-path block and ran @mermaid-js/mermaid-cli on it — it parsed and rendered to SVG (exit 0).
+  The new test has teeth: it asserts no mermaid line carries two `:::` segments
+  (line.components(separatedBy: ":::").count <= 2), asserts a `class a,b critical_path` statement is
+  emitted, and asserts the malformed `:::critical_path` substring never appears — so the rejected-rework
+  form cannot regress. Previously-correct items still hold (definition pane paired with graph, raw
+  kebab-case slice id on every node, graceful degradation when requirements.md is absent, renderer
+  purity with the file read only in the assembler). swift build is clean; swift test is green (256
+  tests, 8 suites). APPROVE.
+
+items:
+  - id: graph-paired-with-requirements-definition
+    verdict: pass
+    notes: >-
+      ProjectDashboardAssembler.requirementsDefinition(at:) reads <feature>/requirements.md by path and
+      extracts the `## Goal` body via goalSection(from:), threading it onto
+      DashboardSection.requirementsDefinition; sectionHTML renders a `definition-pane` (h3 Definition +
+      escaped body) above the graph when present. The single file read lives in the assembler; the
+      renderer stays pure. Tests detailSectionRendersDefinitionPaneWhenPresent and
+      goalSectionExtractsTrimmedBodyUpToNextHeading cover it. Unchanged from prior pass.
+  - id: every-node-shows-slice-id
+    verdict: pass
+    notes: >-
+      dashboardMermaid emits the raw kebab-case node.id as every node's first label line
+      (`align-to-tag-action["align-to-tag-action<br/>..."]`); the graphHTML fallback emits it as the
+      node-id span. Confirmed in the re-rendered /tmp/rev.html (e.g. cli-cheatsheet, surface-and-docs as
+      raw kebab ids). Fixture everyGraphNodeShowsItsSliceId pins both forms. Unchanged from prior pass.
+  - id: critical-path-marked
+    verdict: pass
+    notes: >-
+      REWORK DEFECT RESOLVED AND VERIFIED. The critical path is threaded correctly
+      (Set(DashboardCriticalPath.criticalPath(env.spec)) onto DashboardSection.criticalPathNodes). The
+      marking now keeps each node's single status/milestone class as its `:::status_*`/`:::milestone_*`
+      shorthand and layers critical_path via a SEPARATE `class <safeIDs> critical_path` statement
+      (GraphRenderer.swift line 226) plus one `classDef critical_path`, so status color is preserved. The
+      graphHTML fallback marks on-path nodes with a `critical-path` class + data-critical-path flag.
+      ACTUALLY PARSED: rendered the project dashboard, confirmed 12/14 per-feature blocks emit a
+      `class ... critical_path` statement and that NO line carries two `:::` segments; ran
+      @mermaid-js/mermaid-cli on an extracted critical-path block — it parsed and rendered to SVG (exit 0).
+      The prior malformed chained `:::status:::critical_path` is gone.
+  - id: missing-requirements-degrades-gracefully
+    verdict: pass
+    notes: >-
+      requirementsDefinition returns nil when requirements.md is absent/unreadable
+      (try? String(contentsOf:) → nil) or has no extractable `## Goal` body (goalSection returns nil; a
+      whitespace-only Goal body and `## Goals` both yield nil); definitionPaneHTML returns nil for
+      nil/empty, so the pane is omitted while the graph and nodes still render. Tests
+      goalSectionReturnsNilWhenAbsentOrEmpty and detailSectionOmitsDefinitionPaneWhenAbsent (which asserts
+      the node fallback still renders) cover it. Unchanged from prior pass.
+  - id: deterministic
+    verdict: pass
+    notes: >-
+      Renderer purity holds — no file read / wall clock in dashboardMermaid / sectionHTML / graphHTML /
+      definitionPaneHTML; the only file read is the assembler's String(contentsOf:), and the only Date()
+      is the injected `now` default on dashboardPage. The new DashboardSection fields
+      (requirementsDefinition, criticalPathNodes) default to nil / empty so existing call sites and
+      Equatable stay source-stable (detailContextIsDeterministicAndDefaultsAreSourceStable asserts
+      byte-identical pages on identical inputs). Independently ran swift build (clean) and swift test
+      (256 tests, 8 suites, all green). Now passes: the deterministic output is also well-formed —
+      identical inputs yield a byte-identical graph that parses and renders.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Changes stay within the three declared files (GraphRenderer.swift: section fields + definition pane +
+    critical-path marking via a separate `class` statement + CSS; DashboardProjection.swift: assembler
+    requirements read/extract + critical-path threading; EngineTests.swift: coverage incl. the hardened
+    well-formedness assertion) per the files-scope decision; new fields are defaulted and
+    Equatable-preserving (source-stable, mirroring staleRun/runnableRanking); the file read lives in the
+    assembler; HTML is escaped via escapeHTML and mermaid labels via escapeMermaidLabel. The produced
+    artifact is now a usable render: the dashboardMermaid output is well-formed for every critical-path
+    graph — swift test green AND the mermaid parses/renders (confirmed via mermaid-cli, exit 0).

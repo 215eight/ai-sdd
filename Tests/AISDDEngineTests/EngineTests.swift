@@ -2718,6 +2718,155 @@ struct EngineTests {
         #expect(DashboardCriticalPath.criticalPath(pipeline)
             == DashboardCriticalPath.criticalPath(pipeline))
     }
+
+    // MARK: - Detail band: graph context (definition + slice-id + critical path — dashboard-instrument S4)
+
+    /// A section carrying the threaded detail-band context (definition + critical-path set) so the
+    /// renderer's pane/marking can be exercised purely, mirroring `portfolioSection`.
+    private func detailSection(heading: String, statuses: [DashboardStatus],
+                               definition: String? = nil,
+                               criticalPath: Set<String> = []) -> GraphRenderer.DashboardSection {
+        var section = portfolioSection(heading: heading, statuses: statuses, owner: "alice")
+        section.requirementsDefinition = definition
+        section.criticalPathNodes = criticalPath
+        return section
+    }
+
+    @Test func goalSectionExtractsTrimmedBodyUpToNextHeading() {
+        let markdown = """
+        # Feature: x
+
+        ## Source brief
+        irrelevant
+
+        ## Goal
+
+        Turn the flat scroll into an inverted pyramid.
+        Second goal line.
+
+        ## In scope
+        not part of the goal
+        """
+        let goal = try! #require(ProjectDashboardAssembler.goalSection(from: markdown))
+        #expect(goal == "Turn the flat scroll into an inverted pyramid.\nSecond goal line.")
+        // Stops at the next `## ` heading — the In-scope body never leaks in.
+        #expect(!goal.contains("not part of the goal"))
+        #expect(!goal.contains("Source brief"))
+    }
+
+    @Test func goalSectionReturnsNilWhenAbsentOrEmpty() {
+        // No `## Goal` heading at all → nil (graceful degradation signal).
+        #expect(ProjectDashboardAssembler.goalSection(from: "# Title\n\n## Other\nbody") == nil)
+        // A `## Goal` heading whose body is only whitespace → nil, not an empty pane.
+        #expect(ProjectDashboardAssembler.goalSection(from: "## Goal\n\n   \n\n## Next\nx") == nil)
+        // `## Goals` (different heading) is not matched as Goal.
+        #expect(ProjectDashboardAssembler.goalSection(from: "## Goals\nplural") == nil)
+    }
+
+    @Test func detailSectionRendersDefinitionPaneWhenPresent() {
+        let page = GraphRenderer.dashboardPage(
+            title: "P", sections: [
+                detailSection(heading: "Feature · a", statuses: [.done, .runnable],
+                              definition: "The why behind the graph.")
+            ], now: fixedNow)
+        #expect(page.contains("class=\"definition-pane\""))
+        #expect(page.contains("<h3>Definition</h3>"))
+        #expect(page.contains("The why behind the graph."))
+    }
+
+    @Test func detailSectionOmitsDefinitionPaneWhenAbsent() {
+        // No threaded definition ⇒ the pane is omitted entirely, but the graph/nodes still render.
+        let page = GraphRenderer.dashboardPage(
+            title: "P", sections: [
+                detailSection(heading: "Feature · a", statuses: [.done, .runnable], definition: nil)
+            ], now: fixedNow)
+        #expect(!page.contains("class=\"definition-pane\""))
+        #expect(!page.contains("<h3>Definition</h3>"))
+        // Graceful degradation: the graph fallback still renders its nodes.
+        #expect(page.contains("class=\"dashboard-node"))
+        #expect(page.contains("<span class=\"node-id\">n0</span>"))
+    }
+
+    @Test func everyGraphNodeShowsItsSliceId() {
+        // The HTML graph fallback surfaces each node's exact id as the node-id text.
+        let page = GraphRenderer.dashboardPage(
+            title: "P", sections: [
+                detailSection(heading: "Feature · a", statuses: [.done, .runnable, .pending])
+            ], now: fixedNow)
+        #expect(page.contains("<span class=\"node-id\">n0</span>"))
+        #expect(page.contains("<span class=\"node-id\">n1</span>"))
+        #expect(page.contains("<span class=\"node-id\">n2</span>"))
+
+        // The mermaid graph emits the raw kebab-case id as the first label line, not a prettified label.
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "align-to-tag-action", worker: "implementer")], edges: [])
+        let mermaid = GraphRenderer.dashboardMermaid(pipeline, rows: [
+            DashboardProjectionRow(node: "align-to-tag-action", stack: nil, owner: "", lane: nil,
+                                   milestone: nil, dependencyCount: 0, status: .runnable,
+                                   nextActionHint: .startWork)])
+        #expect(mermaid.contains("[\"align-to-tag-action<br/>"))
+    }
+
+    @Test func criticalPathIsMarkedInMermaidAndHTMLFallback() {
+        let pipeline = PipelineSpec(
+            nodes: [PipelineNode(id: "a"), PipelineNode(id: "b")],
+            edges: [PipelineEdge(from: OneOrMany(["a"]), to: "b")])
+        let rows = [
+            DashboardProjectionRow(node: "a", stack: nil, owner: "", lane: nil, milestone: nil,
+                                   dependencyCount: 0, status: .done, nextActionHint: .none),
+            DashboardProjectionRow(node: "b", stack: nil, owner: "", lane: nil, milestone: nil,
+                                   dependencyCount: 1, status: .runnable, nextActionHint: .startWork)
+        ]
+        // Mermaid: critical-path nodes keep their status `:::status_*` shorthand and the
+        // `critical_path` class is layered on via a SEPARATE `class a,b critical_path` statement
+        // (mermaid's multi-class form) plus one classDef.
+        let mermaid = GraphRenderer.dashboardMermaid(pipeline, rows: rows, criticalPath: ["a", "b"])
+        #expect(mermaid.contains("a[\"a<br/>"))
+        #expect(mermaid.contains("classDef critical_path"))
+        // A `class <ids> critical_path` statement is emitted naming the on-path nodes.
+        #expect(mermaid.contains("class a,b critical_path"))
+        // WELL-FORMEDNESS (catches the rejected-rework regression): the `:::` shorthand accepts only
+        // ONE class per node — a chained second `:::` (e.g. `...:::status_done:::critical_path`) is a
+        // mermaid grammar error. Assert NO line carries two `:::` segments.
+        for line in mermaid.split(separator: "\n", omittingEmptySubsequences: false) {
+            #expect(line.components(separatedBy: ":::").count <= 2)
+        }
+        // The malformed chained form must never appear.
+        #expect(!mermaid.contains(":::critical_path"))
+        // No critical path threaded ⇒ no marker (defaulted source-stable behavior).
+        #expect(!GraphRenderer.dashboardMermaid(pipeline, rows: rows).contains("critical_path"))
+
+        // HTML fallback (no mermaid on the section): the on-path node gets the marker class + flag.
+        let page = GraphRenderer.dashboardPage(
+            title: "P", sections: [
+                detailSection(heading: "Feature · a", statuses: [.done, .runnable],
+                              criticalPath: ["n0"])
+            ], now: fixedNow)
+        #expect(page.contains("data-critical-path=\"true\""))
+        #expect(page.contains("dashboard-node status-done critical-path"))
+        // The off-path node carries no marker.
+        #expect(!page.contains("status-runnable critical-path"))
+    }
+
+    @Test func detailContextIsDeterministicAndDefaultsAreSourceStable() {
+        // The new fields default (nil / empty), so a section built without them renders no pane/marker.
+        let plain = GraphRenderer.DashboardSection(
+            heading: "Feature · a",
+            projection: .init(rows: [DashboardProjectionRow(
+                node: "n0", stack: nil, owner: "alice", lane: nil, milestone: nil,
+                dependencyCount: 0, status: .runnable, nextActionHint: .startWork)],
+                summary: DashboardProjectionSummary(totalFeatureCount: 1, totalNodeCount: 1,
+                                                    doneCount: 0, statusTotals: [:])))
+        #expect(plain.requirementsDefinition == nil)
+        #expect(plain.criticalPathNodes.isEmpty)
+
+        // Identical inputs ⇒ byte-identical pages.
+        let sections = [detailSection(heading: "Feature · a", statuses: [.done, .runnable],
+                                      definition: "why", criticalPath: ["n0"])]
+        let first = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        let second = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        #expect(first == second)
+    }
 }
 
 private extension SpecLoadError {
