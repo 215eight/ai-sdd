@@ -1,0 +1,79 @@
+summary: >-
+  Make a run's RunMeta.pipelineDir survive worktrees and repo moves. RunStore writes
+  pipelineDir relative to git rev-parse --show-toplevel on create, resolves a stored
+  relative form against the current toplevel on read, and auto-heals a legacy absolute
+  pipelineDir that no longer resolves by stripping the prefix up to the trailing
+  .ai-sdd/ segment and re-resolving against the current toplevel. A healed (migrated)
+  meta is rewritten relative on the next mutation (append), idempotently. The git
+  toplevel lookup is an injectable @Sendable closure mirroring ArtifactDiff.git so the
+  path logic is unit-testable without a real repo. A legacy absolute path that resolves
+  nowhere is left untouched for slice S4 to surface.
+scope:
+  in:
+    - Add an injectable @Sendable git-toplevel closure to RunStore (mirroring ArtifactDiff.git / RunStore.gitIdentity), defaulting to a Process-backed git rev-parse --show-toplevel executor.
+    - On create, convert an absolute pipelineDir to a path relative to the current git toplevel before persisting RunMeta; persist relative when the toplevel resolves and the path is under it.
+    - On meta read, when the stored pipelineDir is absolute and no longer resolves on disk, heal it by stripping the prefix up to the trailing .ai-sdd/ segment and re-anchoring against the current toplevel; if the healed path resolves, return the migrated form.
+    - Rewrite a migrated meta to its relative form on the next mutation (append), only when the persisted form differs from the canonical relative form (idempotent — re-reading a healed file performs no write).
+    - Add a pure, I/O-free path helper (relative-conversion + legacy-prefix strip + re-anchor) on RunStore that takes the toplevel and existence check as inputs so it is unit-testable without a real repo.
+    - Keep RunMeta.pipelineDir as a String that round-trips cleanly whether absolute or relative; meta of a relative-stored run returns a value the existing DashboardProjection.resolvedPath already resolves against base.
+    - Add focused Swift Testing cases in EngineTests for relative-write on create, read-resolve from a different cwd/toplevel, legacy-absolute heal-and-migrate, idempotent re-read, and unresolvable-absolute left untouched, all driving the injected toplevel closure.
+  out:
+    - No change to the stale-run surfacing in ai-sdd status or the dashboard assemblers (slice S4 owns flagging what this slice cannot heal).
+    - No change to DashboardProjection.matchedState / resolvedPath path-match logic beyond keeping run-matching working with relative pipelineDir.
+    - No change to the event log, RunState, Reducer, RunEventRecord, owner/timestamp capture, or any append-only semantics other than using append as the relative-rewrite trigger.
+    - No runId-as-identity change, no second loader, no new ADR, no Layout path-literal additions beyond the existing .ai-sdd home segment.
+    - No change to Sources/AISDDCLI/main.swift start command call site (relative conversion is owned by RunStore, not the CLI).
+acceptance:
+  - id: relative-write-on-start
+    description: A fresh create writes a git-relative pipelineDir (e.g. .ai-sdd/features/run-integrity) when the path is under the current git toplevel; reading the same run.json with a different toplevel injected resolves the run correctly.
+  - id: read-resolves-cross-worktree
+    description: A run.json whose pipelineDir is stored relative resolves to the correct directory when read from a different cwd / sibling worktree (a different injected toplevel), matching the standardized expected pipeline directory.
+  - id: legacy-absolute-heal-and-migrate
+    description: A run.json with a legacy absolute pipelineDir whose path is gone, but whose trailing .ai-sdd/features/<name>/ resolves under the current toplevel, is healed on read and rewritten relative on the next mutation.
+  - id: heal-round-trip-idempotent
+    description: Re-reading an already-healed (relative) run.json is a no-op — no rewrite occurs and the resolved path is stable across repeated reads and mutations.
+  - id: unresolvable-absolute-untouched
+    description: A legacy absolute pipelineDir that resolves nowhere under the current toplevel is left exactly as stored (no heal, no rewrite) so slice S4 can surface it.
+  - id: store-round-trips-both-forms
+    description: RunMeta with either an absolute or a relative pipelineDir encodes and decodes cleanly, and meta(of:) returns a value the existing DashboardProjection run-matching resolves correctly.
+  - id: path-helper-pure
+    description: The relative-conversion and legacy-strip logic is a pure function unit-tested with injected toplevel and existence inputs, with no real git invocation or filesystem dependency.
+  - id: verification-commands
+    description: swift build, swift test, and swift run ai-sdd validate .ai-sdd/features/run-integrity pass after implementation.
+decisions:
+  - id: relative-conversion-in-runstore
+    status: closed
+    decision: Own the absolute-to-relative conversion and read-resolve/heal entirely in RunStore (create persists relative, meta reads/heals), leaving the start command call site in main.swift unchanged.
+    rationale: The slice says the change lives in RunStore read/write; concentrating it there keeps the files list minimal and gives the dashboard/CLI a store that already round-trips either form via the existing DashboardProjection.resolvedPath.
+  - id: injectable-git-toplevel-closure
+    status: closed
+    decision: Add a public injectable @Sendable git-toplevel closure to RunStore, defaulting to a Process-backed git rev-parse --show-toplevel, mirroring ArtifactDiff.git and RunStore.gitIdentity.
+    rationale: The same injectable-closure substrate already used for owner capture and ArtifactDiff makes the relative/heal path logic unit-testable without a real repo, per the slice notes and conventions (now / git injected, pure functions tested without I/O).
+  - id: pure-path-migration-helper
+    status: closed
+    decision: Factor the relative-conversion plus legacy-prefix-strip (strip up to the trailing .ai-sdd/ segment, re-anchor against the supplied toplevel, gate on a supplied existence check) into a pure I/O-free helper that takes toplevel and existence as inputs.
+    rationale: The slice mandates a pure path-migration helper unit-tested without I/O; passing toplevel and existence as parameters keeps the wall-clock/git/fs boundary at the store edge and the logic deterministic.
+  - id: append-is-migration-trigger
+    status: closed
+    decision: Use append (the next mutation) as the trigger to persist a healed legacy absolute pipelineDir as its relative form, rewriting run.json only when the persisted form differs from the canonical relative form.
+    rationale: Reads stay side-effect-free (no new mtime on read); the rewrite is idempotent because it is skipped when the stored form already equals the canonical relative form, satisfying the no-op re-read acceptance.
+  - id: heal-only-what-resolves
+    status: closed
+    decision: Heal a legacy absolute pipelineDir only when the stripped, re-anchored path actually resolves on disk under the current toplevel; otherwise leave the stored value byte-for-byte untouched.
+    rationale: The slice scopes this slice to heal what it can and explicitly defers unresolvable legacy paths to S4 stale-run surfacing — inventing a match here would mask the very runs S4 must flag.
+  - id: runmeta-string-unchanged
+    status: closed
+    decision: Keep RunMeta.pipelineDir as a plain String holding either an absolute or a relative form, rather than introducing a typed/enum representation or a second field.
+    rationale: The existing persistence format, DashboardProjection.resolvedPath (absolute keeps current behavior, relative anchors to base), and all current readers already accept a String in either form, so no schema or reader change is required.
+  - id: files-scope-minimal
+    status: closed
+    decision: Limit implementation to Sources/AISDDEngine/RunStore.swift and Tests/AISDDEngineTests/EngineTests.swift, with no edit to Run.swift, Layout.swift, or main.swift.
+    rationale: The conversion and heal live in RunStore; RunMeta (Run.swift) stays a String, the .ai-sdd home literal already exists in Layout, and the start call site is unchanged — so the diff-in-scope gate stays tight.
+files:
+  - Sources/AISDDEngine/RunStore.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/run-integrity
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

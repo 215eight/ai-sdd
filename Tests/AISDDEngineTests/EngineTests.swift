@@ -3619,3 +3619,187 @@ struct ConventionCitationDriftTests {
         #expect(records.first?.owner == .unowned)
     }
 }
+
+// MARK: - pipelineDir relative storage & legacy migration (run-integrity S2)
+
+/// Worktree-drift fix: `RunStore` stores `pipelineDir` relative to the git toplevel, resolves it
+/// against the CURRENT toplevel on read, heals a legacy absolute path whose trailing `.ai-sdd/…`
+/// still resolves, and rewrites it relative on the next mutation — idempotently. The injected
+/// `gitToplevel` closure means none of these touch a real repo.
+struct RunStorePipelineDirTests {
+    /// A store rooted in a throwaway temp dir with an injected toplevel, so these tests need no real
+    /// git repo and leave nothing behind. The toplevel defaults to the temp dir itself, so an
+    /// in-tree pipelineDir relativizes against it.
+    private func pipelineStore(
+        toplevel: @escaping @Sendable (URL) -> String?
+    ) -> (store: RunStore, root: URL, cleanup: () -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-pipelinedir-\(UUID().uuidString)", isDirectory: true)
+        let top = toplevel(root)
+        let store = RunStore(root: root.appendingPathComponent(".ai-sdd/runs", isDirectory: true),
+                             captureOwner: { .unowned },
+                             gitToplevel: { top })
+        return (store, root, { try? FileManager.default.removeItem(at: root) })
+    }
+
+    /// Read the raw on-disk `pipelineDir` WITHOUT the read-time heal, to assert what was persisted.
+    private func storedPipelineDir(_ store: RunStore, _ runId: String) throws -> String {
+        let metaURL = RunLayout(root: store.root, runId: runId).meta
+        return try JSONDecoder().decode(RunMeta.self, from: Data(contentsOf: metaURL)).pipelineDir
+    }
+
+    /// A fresh `create` writes a git-relative `pipelineDir` when the path is under the current
+    /// toplevel (acceptance `relative-write-on-start`).
+    @Test func createWritesGitRelativePipelineDir() throws {
+        let (store, root, cleanup) = pipelineStore(toplevel: { $0.standardizedFileURL.path })
+        defer { cleanup() }
+        let feature = root.appendingPathComponent(".ai-sdd/features/run-integrity", isDirectory: true)
+        try store.create(runId: "r", pipelineDir: feature.path)
+
+        #expect(try storedPipelineDir(store, "r") == ".ai-sdd/features/run-integrity")
+    }
+
+    /// A run.json whose `pipelineDir` is stored relative resolves to the correct directory when read
+    /// with a DIFFERENT toplevel injected (a sibling worktree), and `DashboardProjection`-style
+    /// resolution against `base` lands on the standardized expected dir (acceptance
+    /// `read-resolves-cross-worktree`).
+    @Test func relativePipelineDirResolvesUnderADifferentToplevel() throws {
+        // Write under one toplevel…
+        let (writeStore, writeRoot, writeCleanup) =
+            pipelineStore(toplevel: { $0.standardizedFileURL.path })
+        defer { writeCleanup() }
+        let feature = writeRoot.appendingPathComponent(".ai-sdd/features/x", isDirectory: true)
+        try writeStore.create(runId: "r", pipelineDir: feature.path)
+        #expect(try storedPipelineDir(writeStore, "r") == ".ai-sdd/features/x")
+
+        // …then read the SAME relative form against a sibling worktree's base. It anchors to that
+        // worktree's `.ai-sdd/features/x`, exactly as DashboardProjection.resolvedPath does.
+        let sibling = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-sibling-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sibling) }
+        let siblingStore = RunStore.local(under: sibling)
+        let resolved = URL(fileURLWithPath: ".ai-sdd/features/x", relativeTo: siblingStore.base)
+            .standardizedFileURL.path
+        #expect(resolved == sibling.appendingPathComponent(".ai-sdd/features/x")
+            .standardizedFileURL.path)
+    }
+
+    /// A legacy absolute `pipelineDir` whose path is gone, but whose trailing `.ai-sdd/features/<n>/`
+    /// resolves under the CURRENT toplevel, is healed on read and rewritten relative on the next
+    /// mutation (acceptance `legacy-absolute-heal-and-migrate`).
+    @Test func legacyAbsolutePipelineDirIsHealedAndMigratedOnAppend() throws {
+        let (store, root, cleanup) = pipelineStore(toplevel: { $0.standardizedFileURL.path })
+        defer { cleanup() }
+        // The real feature dir exists under the current toplevel…
+        let feature = root.appendingPathComponent(".ai-sdd/features/run-integrity", isDirectory: true)
+        try FileManager.default.createDirectory(at: feature, withIntermediateDirectories: true)
+        // …but the stored path points at a now-dead sibling worktree (different prefix, same tail).
+        let legacy = "/private/var/old-worktree/.ai-sdd/features/run-integrity"
+        try store.create(runId: "r", pipelineDir: legacy)
+        // create() does NOT relativize an out-of-tree absolute path: it is stored as-is.
+        #expect(try storedPipelineDir(store, "r") == legacy)
+
+        // Read heals it (no rewrite yet — read is side-effect-free).
+        #expect(try store.meta(of: "r").pipelineDir == ".ai-sdd/features/run-integrity")
+        #expect(try storedPipelineDir(store, "r") == legacy, "read must not rewrite run.json")
+
+        // The next mutation persists the canonical relative form.
+        try store.append(.nodeStarted(node: "plan"), to: "r", now: Date(timeIntervalSince1970: 0))
+        #expect(try storedPipelineDir(store, "r") == ".ai-sdd/features/run-integrity")
+    }
+
+    /// Re-reading and re-appending an already-healed (relative) run.json is a no-op — no rewrite,
+    /// stable resolution (acceptance `heal-round-trip-idempotent`).
+    @Test func healedPipelineDirIsIdempotentAcrossReadsAndAppends() throws {
+        let (store, root, cleanup) = pipelineStore(toplevel: { $0.standardizedFileURL.path })
+        defer { cleanup() }
+        let feature = root.appendingPathComponent(".ai-sdd/features/run-integrity", isDirectory: true)
+        try FileManager.default.createDirectory(at: feature, withIntermediateDirectories: true)
+        // Already stored relative (the post-create / post-migration shape).
+        try store.create(runId: "r", pipelineDir: feature.path)
+        #expect(try storedPipelineDir(store, "r") == ".ai-sdd/features/run-integrity")
+
+        // Repeated reads return the same value and never rewrite.
+        #expect(try store.meta(of: "r").pipelineDir == ".ai-sdd/features/run-integrity")
+        #expect(try store.meta(of: "r").pipelineDir == ".ai-sdd/features/run-integrity")
+        let beforeAppend = try storedPipelineDir(store, "r")
+
+        // An append on an already-canonical run.json does not rewrite the pipelineDir.
+        try store.append(.nodeStarted(node: "plan"), to: "r", now: Date(timeIntervalSince1970: 0))
+        #expect(try storedPipelineDir(store, "r") == beforeAppend)
+        #expect(try store.meta(of: "r").pipelineDir == ".ai-sdd/features/run-integrity")
+    }
+
+    /// A legacy absolute path that resolves NOWHERE under the current toplevel is left exactly as
+    /// stored — no heal, no rewrite — so slice S4 can surface it (acceptance
+    /// `unresolvable-absolute-untouched`).
+    @Test func unresolvableLegacyAbsolutePipelineDirIsLeftUntouched() throws {
+        let (store, _, cleanup) = pipelineStore(toplevel: { $0.standardizedFileURL.path })
+        defer { cleanup() }
+        // No matching feature dir is created under the toplevel ⇒ the re-anchored tail resolves nowhere.
+        let legacy = "/private/var/old-worktree/.ai-sdd/features/ghost"
+        try store.create(runId: "r", pipelineDir: legacy)
+        #expect(try storedPipelineDir(store, "r") == legacy)
+
+        // Read returns the stored value unchanged (no invented match).
+        #expect(try store.meta(of: "r").pipelineDir == legacy)
+        // A mutation does not rewrite it either.
+        try store.append(.nodeStarted(node: "plan"), to: "r", now: Date(timeIntervalSince1970: 0))
+        #expect(try storedPipelineDir(store, "r") == legacy)
+    }
+
+    /// The relative-conversion logic is a pure function — exercised with injected toplevel inputs and
+    /// no real git or filesystem (acceptance `path-helper-pure`).
+    @Test func relativizeIsPureOverInjectedToplevel() {
+        // Absolute under the toplevel ⇒ relativized.
+        #expect(RunStore.relativize("/repo/.ai-sdd/features/x", toplevel: "/repo")
+            == ".ai-sdd/features/x")
+        // Trailing slash / `.` segments collapse the same way.
+        #expect(RunStore.relativize("/repo/./.ai-sdd/features/x/", toplevel: "/repo/")
+            == ".ai-sdd/features/x")
+        // Not under the toplevel ⇒ unchanged.
+        #expect(RunStore.relativize("/elsewhere/.ai-sdd/features/x", toplevel: "/repo")
+            == "/elsewhere/.ai-sdd/features/x")
+        // Already relative ⇒ unchanged.
+        #expect(RunStore.relativize(".ai-sdd/features/x", toplevel: "/repo") == ".ai-sdd/features/x")
+        // No toplevel ⇒ unchanged (no repo, no guess).
+        #expect(RunStore.relativize("/repo/.ai-sdd/features/x", toplevel: nil)
+            == "/repo/.ai-sdd/features/x")
+    }
+
+    /// The legacy-strip + re-anchor logic is pure — exercised with an injected `exists` predicate so
+    /// it needs no real filesystem (acceptance `path-helper-pure`).
+    @Test func healIsPureOverInjectedToplevelAndExistence() {
+        let top = "/repo"
+        // (2) Absolute, still resolves where stored ⇒ relativized.
+        #expect(RunStore.heal("/repo/.ai-sdd/features/x", toplevel: top,
+                              exists: { $0 == "/repo/.ai-sdd/features/x" }) == ".ai-sdd/features/x")
+        // (3) Absolute, dead prefix, but the re-anchored tail resolves ⇒ healed to relative.
+        #expect(RunStore.heal("/old/.ai-sdd/features/x", toplevel: top,
+                              exists: { $0 == "/repo/.ai-sdd/features/x" }) == ".ai-sdd/features/x")
+        // (4) Re-anchored tail resolves nowhere ⇒ byte-for-byte unchanged.
+        #expect(RunStore.heal("/old/.ai-sdd/features/x", toplevel: top,
+                              exists: { _ in false }) == "/old/.ai-sdd/features/x")
+        // No `.ai-sdd` segment to strip ⇒ unchanged.
+        #expect(RunStore.heal("/old/features/x", toplevel: top,
+                              exists: { _ in false }) == "/old/features/x")
+        // Relative stored form ⇒ returned unchanged (already canonical).
+        #expect(RunStore.heal(".ai-sdd/features/x", toplevel: top,
+                              exists: { _ in true }) == ".ai-sdd/features/x")
+        // No toplevel ⇒ unchanged.
+        #expect(RunStore.heal("/old/.ai-sdd/features/x", toplevel: nil,
+                              exists: { _ in true }) == "/old/.ai-sdd/features/x")
+    }
+
+    /// `RunMeta` with either an absolute or a relative `pipelineDir` encodes and decodes cleanly
+    /// (acceptance `store-round-trips-both-forms`).
+    @Test func runMetaRoundTripsAbsoluteAndRelativeForms() throws {
+        for form in ["/abs/.ai-sdd/features/x", ".ai-sdd/features/x"] {
+            let meta = RunMeta(runId: "r", pipelineDir: form)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(meta)
+            #expect(try JSONDecoder().decode(RunMeta.self, from: data) == meta)
+        }
+    }
+}

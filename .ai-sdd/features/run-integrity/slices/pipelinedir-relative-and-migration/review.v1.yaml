@@ -1,0 +1,109 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: pipelinedir-relative-and-migration
+
+verdict: approve
+summary: >-
+  Independent review of slice pipelinedir-relative-and-migration (run-integrity, S2) against
+  feature-plan.v1 (8 acceptance ids). RunStore now owns all absolute↔relative pipelineDir conversion.
+  A public injectable @Sendable gitToplevel closure is added (defaulting to a Process-backed
+  `git rev-parse --show-toplevel`, mirroring captureOwner / ArtifactDiff.git) so the path logic is
+  unit-testable with no real repo. create() relativizes an absolute pipelineDir under the current
+  toplevel before persisting; main.swift start call site is unchanged. meta(of:) heals a dead absolute
+  pipelineDir by stripping up to the trailing `.ai-sdd/` segment, re-anchoring against the current
+  toplevel, and returning the relative form ONLY when the re-anchored path exists — side-effect-free on
+  read. The next append rewrites via migratePipelineDirIfNeeded, which writes only when heal()'s
+  canonical form differs from the stored form, so re-reads/re-appends are no-ops and an unresolvable
+  legacy path is left byte-for-byte for S4. Two pure I/O-free helpers, relativize(_:toplevel:) and
+  heal(_:toplevel:exists:), take toplevel and an exists predicate as inputs; component-wise path
+  comparison (standardizedComponents) collapses `.`/`..`/trailing slashes and prevents `/repo` matching
+  `/repofoo`. RunMeta.pipelineDir stays a plain String; DashboardProjection.resolvedPath already anchors
+  a relative form to base, so no dashboard/Run.swift/Layout.swift/main.swift edit was needed. I
+  independently ran swift build (Build complete), swift test (215 tests in 8 suites passed, including
+  the 8 new RunStorePipelineDirTests and the pre-existing dashboard relative-resolution tests), and
+  swift run ai-sdd validate .ai-sdd/features/run-integrity (✓ valid). All 8 ids pass; conventions hold.
+
+items:
+  - id: relative-write-on-start
+    verdict: pass
+    notes: >-
+      create() relativizes an absolute pipelineDir under the current toplevel via the pure
+      relativize(_:toplevel:) (gitToplevel injected, not a hardcoded Process on the pure path) and
+      persists the toplevel-relative form. createWritesGitRelativePipelineDir asserts the on-disk
+      run.json holds `.ai-sdd/features/run-integrity`. The main.swift start call site is unchanged,
+      matching decision relative-conversion-in-runstore.
+  - id: read-resolves-cross-worktree
+    verdict: pass
+    notes: >-
+      A relative stored path is anchored to the CURRENT base by DashboardProjection.resolvedPath;
+      relativePipelineDirResolvesUnderADifferentToplevel writes under one toplevel and resolves the same
+      relative form against a sibling worktree base, landing on that worktree's `.ai-sdd/features/x`.
+      The pre-existing matchedStateResolvesRelativePipelineDirAgainstBase test still passes, confirming
+      run-matching with a relative stored path is unbroken (no dashboard edit needed, as planned).
+  - id: legacy-absolute-heal-and-migrate
+    verdict: pass
+    notes: >-
+      meta(of:) heals a dead absolute path by stripping up to the trailing `.ai-sdd/` segment
+      (lastIndex of Layout.homeDir), re-anchoring against the current toplevel, and returning the
+      relative form only when the re-anchored path exists. The read is side-effect-free; the next append
+      rewrites via migratePipelineDirIfNeeded. legacyAbsolutePipelineDirIsHealedAndMigratedOnAppend
+      verifies read heals but does NOT rewrite, then append persists `.ai-sdd/features/run-integrity`.
+  - id: heal-round-trip-idempotent
+    verdict: pass
+    notes: >-
+      migratePipelineDirIfNeeded rewrites only when heal()'s canonical form differs from the stored
+      form; an already-relative stored path is returned unchanged by heal, so re-read and re-append are
+      no-ops. healedPipelineDirIsIdempotentAcrossReadsAndAppends asserts repeated reads return the same
+      value, the append does not change the stored bytes, and resolution is stable.
+  - id: unresolvable-absolute-untouched
+    verdict: pass
+    notes: >-
+      When the re-anchored tail does not exist (or there is no `.ai-sdd/` segment, or no toplevel) heal
+      returns the stored value unchanged, so canonical == raw and migratePipelineDirIfNeeded skips the
+      rewrite. unresolvableLegacyAbsolutePipelineDirIsLeftUntouched confirms the legacy path is
+      byte-for-byte preserved across read and append, deferring it to S4 (decision heal-only-what-resolves).
+  - id: store-round-trips-both-forms
+    verdict: pass
+    notes: >-
+      RunMeta.pipelineDir stays a plain String (no schema/typed change, decision runmeta-string-unchanged);
+      runMetaRoundTripsAbsoluteAndRelativeForms encodes and decodes both an absolute and a relative form
+      to an equal value. meta(of:) returns a String that DashboardProjection.resolvedPath resolves
+      (absolute kept as-is, relative anchored to base) — the full suite's dashboard run-matching tests pass.
+  - id: path-helper-pure
+    verdict: pass
+    notes: >-
+      relativize(_:toplevel:) and heal(_:toplevel:exists:) are pure, I/O-free statics taking toplevel and
+      an exists predicate as inputs; no Process/FileManager on the pure path. relativizeIsPureOverInjectedToplevel
+      and healIsPureOverInjectedToplevelAndExistence exercise both with injected inputs, including the
+      robustness cases: `.`/`..`/trailing-slash collapse via standardizedComponents, not-under-toplevel,
+      already-relative, nil-toplevel, and component-wise prefix matching (so `/repo` cannot match `/repofoo`).
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran: `swift build` (Build complete), `swift test` ("Test run with 215 tests in 8
+      suites passed" — including the 8 new RunStorePipelineDirTests and the pre-existing dashboard
+      relative-resolution tests), and `swift run ai-sdd validate .ai-sdd/features/run-integrity`
+      (✓ valid — 6 nodes, 3 edges). No warnings or failures observed.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Swift Testing throughout (@Test / #expect, exact typed RunMeta, no `any Error`). Engine
+    behavior lives in Sources/AISDDEngine/RunStore.swift and tests in
+    Tests/AISDDEngineTests/EngineTests.swift, matching the Module/feature and Test convention rows.
+    Files are limited to the two the plan scoped — no edit to Run.swift, Layout.swift, or main.swift.
+    The gitToplevel closure mirrors the established injectable @Sendable git pattern (captureOwner /
+    ArtifactDiff.git); the pure helpers keep git/fs at the store edge; paths use URL standardization. No
+    new runtime dependency and no migration format invented — the Migration row is an open gap and the
+    plan closed decisions (heal-only-what-resolves, append-is-migration-trigger) instead. Baseline gates
+    swift build and swift test are green.
+
+caveats: >-
+  Two observations, neither blocking: (1) heal()'s step-2 branch relativizes an absolute path that still
+  exists but is OUT of the current tree to its unchanged absolute form (relativize returns it as-is when
+  not under toplevel), so canonical == raw and no rewrite occurs — correct behavior, just worth noting it
+  is the existence check, not in-tree-ness, that gates healing. (2) The default gitToplevel spawns a git
+  subprocess per create and per meta read when not injected; fine for the local single-user MVP and out
+  of scope here.
+
+rework: null

@@ -1,0 +1,34 @@
+summary: >-
+  Made a run's RunMeta.pipelineDir survive worktrees and repo moves by owning all absolute↔relative
+  conversion in RunStore. Added a public injectable @Sendable gitToplevel closure (defaulting to a
+  Process-backed `git rev-parse --show-toplevel`, mirroring captureOwner / ArtifactDiff.git) so the
+  path logic is unit-testable without a real repo. create() now relativizes an absolute pipelineDir
+  that lives under the current toplevel before persisting (e.g. `.ai-sdd/features/run-integrity`),
+  leaving relative, out-of-tree, and no-repo inputs byte-for-byte unchanged. meta(of:) heals a legacy
+  absolute pipelineDir that no longer resolves on disk: strip the prefix up to the trailing `.ai-sdd/`
+  segment, re-anchor against the current toplevel, and — only if that re-anchored path resolves —
+  return the migrated relative form; the read stays side-effect-free (no rewrite, no new mtime). The
+  next mutation (append) persists the canonical form via migratePipelineDirIfNeeded, rewriting run.json
+  only when the stored form differs from heal()'s output, so re-reads / re-appends of an
+  already-healed file are no-ops (idempotent). An absolute path that resolves nowhere yields a
+  canonical form equal to the stored value, so it is left exactly as stored for slice S4 to surface.
+  The conversion is factored into two pure, I/O-free helpers — relativize(_:toplevel:) and
+  heal(_:toplevel:exists:) — that take the toplevel and an existence predicate as inputs. RunMeta
+  stays a plain String round-tripping either form; DashboardProjection.resolvedPath already anchors a
+  relative stored path to base, so no dashboard, Run.swift, Layout.swift, or main.swift edit was
+  needed. Added a RunStorePipelineDirTests Swift Testing suite: relative-write-on-create,
+  cross-worktree/different-toplevel resolution, legacy-absolute heal + idempotent rewrite-on-append,
+  idempotent re-read/re-append no-op, unresolvable-absolute left untouched, two pure-helper tests over
+  injected toplevel/existence inputs, and RunMeta round-trip of both forms.
+satisfies:
+  - relative-write-on-start
+  - read-resolves-cross-worktree
+  - legacy-absolute-heal-and-migrate
+  - heal-round-trip-idempotent
+  - unresolvable-absolute-untouched
+  - store-round-trips-both-forms
+  - path-helper-pure
+  - verification-commands
+files:
+  - Sources/AISDDEngine/RunStore.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
