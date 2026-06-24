@@ -1,0 +1,117 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: stale-run-surfacing
+
+verdict: approve
+summary: >-
+  Independent review of slice stale-run-surfacing (run-integrity, S4) against feature-plan.v1 (7
+  acceptance ids). The change introduces one shared reconciliation enum DashboardRunMatch in
+  Sources/AISDDEngine/DashboardProjection.swift that both ProjectDashboardAssembler and
+  ProgramDashboardAssembler now call: it tries the existing exact resolvedPath match first
+  (healthy/healed runs, no marker) and only on a miss falls back to a best-effort attach of an
+  UNRECONCILABLE run — a stored pipelineDir that is absolute and resolves nowhere on disk (S2's
+  residue) whose trailing feature/program segment equals the target dir name — returning the run's
+  folded state plus a single `stale` flag. Both assemblers' matchedState collapse onto this shared
+  matcher and thread match.state + match.stale into the section. A single section-level
+  `staleRun: Bool` (defaulted false) is added to GraphRenderer.DashboardSection — backward-compatible
+  with existing call sites and the struct stays Equatable — and a single `⚠ stale run` marker is
+  rendered (HTML-escaped) in dashboardPage's section header with a small style. In the Status command
+  (Sources/AISDDCLI/main.swift) the throwing loadValidated(meta.pipelineDir) is guarded with try?:
+  when the recorded dir does not resolve it prints a `⚠ stale pipelineDir` breadcrumb (recorded path +
+  expected feature dir from RunResolver.featureDir) and returns instead of crashing. Swift Testing
+  coverage extends the matchedState fixtures: project + program best-effort attach with marker (no
+  all-pending drop), healed-run-has-no-marker, and the recorded-vs-expected derivation backing the
+  status stale line. No RunStore/RunMeta/S2 changes; one marker mechanism throughout, which Part B's
+  verdict band can reuse. I independently ran swift build (Build complete), swift test (226 tests in 8
+  suites passed, incl. the 4 new S4 tests), swift run ai-sdd validate .ai-sdd/features/run-integrity
+  (✓ valid — 6 nodes), the feature-plan check (satisfies), and swift run ai-sdd status
+  run-integrity-and-dashboard (the live run still renders normally with no false marker). All 7 ids
+  pass; conventions hold.
+
+items:
+  - id: status-stale-line
+    verdict: pass
+    notes: >-
+      Status.run guards the throwing loadValidated(meta.pipelineDir) with try? (main.swift:322-329);
+      on an unreconcilable pointer it prints `⚠ stale pipelineDir` with the recorded path and the
+      expected feature dir (RunResolver.featureDir(workspace:feature:).standardizedFileURL.path) and
+      returns instead of crashing on the load. Test staleMatchYieldsRecordedAndExpectedForStatusLine
+      asserts the recorded pointer is read back byte-for-byte, does not exist on disk, and that
+      trailingSegment matches the feature dir name — backing the recorded-vs-expected framing the
+      command prints. Verified live: status run-integrity-and-dashboard (a healthy run) still renders
+      its nested state normally, no false stale line.
+  - id: project-stale-marker-and-attach
+    verdict: pass
+    notes: >-
+      ProjectDashboardAssembler threads matchedState(...).stale into every section (build-pattern and
+      each feature) via the shared DashboardRunMatch (DashboardProjection.swift:195-233). Test
+      projectStaleRunAttachesBestEffortAndFlagsMarker plants an absolute unreconcilable pointer
+      (/legacy/clone/.ai-sdd/features/alpha, trailing segment `alpha`) and asserts the run's events are
+      credited (plan=done, implement=runnable — NOT all-pending) and section.staleRun is true.
+  - id: program-stale-marker-and-attach
+    verdict: pass
+    notes: >-
+      ProgramDashboardAssembler computes match once and passes match.state + match.stale into the
+      program DashboardSection (DashboardProjection.swift:149-164) through the same shared matcher. Test
+      programStaleRunAttachesBestEffortAndFlagsMarker attaches an unreconcilable program pointer
+      (trailing `guardrails`), asserts the folded slice state (locks=done) is credited and
+      section.staleRun is true.
+  - id: stale-marker-in-html
+    verdict: pass
+    notes: >-
+      GraphRenderer.sectionHTML emits a single `⚠ stale run` span (HTML-escaped via escapeHTML, like
+      the heading) inside the h2 only when section.staleRun, with a .stale-run-marker style added
+      (GraphRenderer.swift:352-360, 488). project/program tests assert html.contains("⚠ stale run") for
+      stale sections; the healed test asserts its absence. One marker mechanism — grep confirms staleRun
+      is the sole flag, no second marker type.
+  - id: healed-run-no-marker
+    verdict: pass
+    notes: >-
+      DashboardRunMatch tries the exact resolvedPath match (S2's relative-vs-absolute resolution) first
+      and returns stale:false; the unreconcilable fallback only fires on an absolute pointer that does
+      not exist on disk, so a healed/relative run never trips it. Test
+      healedRunMatchesExactPathAndCarriesNoMarker uses a relative pointer (features/alpha) anchored to
+      the base, asserts plan=done, section.staleRun is false, and the rendered HTML has no stale
+      breadcrumb. Confirmed live on run-integrity-and-dashboard — renders normally, no marker.
+  - id: no-all-pending-drop
+    verdict: pass
+    notes: >-
+      The best-effort fallback attaches the unreconcilable run's folded state (try? runStore.state)
+      rather than returning nil, so the feature surfaces real progress instead of dropping to
+      all-pending. projectStaleRunAttachesBestEffortAndFlagsMarker is exactly the adapter-interfaces
+      fixture (a completed event on a legacy absolute pointer) and asserts plan=done/implement=runnable
+      rather than an all-pending projection.
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran all four: swift build (Build complete), swift test (Test run with 226 tests in 8
+      suites passed, including projectStaleRun…, programStaleRun…, healedRun…, and
+      staleMatchYieldsRecordedAndExpected…), swift run ai-sdd validate .ai-sdd/features/run-integrity
+      (✓ valid — 6 nodes, 3 edges), and swift run ai-sdd check feature-plan.schema feature-plan.v1
+      (satisfies feature-plan.v1).
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Swift Testing throughout (@Test / #expect / #require, no `any Error`); the status command
+    converts the typed-throwing loadValidated to a breadcrumb with try? rather than catching `any Error`.
+    Engine behavior lives in Sources/AISDDEngine/DashboardProjection.swift (the shared DashboardRunMatch)
+    and Sources/AISDDEngine/GraphRenderer.swift, CLI surface in Sources/AISDDCLI/main.swift, tests in
+    Tests/AISDDEngineTests/EngineTests.swift — exactly the four files the plan scoped (decision
+    assemblers-and-files); RunStore/RunMeta/S2 unchanged. Paths use URL APIs (standardizedFileURL,
+    lastPathComponent, appendingPathComponent); the marker matching is pure aside from the run-store
+    reads the assemblers already do — no wall clock, no git. DashboardSection stays Equatable with
+    staleRun defaulted, so existing call sites (incl. the loadPipeline-failure else branch) are
+    unchanged. One staleRun mechanism is reused across both assemblers, the HTML, and the status line —
+    no second freshness marker. Baseline gates swift build and swift test are green.
+
+caveats: >-
+  None blocking. Minor observations: the program test asserts section.staleRun and the folded slice
+  state but does not also assert the program section's HTML contains the marker (the project and healed
+  tests both exercise the shared sectionHTML path, so the rendering is covered). The status command's
+  `⚠ stale pipelineDir` line is integration behavior driven by a ParsableCommand and is verified by the
+  recorded-vs-expected unit assertions (staleMatchYieldsRecordedAndExpectedForStatusLine) plus a live
+  status run rather than a direct CLI test, which matches the slice's pure-logic-unit-tested intent.
+  Neither affects correctness.
+
+rework: []

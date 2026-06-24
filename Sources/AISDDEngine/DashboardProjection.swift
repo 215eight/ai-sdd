@@ -148,17 +148,19 @@ public enum ProgramDashboardAssembler {
         }
 
         let programName = env.metadata.name
+        let match = matchedState(for: homeURL, in: runStore)
         let projection = DashboardProjection.project(
             program: env.spec,
             metadata: env.metadata,
-            state: matchedState(for: homeURL, in: runStore),
+            state: match.state,
             featurePipeline: featurePipelineLoader(programDir: homeURL, loader: loader))
 
         return GraphRenderer.DashboardSection(
             heading: "Program · \(programName)",
             projection: projection,
             mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
-                                                    inheritedOwner: env.metadata.owner ?? []))
+                                                    inheritedOwner: env.metadata.owner ?? []),
+            staleRun: match.stale)
     }
 
     /// A sub-pipeline loader closure for `DashboardProjection.project(program:…)`: for a `kind ==
@@ -174,30 +176,11 @@ public enum ProgramDashboardAssembler {
         }
     }
 
-    private static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> RunState? {
-        let expected = pipelineDir.standardizedFileURL.path
-        for runId in (try? runStore.runIds()) ?? [] {
-            guard let meta = try? runStore.meta(of: runId),
-                  resolvedPath(meta.pipelineDir, base: runStore.base) == expected
-            else { continue }
-            return try? runStore.state(of: runId)
-        }
-        return nil
-    }
-
-    /// Resolve a stored `RunMeta.pipelineDir` to a comparable standardized path. An ABSOLUTE stored
-    /// path keeps today's exact behavior (base ignored); a RELATIVE stored path is anchored to the
-    /// run-store base before standardizing, so a committed-fixture-style relative run matches on any
-    /// clone.
-    private static func resolvedPath(_ stored: String, base: URL) -> String {
-        if (stored as NSString).isAbsolutePath {
-            return standardizedPath(stored)
-        }
-        return URL(fileURLWithPath: stored, relativeTo: base).standardizedFileURL.path
-    }
-
-    private static func standardizedPath(_ path: String) -> String {
-        URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+    /// Reconcile a program dir against the run store. First the exact-path match (S2's
+    /// `resolvedPath`); on a miss, the shared best-effort fallback surfaces an unreconcilable run by
+    /// trailing segment so a stale program run is attributed, not dropped.
+    static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> (state: RunState?, stale: Bool) {
+        DashboardRunMatch.matchedState(for: pipelineDir, in: runStore)
     }
 }
 
@@ -212,15 +195,17 @@ public enum ProjectDashboardAssembler {
         var buildPattern: GraphRenderer.DashboardSection?
         if let env = try? loader.loadPipeline(atDirectory: homeURL) {
             title = env.metadata.name
+            let match = matchedState(for: homeURL, in: runStore)
             let projection = DashboardProjection.project(
                 pipeline: env.spec,
                 metadata: env.metadata,
-                state: matchedState(for: homeURL, in: runStore))
+                state: match.state)
             buildPattern = .init(
                 heading: "Build pattern · \(env.metadata.name)",
                 projection: projection,
                 mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
-                                                        inheritedOwner: env.metadata.owner ?? []))
+                                                        inheritedOwner: env.metadata.owner ?? []),
+                staleRun: match.stale)
         }
 
         let featuresDir = homeURL.appendingPathComponent("features", isDirectory: true)
@@ -232,15 +217,17 @@ public enum ProjectDashboardAssembler {
         for entry in entries {
             let name = entry.lastPathComponent
             if let env = try? loader.loadPipeline(atDirectory: entry) {
+                let match = matchedState(for: entry, in: runStore)
                 let projection = DashboardProjection.project(
                     pipeline: env.spec,
                     metadata: env.metadata,
-                    state: matchedState(for: entry, in: runStore))
+                    state: match.state)
                 sections.append(.init(
                     heading: "Feature · \(name)",
                     projection: projection,
                     mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
-                                                            inheritedOwner: env.metadata.owner ?? [])))
+                                                            inheritedOwner: env.metadata.owner ?? []),
+                    staleRun: match.stale))
             } else {
                 sections.append(.init(heading: "Feature · \(name)", projection: emptyProjection()))
             }
@@ -269,30 +256,11 @@ public enum ProjectDashboardAssembler {
         return ProjectDashboard(title: title, sections: sections)
     }
 
-    private static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> RunState? {
-        let expected = pipelineDir.standardizedFileURL.path
-        for runId in (try? runStore.runIds()) ?? [] {
-            guard let meta = try? runStore.meta(of: runId),
-                  resolvedPath(meta.pipelineDir, base: runStore.base) == expected
-            else { continue }
-            return try? runStore.state(of: runId)
-        }
-        return nil
-    }
-
-    /// Resolve a stored `RunMeta.pipelineDir` to a comparable standardized path. An ABSOLUTE stored
-    /// path keeps today's exact behavior (base ignored); a RELATIVE stored path is anchored to the
-    /// run-store base before standardizing, so a committed-fixture-style relative run matches on any
-    /// clone.
-    private static func resolvedPath(_ stored: String, base: URL) -> String {
-        if (stored as NSString).isAbsolutePath {
-            return standardizedPath(stored)
-        }
-        return URL(fileURLWithPath: stored, relativeTo: base).standardizedFileURL.path
-    }
-
-    private static func standardizedPath(_ path: String) -> String {
-        URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+    /// Reconcile a feature/build-pattern dir against the run store: exact-path match first, then the
+    /// shared best-effort fallback so an unreconcilable run surfaces (with `stale: true`) instead of
+    /// the feature dropping to all-pending.
+    private static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> (state: RunState?, stale: Bool) {
+        DashboardRunMatch.matchedState(for: pipelineDir, in: runStore)
     }
 
     private static func containsActiveWork(_ projection: DashboardProjectionResult) -> Bool {
@@ -309,6 +277,69 @@ public enum ProjectDashboardAssembler {
                 totalNodeCount: 0,
                 doneCount: 0,
                 statusTotals: Dictionary(uniqueKeysWithValues: DashboardStatus.allCases.map { ($0, 0) })))
+    }
+}
+
+/// The one run⇔dir reconciliation both assemblers share. The exact-path match (S2's `resolvedPath`)
+/// is tried first; only on a miss does the best-effort fallback attach an UNRECONCILABLE run — a
+/// stored `pipelineDir` that is absolute and resolves nowhere on disk (S2 could neither relativize
+/// nor heal it) whose trailing segment equals the target dir name — flagging it `stale`. Exact and
+/// relative-resolving matches keep today's behavior and are never flagged. Pure aside from the run
+/// store reads the assemblers already do; no wall clock, no git.
+enum DashboardRunMatch {
+    static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> (state: RunState?, stale: Bool) {
+        let expected = pipelineDir.standardizedFileURL.path
+        let target = pipelineDir.standardizedFileURL.lastPathComponent
+        let runIds = (try? runStore.runIds()) ?? []
+
+        // (1) Exact path match — the existing, healthy/healed path. No marker.
+        for runId in runIds {
+            guard let meta = try? runStore.meta(of: runId),
+                  resolvedPath(meta.pipelineDir, base: runStore.base) == expected
+            else { continue }
+            return (try? runStore.state(of: runId), false)
+        }
+
+        // (2) Best-effort: an unreconcilable run (absolute stored pipelineDir resolving nowhere)
+        // whose trailing feature/program segment matches the target dir name. Attach it, flag stale.
+        for runId in runIds {
+            guard let meta = try? runStore.meta(of: runId),
+                  isUnreconcilable(meta.pipelineDir, base: runStore.base),
+                  trailingSegment(of: meta.pipelineDir) == target
+            else { continue }
+            return (try? runStore.state(of: runId), true)
+        }
+
+        return (nil, false)
+    }
+
+    /// Resolve a stored `RunMeta.pipelineDir` to a comparable standardized path. An ABSOLUTE stored
+    /// path keeps today's exact behavior (base ignored); a RELATIVE stored path is anchored to the
+    /// run-store base before standardizing, so a committed-fixture-style relative run matches on any
+    /// clone.
+    static func resolvedPath(_ stored: String, base: URL) -> String {
+        if (stored as NSString).isAbsolutePath {
+            return standardizedPath(stored)
+        }
+        return URL(fileURLWithPath: stored, relativeTo: base).standardizedFileURL.path
+    }
+
+    /// A stored `pipelineDir` S2 left unreconciled: it is ABSOLUTE (a relative path always resolves
+    /// against the base, so S2's relativize/heal already canonicalized it) and points nowhere on
+    /// disk. This is exactly the residue `RunStore.heal` returns byte-for-byte (rule 4).
+    private static func isUnreconcilable(_ stored: String, base: URL) -> Bool {
+        guard (stored as NSString).isAbsolutePath else { return false }
+        return !FileManager.default.fileExists(atPath: standardizedPath(stored))
+    }
+
+    /// The trailing path component of a stored `pipelineDir` (the feature/program dir name), used to
+    /// attribute an unreconcilable absolute pointer to its `features/<name>` / `programs/<name>` dir.
+    static func trailingSegment(of stored: String) -> String {
+        URL(fileURLWithPath: stored, isDirectory: true).standardizedFileURL.lastPathComponent
+    }
+
+    private static func standardizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
     }
 }
 

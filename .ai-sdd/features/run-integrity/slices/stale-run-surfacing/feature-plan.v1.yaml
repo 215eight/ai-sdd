@@ -1,0 +1,69 @@
+summary: >-
+  Stop the dashboard and status command from silently dropping a run whose recorded
+  pipelineDir cannot be reconciled (an unresolvable absolute path that S2's migration
+  could not heal). ai-sdd status <name> prints a `⚠ stale pipelineDir` line (recorded
+  path + expected feature dir); both ProjectDashboardAssembler and ProgramDashboardAssembler
+  attach such a run best-effort (crediting its slice events directly) and flag the section
+  with a single `⚠ stale run` marker that GraphRenderer surfaces in the dashboard HTML —
+  instead of exact-path-matching, missing it, and rendering the feature all-pending.
+scope:
+  in:
+    - In ProjectDashboardAssembler/ProgramDashboardAssembler matchedState, when no run matches a pipeline dir by resolvedPath equality, fall back to a best-effort match for an unreconcilable run (a stored pipelineDir that resolvedPath still cannot anchor on disk) whose trailing feature/program segment equals the target dir's name, attaching that run's folded state to the section.
+    - "Carry the best-effort outcome as a single new section-level marker (a `staleRun: Bool` on GraphRenderer.DashboardSection, defaulted false) set only when a run was attached best-effort rather than by exact path; reuse this one mechanism everywhere (status line, both assemblers, HTML) — do not introduce a second marker type."
+    - Render the `⚠ stale run` marker in GraphRenderer.dashboardPage section output (in the existing section header) when section.staleRun is true, HTML-escaped like the existing heading.
+    - In the Status command, detect an unreconcilable recorded pipelineDir (meta.pipelineDir that does not resolve to a loadable bundle) and print a `⚠ stale pipelineDir` line showing the recorded path and the expected feature dir (derived from the run/feature name under the run-store base) instead of crashing.
+    - A run whose stale absolute pointer S2 already healed resolves normally, matches by exact path, and carries NO marker (status prints no stale line; the section has staleRun false).
+    - Preserve all existing DashboardProjection status precedence, the resolvedPath relative-vs-absolute resolution from S2, exact-path matching when it succeeds, owner fallback, summary shape, and the existing status command level/descend output.
+    - Add focused tests for the best-effort attach + marker (project and program), the healed-run-has-no-marker case, and the no-all-pending-drop case.
+  out:
+    - No change to RunStore persistence, the S2 heal/relativize/migrate logic, or RunMeta — S4 only consumes what S2 leaves unreconciled.
+    - No change to DashboardProjection row status precedence, Scheduler, Reducer, the dashboard chart geometry, status colors, or HTML escaping helpers.
+    - No second freshness/trust mechanism — Part B's verdict band later reuses this one `staleRun` marker; this slice does not design or render Part B bands, temporal metrics, or a verdict band.
+    - No name-resolver/self-start changes (S3), no `at`/owner changes (S1), no pre-commit or skill changes (S5/S6).
+    - No new architecture decision or ADR edit.
+acceptance:
+  - id: status-stale-line
+    description: ai-sdd status <name> on a run whose recorded pipelineDir cannot be reconciled prints a `⚠ stale pipelineDir` line showing both the recorded path and the expected feature dir, rather than failing to load.
+  - id: project-stale-marker-and-attach
+    description: ProjectDashboardAssembler attaches an unreconcilable run best-effort to its feature section (crediting the run's slice events so the feature is not all-pending) and sets the section's `⚠ stale run` marker.
+  - id: program-stale-marker-and-attach
+    description: ProgramDashboardAssembler attaches an unreconcilable run best-effort to its program section (crediting the run's slice events) and sets the section's `⚠ stale run` marker.
+  - id: stale-marker-in-html
+    description: GraphRenderer.dashboardPage renders the `⚠ stale run` marker in the dashboard HTML for any section whose staleRun flag is set, alongside the existing section header.
+  - id: healed-run-no-marker
+    description: A run whose legacy absolute pipelineDir S2 already healed matches by exact resolved path, carries NO `⚠ stale run` marker, and produces no `⚠ stale pipelineDir` status line.
+  - id: no-all-pending-drop
+    description: A fixture reproducing the adapter-interfaces failure (a completed run with a legacy absolute pointer that does not resolve) surfaces the run's progress on the feature instead of dropping the feature to all-pending.
+  - id: verification-commands
+    description: swift build, swift test, swift run ai-sdd validate .ai-sdd/features/run-integrity, and the feature-plan check all pass after implementation.
+decisions:
+  - id: single-marker-on-section
+    status: closed
+    decision: "Represent stale-run surfacing as one `staleRun: Bool` flag on GraphRenderer.DashboardSection (defaulted false, constructed as false when absent), set by the assemblers and rendered by GraphRenderer."
+    rationale: The slice and notes require a single mechanism that the status line, both assemblers, and the dashboard HTML share, and that Part B's verdict band later reuses as its freshness signal. A section-level flag is the smallest addition that surfaces in the existing section header without a second marker type or a projection-row schema change.
+  - id: best-effort-attach-in-matchedstate
+    status: closed
+    decision: Extend each assembler's matchedState to first try the existing exact resolvedPath match, and only on miss fall back to attaching an unreconcilable run (a stored pipelineDir resolvedPath cannot anchor on disk) whose trailing feature/program segment matches the target dir name, returning both the folded state and a flag that the match was best-effort.
+    rationale: matchedState (with S2's resolvedPath) is exactly where reconciliation already happens; surfacing what it cannot match is the complement of S2's heal (decision D3). Constraining the fallback to runs that are genuinely unreconcilable and whose trailing segment matches the feature keeps exact matches and healthy runs on the existing path with no marker.
+  - id: status-stale-detection-point
+    status: closed
+    decision: In the Status command, guard the load of meta.pipelineDir; when the recorded dir does not resolve to a loadable bundle, print the `⚠ stale pipelineDir` line (recorded path + expected feature dir derived from the run/feature name under the run-store base) and return without attempting the normal level print.
+    rationale: status currently calls loadValidated(meta.pipelineDir) which throws on a missing dir; the stale line must replace that crash with a human breadcrumb, mirroring the dashboard's best-effort surfacing using the same recorded-vs-expected framing.
+  - id: assemblers-and-files
+    status: closed
+    decision: Implement the marker computation in Sources/AISDDEngine/DashboardProjection.swift (both assemblers' matchedState), render it in Sources/AISDDEngine/GraphRenderer.swift, surface the status line in Sources/AISDDCLI/main.swift, and cover the behavior in Tests/AISDDEngineTests/EngineTests.swift.
+    rationale: These are the exact sites grounded in the brief; DashboardProjection owns matchedState/resolvedPath, GraphRenderer owns DashboardSection + dashboardPage section rendering, main.swift owns the Status command, and EngineTests is the established Swift Testing home with existing matchedState fixtures to extend.
+  - id: pure-marker-logic-unit-tested
+    status: closed
+    decision: Keep the best-effort-match decision and marker assignment as pure, I/O-free logic exercised through the assemblers with temp-dir fixtures (the existing matchedState test pattern), including the healed-run-no-marker and no-all-pending-drop cases.
+    rationale: "The convention and slice notes require pure marker logic unit-tested without real-repo I/O; reusing RunStore.local(under: tmp) + writePipeline fixtures matches the shipped matchedState tests and avoids any wall-clock or git dependency."
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/run-integrity
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

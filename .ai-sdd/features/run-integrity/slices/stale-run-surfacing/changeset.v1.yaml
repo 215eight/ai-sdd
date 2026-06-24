@@ -1,0 +1,34 @@
+summary: >-
+  Stop the dashboard and status command from silently dropping a run whose recorded pipelineDir cannot
+  be reconciled (an absolute pointer that resolves nowhere on disk, which S2 could neither relativize
+  nor heal). Added one shared reconciliation enum DashboardRunMatch in
+  Sources/AISDDEngine/DashboardProjection.swift that both ProjectDashboardAssembler and
+  ProgramDashboardAssembler now call: it tries the existing exact resolvedPath match first
+  (healthy/healed runs, no marker) and only on a miss falls back to a best-effort attach of an
+  unreconcilable run (absolute stored pipelineDir not present on disk) whose trailing feature/program
+  segment equals the target dir name, returning the run's folded state plus a `stale` flag. Both
+  assemblers' matchedState was collapsed onto this shared matcher and now thread match.state +
+  match.stale into the section. Added a single section-level `staleRun: Bool` (defaulted false) to
+  GraphRenderer.DashboardSection — backward-compatible with existing call sites and Equatable — and
+  rendered a single `⚠ stale run` marker in dashboardPage's section header (HTML-escaped) plus a small
+  style; exact/relative-resolving matches carry no marker. In the Status command
+  (Sources/AISDDCLI/main.swift) guarded the loadValidated(meta.pipelineDir) call: when the recorded dir
+  does not resolve to a loadable bundle it now prints a `⚠ stale pipelineDir` breadcrumb (recorded path
+  + expected feature dir derived from RunResolver.featureDir) and returns, instead of crashing. Added
+  Swift Testing coverage in Tests/AISDDEngineTests/EngineTests.swift extending the matchedState fixtures:
+  project + program best-effort attach with marker (no all-pending drop), healed-run-has-no-marker, and
+  the recorded-vs-expected derivation backing the status stale line. No RunStore/RunMeta/S2 changes; the
+  marker is a single mechanism Part B's verdict band can reuse.
+satisfies:
+  - status-stale-line
+  - project-stale-marker-and-attach
+  - program-stale-marker-and-attach
+  - stale-marker-in-html
+  - healed-run-no-marker
+  - no-all-pending-drop
+  - verification-commands
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift

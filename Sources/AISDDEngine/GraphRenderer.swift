@@ -128,11 +128,18 @@ public enum GraphRenderer {
         public var heading: String
         public var projection: DashboardProjectionResult
         public var mermaid: String?
+        // A single section-level freshness marker: true only when a run was attached BEST-EFFORT
+        // (its recorded `pipelineDir` could not be reconciled by exact path, so it was matched by
+        // trailing feature/program segment instead). Defaulted to false so existing `DashboardSection`
+        // call sites and `Equatable` are unchanged; Part B's verdict band reuses this same flag.
+        public var staleRun: Bool
 
-        public init(heading: String, projection: DashboardProjectionResult, mermaid: String? = nil) {
+        public init(heading: String, projection: DashboardProjectionResult, mermaid: String? = nil,
+                    staleRun: Bool = false) {
             self.heading = heading
             self.projection = projection
             self.mermaid = mermaid
+            self.staleRun = staleRun
         }
     }
 
@@ -342,10 +349,15 @@ public enum GraphRenderer {
     }
 
     private static func sectionHTML(_ section: DashboardSection) -> String {
+        // A best-effort-attached (stale) run gets a single `⚠ stale run` marker in the header,
+        // HTML-escaped like the heading. A healthy/healed exact-path match carries no marker.
+        let staleMarker = section.staleRun
+            ? "<span class=\"stale-run-marker\">\(escapeHTML("⚠ stale run"))</span>"
+            : ""
         var parts = [
             "    <section class=\"dashboard-section\">",
             "      <header>",
-            "        <h2>\(escapeHTML(section.heading))</h2>",
+            "        <h2>\(escapeHTML(section.heading))\(staleMarker)</h2>",
             "        <p>\(section.projection.summary.doneCount)/\(section.projection.summary.totalNodeCount) done</p>",
             "      </header>"
         ]
@@ -473,6 +485,7 @@ public enum GraphRenderer {
         .dashboard-section { border-top: 1px solid var(--line); padding: 26px 0; }
         .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
         .dashboard-section > header p { color: var(--muted); margin: 0; }
+        .stale-run-marker { color: var(--status-rework); font-size: 0.8rem; font-weight: 700; margin-left: 10px; white-space: nowrap; }
         .dashboard-mermaid-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 18px; overflow-x: auto; padding: 16px; }
         .dashboard-mermaid { margin: 0; min-width: 640px; text-align: center; }
         .dashboard-graph { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr); margin-bottom: 18px; }

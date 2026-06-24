@@ -315,7 +315,18 @@ struct Status: ParsableCommand {
         let store = runStore()
         let meta = try store.meta(of: runId)
         let state = try store.state(of: runId)
-        let (env, _, _) = try loadValidated(meta.pipelineDir)
+
+        // Guard the recorded pipelineDir: when it does not resolve to a loadable bundle (an
+        // unreconcilable pointer S2 could not heal), print a `⚠ stale pipelineDir` breadcrumb —
+        // recorded path + the expected feature dir — instead of crashing on the load (S4).
+        guard let (env, _, _) = try? loadValidated(meta.pipelineDir) else {
+            let expected = RunResolver.featureDir(workspace: workspace(), feature: runId)
+                .standardizedFileURL.path
+            print("run \(runId)")
+            print("  ⚠ stale pipelineDir: recorded '\(meta.pipelineDir)' does not resolve")
+            print("    expected feature dir: \(expected)")
+            return
+        }
 
         print("run \(runId)  ·  pipeline '\(env.metadata.name)'  ·  "
             + "\(state.completedNodes.count)/\(env.spec.nodes.count) complete")

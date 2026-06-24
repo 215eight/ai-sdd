@@ -2156,6 +2156,116 @@ struct EngineTests {
         ])
     }
 
+    // MARK: - Stale-run surfacing (S4): best-effort attach + `⚠ stale run` marker
+
+    /// A run store whose `create` preserves an absolute `pipelineDir` byte-for-byte (no git
+    /// toplevel ⇒ no relativize/heal), so a fixture can plant an unreconcilable absolute pointer.
+    private func nonGitStore(under base: URL) -> RunStore {
+        let local = RunStore.local(under: base)
+        return RunStore(root: local.root, gitToplevel: { nil })
+    }
+
+    @Test func projectStaleRunAttachesBestEffortAndFlagsMarker() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-stale-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let feature = base.appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("alpha", isDirectory: true)
+        try writePipeline(at: feature, name: "alpha", nodes: ["plan", "implement"],
+                          edges: [("plan", "implement")])
+
+        let store = nonGitStore(under: base)
+        // The adapter-interfaces failure: a completed run whose legacy ABSOLUTE pointer resolves
+        // nowhere (S2 could not heal it), but whose trailing segment is the feature name `alpha`.
+        let stalePointer = "/legacy/clone/.ai-sdd/features/alpha"
+        try store.create(runId: "stale-run", pipelineDir: stalePointer)
+        try store.append(.nodeCompleted(node: "plan", producedArtifacts: []), to: "stale-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: base, runStore: store)
+        let section = try #require(dashboard.sections.first { $0.heading == "Feature · alpha" })
+        // Best-effort attach: the run's slice events are credited, NOT dropped to all-pending.
+        #expect(Dictionary(uniqueKeysWithValues: section.projection.rows.map { ($0.node, $0.status) }) == [
+            "plan": .done,
+            "implement": .runnable
+        ])
+        // The single section-level marker is set, and surfaces in the rendered HTML.
+        #expect(section.staleRun)
+        let html = GraphRenderer.dashboardPage(title: "t", sections: dashboard.sections)
+        #expect(html.contains("⚠ stale run"))
+    }
+
+    @Test func programStaleRunAttachesBestEffortAndFlagsMarker() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-stale-prog-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let programDir = base.appendingPathComponent(Layout.programsDir, isDirectory: true)
+            .appendingPathComponent("guardrails", isDirectory: true)
+        try writeProgramFixture(at: programDir, name: "guardrails")
+
+        let store = nonGitStore(under: base)
+        // Unreconcilable absolute program pointer, trailing segment `guardrails`.
+        try store.create(runId: "stale-prog",
+                         pipelineDir: "/legacy/clone/.ai-sdd/programs/guardrails")
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "plan", producedArtifacts: [])),
+                         to: "stale-prog")
+        try store.append(.scoped(slice: "locks", event: .nodeCompleted(node: "implement", producedArtifacts: [])),
+                         to: "stale-prog")
+
+        let dashboard = try ProgramDashboardAssembler.assemble(programDir: programDir, runStore: store)
+        // The program section credits the run's folded slice state and carries the stale marker.
+        #expect(status(dashboard.sections[0].projection, "locks") == .done)
+        #expect(dashboard.sections[0].staleRun)
+    }
+
+    @Test func healedRunMatchesExactPathAndCarriesNoMarker() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-healed-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let feature = base.appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("alpha", isDirectory: true)
+        try writePipeline(at: feature, name: "alpha", nodes: ["plan", "implement"],
+                          edges: [("plan", "implement")])
+
+        let store = nonGitStore(under: base)
+        // A run S2 already healed resolves by exact path (a relative pointer anchored to the base).
+        try store.create(runId: "healed-run", pipelineDir: "features/alpha")
+        try store.append(.nodeCompleted(node: "plan", producedArtifacts: []), to: "healed-run")
+
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: base, runStore: store)
+        let section = try #require(dashboard.sections.first { $0.heading == "Feature · alpha" })
+        #expect(status(section.projection, "plan") == .done)
+        // Exact match ⇒ NO marker, and the HTML has no stale-run breadcrumb.
+        #expect(!section.staleRun)
+        #expect(!GraphRenderer.dashboardPage(title: "t", sections: dashboard.sections).contains("⚠ stale run"))
+    }
+
+    @Test func staleMatchYieldsRecordedAndExpectedForStatusLine() throws {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-stale-status-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let feature = base.appendingPathComponent("features", isDirectory: true)
+            .appendingPathComponent("alpha", isDirectory: true)
+        try writePipeline(at: feature, name: "alpha", nodes: ["plan"], edges: [])
+
+        let store = nonGitStore(under: base)
+        let stalePointer = "/legacy/clone/.ai-sdd/features/alpha"
+        try store.create(runId: "alpha", pipelineDir: stalePointer)
+
+        // The recorded pointer is what `status` reads back; it does not resolve on disk, so the
+        // command prints the stale breadcrumb (recorded + expected) instead of loading a bundle.
+        let recorded = try store.meta(of: "alpha").pipelineDir
+        #expect(recorded == stalePointer)
+        #expect(!FileManager.default.fileExists(atPath: recorded))
+        // The best-effort matcher attributes the unreconcilable pointer to the `alpha` dir.
+        let match = DashboardRunMatch.matchedState(for: feature, in: store)
+        #expect(match.stale)
+        #expect(DashboardRunMatch.trailingSegment(of: recorded) == feature.standardizedFileURL.lastPathComponent)
+    }
+
     // MARK: - Milestone gate styling + escaping (pure dashboardMermaid)
 
     @Test func dashboardMermaidStylesMilestonesAsDistinctGates() {
