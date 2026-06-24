@@ -1,3 +1,5 @@
+import Foundation
+
 public enum DashboardCharts {
     public static let defaultColors: [DashboardStatus: String] = [
         .done: "#2e7d32",
@@ -94,6 +96,82 @@ public enum DashboardCharts {
             "  </g>",
             "</svg>"
         ]
+        return lines.joined(separator: "\n")
+    }
+
+    /// A self-contained inline-SVG burndown chart: the cumulative-slices-done series rendered as a
+    /// monotonic step/line over a time axis, in the SAME no-CDN, escaped, aria-labelled pattern as
+    /// `statusDonut`/`groupedBarChart` (no `<script src>`, `<link>`, or http(s) URL). An empty series
+    /// (the projection self-suppressed on un-timestamped history) renders the empty state, never a
+    /// fabricated flat line. Pure: a function of the series alone.
+    public static func burndownChart(_ series: [TemporalMetrics.BurndownPoint]) -> String {
+        let viewW = 760
+        let viewH = 220
+        let left = 44
+        let right = 24
+        let topPad = 24
+        let bottom = 28
+        let plotW = viewW - left - right
+        let plotH = viewH - topPad - bottom
+
+        // Empty / suppressed state: same shape as groupedBarChart's "No dashboard rows".
+        guard series.count >= 1 else {
+            return [
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \(viewW) \(viewH)\" role=\"img\" aria-label=\"\(escape("Burndown: no timestamped completions"))\" class=\"dashboard-chart dashboard-burndown\">",
+                "  <text x=\"\(left)\" y=\"\(topPad + 16)\" class=\"empty-label\">No timestamped completions</text>",
+                "</svg>"
+            ].joined(separator: "\n")
+        }
+
+        let maxDone = max(series.map(\.cumulativeDone).max() ?? 0, 1)
+        let minAt = series.map(\.at).min() ?? series[0].at
+        let maxAt = series.map(\.at).max() ?? series[0].at
+        let span = max(maxAt.timeIntervalSince(minAt), 0)
+
+        func x(_ at: Date) -> Int {
+            guard span > 0 else { return left }
+            let frac = at.timeIntervalSince(minAt) / span
+            return left + Int((frac * Double(plotW)).rounded())
+        }
+        func y(_ done: Int) -> Int {
+            let frac = Double(done) / Double(maxDone)
+            return topPad + plotH - Int((frac * Double(plotH)).rounded())
+        }
+
+        let label = "Burndown: \(series.last?.cumulativeDone ?? 0) of \(maxDone) slices done over \(series.count) points"
+
+        var lines = [
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 \(viewW) \(viewH)\" role=\"img\" aria-label=\"\(escape(label))\" class=\"dashboard-chart dashboard-burndown\">",
+            "  <line class=\"burndown-axis\" x1=\"\(left)\" y1=\"\(topPad)\" x2=\"\(left)\" y2=\"\(topPad + plotH)\" stroke=\"#cfd8dc\"/>",
+            "  <line class=\"burndown-axis\" x1=\"\(left)\" y1=\"\(topPad + plotH)\" x2=\"\(left + plotW)\" y2=\"\(topPad + plotH)\" stroke=\"#cfd8dc\"/>",
+            "  <text x=\"\(left - 8)\" y=\"\(topPad + 4)\" text-anchor=\"end\" class=\"burndown-axis-label\">\(maxDone)</text>",
+            "  <text x=\"\(left - 8)\" y=\"\(topPad + plotH)\" text-anchor=\"end\" class=\"burndown-axis-label\">0</text>"
+        ]
+
+        // A monotonic step polyline (horizontal hold then vertical rise at each completion) so the
+        // cumulative count never visually decreases. Build the point list as `x,y` pairs.
+        var poly: [String] = []
+        var prevY = y(series[0].cumulativeDone)
+        for (index, point) in series.enumerated() {
+            let px = x(point.at)
+            let py = y(point.cumulativeDone)
+            if index == 0 {
+                poly.append("\(px),\(py)")
+            } else {
+                poly.append("\(px),\(prevY)")   // horizontal hold to this instant
+                poly.append("\(px),\(py)")      // vertical rise to the new count
+            }
+            prevY = py
+        }
+        lines.append("  <polyline class=\"burndown-line\" fill=\"none\" stroke=\"\(escape(defaultColors[.done] ?? "#2e7d32"))\" stroke-width=\"2\" points=\"\(escape(poly.joined(separator: " ")))\"/>")
+
+        for point in series {
+            let px = x(point.at)
+            let py = y(point.cumulativeDone)
+            lines.append("  <circle class=\"burndown-point\" data-done=\"\(point.cumulativeDone)\" cx=\"\(px)\" cy=\"\(py)\" r=\"3\" fill=\"\(escape(defaultColors[.done] ?? "#2e7d32"))\"><title>done \(point.cumulativeDone)</title></circle>")
+        }
+
+        lines.append("</svg>")
         return lines.joined(separator: "\n")
     }
 

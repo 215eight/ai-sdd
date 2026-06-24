@@ -1,0 +1,113 @@
+summary: >-
+  Add two trajectory views to the temporal band of the project dashboard, both
+  built on S5's velocity and the same matched run's [RunEventRecord] threaded onto
+  DashboardSection. (1) BURNDOWN — a pure projection that replays the timestamped
+  append-only event log (nodeCompleted `at` events, top-level and one-level scoped)
+  into a cumulative-slices-done-over-time series, rendered as a new inline-SVG chart
+  in DashboardCharts against an injected `now`. (2) ETA AS A BAND — remaining
+  (pending + runnable) ÷ recent velocity rendered as a low/high RANGE with a
+  confidence note in the verdict band's temporal block, SUPPRESSED entirely (a `—`
+  note, never a single date) when velocity is suppressed or history is too thin.
+scope:
+  in:
+    - Add a pure burndown projection to DashboardProjection.swift that folds a run's [RunEventRecord] plus an injected `now` into an ordered cumulative-done-over-time series, counting nodeCompleted events (top-level and one-level scoped) whose `at` parses, and self-suppressing (nil/empty series) when there is not a single timestamped completion.
+    - Add a pure ETA-band projection that derives a low/high completion-time RANGE from S5's TemporalMetrics velocity and the remaining (pending + runnable) slice count, and reports a confidence level, suppressing entirely when velocity is suppressed (nil) or the history is too thin to support a band.
+    - Add a burndown inline-SVG chart helper to DashboardCharts.swift (no CDN, self-contained, same escape/aria pattern as statusDonut/groupedBarChart), rendering the cumulative-done series and an empty/suppressed state.
+    - Render the burndown chart and the ETA band in GraphRenderer's verdict/temporal block, reusing the existing injected `now`, the threaded section.runEvents, and the existing temporalMetricsHTML insertion point — no second dashboard path, no new render entry point.
+    - Add focused Swift Testing coverage in EngineTests.swift for log-replay burndown (fixture records → deterministic cumulative series under a fixed `now`), ETA band math (range + confidence), ETA suppression on thin/suppressed history, and inline-SVG-no-CDN assertions.
+  out:
+    - The "what changed since T-7d" replay-to-prior-instant + diff view (that is S7 `whats-changed-diff`, a sibling phase-2 slice) — burndown replays the log to a cumulative series, it does not diff two states.
+    - Any change to S5's TemporalMetrics velocity/cycle-time/WIP-age computation, the velocityWindow/wipAgingThreshold constants, or the DashboardProjection status precedence — S6 consumes S5's velocity and the existing projection unchanged.
+    - Any wall-clock read inside a pure projection or chart function; any single false-precision ETA date; any new ADR, schema, CLI flag, run-store, or DashboardSection field.
+    - Any change to existing charts (statusDonut, groupedBarChart), the dashboard CSS theme contract, status colors, or HTML-escaping behavior.
+acceptance:
+  - id: burndown-from-log-replay
+    description: The burndown projection reconstructs cumulative-slices-done-over-time by replaying a timestamped [RunEventRecord] fixture — each nodeCompleted (top-level or one-level scoped) with a parseable `at` advances the cumulative count at that instant — producing a deterministic ordered series for a fixed injected `now`.
+  - id: burndown-inline-svg-no-cdn
+    description: The burndown chart is emitted as inline SVG by DashboardCharts with no external/CDN reference (no <script src>, no <link>, no http(s) URL), self-contained like the existing donut/bar charts.
+  - id: eta-as-confidence-band-range
+    description: When velocity is present and history is sufficient, the ETA renders as a low/high RANGE (remaining ÷ recent velocity, widened by the confidence band) with an explicit confidence note — never a single instant.
+  - id: eta-suppressed-on-thin-history
+    description: When S5's velocity is suppressed (nil) or the history is too thin to support a band, the ETA suppresses entirely — a `—` note (or no band markup), asserted by a thin-history fixture — rather than emitting a value.
+  - id: no-false-precision-date
+    description: No code path renders a single false-precision ETA completion date; the ETA is only ever a suppressed note or a low/high range with a confidence label.
+  - id: deterministic-injected-now
+    description: Burndown and ETA are pure functions of (records, now) — no wall-clock, network, or file I/O — so identical records and the same injected `now` yield byte-identical output, verified without I/O.
+decisions:
+  - id: burndown-replay-shape
+    status: closed
+    decision: >-
+      Burndown is a pure projection over the same [RunEventRecord] S5 reads, folding nodeCompleted
+      events (top-level and one-level scoped, mirroring TemporalMetrics.recordCompletion) whose `at`
+      parses via the existing TemporalMetrics.parse formatter into an ascending-by-time series of
+      (Date, cumulativeDone) points. The series ends at the injected `now`; the cumulative count is
+      monotonic non-decreasing.
+    rationale: >-
+      The brief and S5 already thread the matched run's records onto DashboardSection and parse `at`
+      with a single zone-pinned formatter; reusing exactly that input and parser keeps burndown and
+      velocity reading the same run, and a pure (records, now) fold stays I/O-free and deterministic.
+  - id: burndown-suppression
+    status: closed
+    decision: >-
+      The burndown series self-suppresses — yields nil / an empty series — when there is not a single
+      timestamped completion (the same gate TemporalMetrics.velocity uses for sawTimestampedCompletion),
+      so a legacy un-timestamped (`at == nil`) run renders the chart's empty state, never a fabricated
+      flat line.
+    rationale: >-
+      Mirrors S5's self-suppression rule (decision self-suppression-rule / D5): absent timestamps must
+      never manufacture a zero or a false trend.
+  - id: eta-band-math
+    status: closed
+    decision: >-
+      ETA = remaining ÷ recent velocity, expressed as a RANGE. `remaining` is the count of section
+      projection rows whose status is pending or runnable. `recent velocity` is S5's
+      TemporalMetrics.metrics(...).velocity (completions per 7-day window). The point estimate
+      remaining/velocity (in windows, projected forward off the injected `now`) is widened to a
+      low/high band by a fixed symmetric confidence factor and reported with a coarse confidence
+      label, so the output is a banded range, never a single instant.
+    rationale: >-
+      The brief specifies `remaining ÷ recent velocity` as a confidence-banded range built on S5's
+      velocity; pending+runnable is the remaining-work set the projection already exposes, and a fixed
+      symmetric factor keeps the band deterministic and honest about uncertainty.
+  - id: eta-suppression-threshold
+    status: closed
+    decision: >-
+      ETA suppresses entirely (renders a `—` / "insufficient history" note, no band) when velocity is
+      nil (S5 suppressed it), when velocity is 0 (no movement in the window ⇒ undefined ETA), or when
+      remaining is 0 (nothing left to estimate). Suppression is checked before any band math so no
+      division-by-zero or false-precision value is ever produced.
+    rationale: >-
+      The brief is explicit: suppress entirely on thin history, never a single false-precision date. A
+      suppressed or zero velocity cannot honestly project a finish, and zero remaining has no ETA.
+  - id: chart-and-band-placement
+    status: closed
+    decision: >-
+      The burndown chart and the ETA band render inside GraphRenderer's existing verdict/temporal
+      block (alongside velocity, cycle time, WIP age), reached through the existing projectRollupHTML
+      → temporalMetricsHTML path with the already-injected `now` and the threaded section.runEvents.
+      No new DashboardSection field, no new render entry point, no second dashboard path.
+    rationale: >-
+      The feature constraint is "reuse the shipped renderer — no second dashboard path"; the temporal
+      block already receives (sections, now) and reads runEvents, so burndown/ETA slot in there without
+      widening the section model or the renderer's purity boundary.
+  - id: file-scope
+    status: closed
+    decision: >-
+      Implement the burndown + ETA projections in DashboardProjection.swift (pure, beside
+      TemporalMetrics), the burndown inline-SVG helper in DashboardCharts.swift, the wiring in
+      GraphRenderer.swift, and tests in EngineTests.swift. No CLI, model, schema, or run-store change.
+    rationale: >-
+      Matches the established layering (pure projection + chart helper in the engine, render-only in
+      GraphRenderer, tests close to behavior) and the slice's named touch-points; S5 added its metrics
+      the same way.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Sources/AISDDEngine/DashboardCharts.swift
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/dashboard-instrument
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/db.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

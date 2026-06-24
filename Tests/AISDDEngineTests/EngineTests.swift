@@ -4659,6 +4659,165 @@ struct TemporalMetricsTests {
         #expect(GraphRenderer.dashboardTrajectory(for: [escalated], now: now) == .stalled)
     }
 
+    // MARK: - S6 burndown
+
+    @Test func burndownReconstructsCumulativeSeriesFromLogReplay() {
+        // Replay three timestamped completions (one scoped, one top-level, one scoped), appended out
+        // of time order, with `now` 1h after the last. The series is ascending-by-time, monotonic
+        // cumulative 1,2,3, and ends with a trailing hold point at `now`.
+        let records: [RunEventRecord] = [
+            scoped("s2", .nodeCompleted(node: "b", producedArtifacts: []), at: -2 * 86_400),
+            RunEventRecord(event: .nodeCompleted(node: "top", producedArtifacts: []),
+                           at: RunStore.utcZ(now.addingTimeInterval(-1 * 86_400))),
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -3 * 86_400)
+        ]
+        let series = TemporalMetrics.burndown(from: records, now: now)
+        // 3 completions + a trailing point at `now`.
+        #expect(series.count == 4)
+        #expect(series.map(\.cumulativeDone) == [1, 2, 3, 3])
+        // Ascending by time.
+        #expect(series.map(\.at) == series.map(\.at).sorted())
+        // The series ends exactly at the injected `now`.
+        #expect(series.last?.at == now)
+        #expect(series.last?.cumulativeDone == 3)
+    }
+
+    @Test func burndownSuppressesWhenNoTimestampedCompletion() {
+        // Un-timestamped completions (legacy `at == nil`) ⇒ empty series (chart renders its empty
+        // state), never a fabricated flat line.
+        let records = [
+            scopedNoStamp("s1", .nodeCompleted(node: "a", producedArtifacts: [])),
+            scopedNoStamp("s2", .nodeCompleted(node: "b", producedArtifacts: []))
+        ]
+        #expect(TemporalMetrics.burndown(from: records, now: now).isEmpty)
+
+        // A nodeStarted-only run (no completion at all) also suppresses.
+        let startedOnly = [scoped("s1", .nodeStarted(node: "a"), at: -3_600)]
+        #expect(TemporalMetrics.burndown(from: startedOnly, now: now).isEmpty)
+    }
+
+    @Test func burndownChartIsInlineSVGWithNoCDN() {
+        let series = TemporalMetrics.burndown(from: [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -2 * 86_400)
+        ], now: now)
+        let svg = DashboardCharts.burndownChart(series)
+        #expect(svg.hasPrefix("<svg"))
+        // No external/CDN reference of any kind. The mandatory SVG namespace declaration
+        // (`xmlns="http://www.w3.org/2000/svg"`) is the only http(s) token the document may carry —
+        // strip it, then assert NO remaining http(s) URL (a CDN/asset fetch) survives, exactly like
+        // the existing donut/bar charts.
+        func stripNamespace(_ s: String) -> String {
+            s.replacingOccurrences(of: "http://www.w3.org/2000/svg", with: "")
+        }
+        #expect(!svg.contains("<script"))
+        #expect(!svg.contains("<link"))
+        #expect(!svg.lowercased().contains("src="))
+        #expect(!svg.lowercased().contains("href="))
+        #expect(!stripNamespace(svg).contains("http://"))
+        #expect(!stripNamespace(svg).contains("https://"))
+
+        // The empty-series chart is ALSO self-contained inline SVG (no CDN).
+        let empty = DashboardCharts.burndownChart([])
+        #expect(empty.hasPrefix("<svg"))
+        #expect(empty.contains("No timestamped completions"))
+        #expect(!empty.contains("<script"))
+        #expect(!empty.contains("<link"))
+        #expect(!stripNamespace(empty).contains("http"))
+    }
+
+    @Test func burndownIsDeterministicUnderFixedNow() {
+        let records = [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -2 * 86_400),
+            scoped("s2", .nodeCompleted(node: "b", producedArtifacts: []), at: -1 * 86_400)
+        ]
+        #expect(TemporalMetrics.burndown(from: records, now: now)
+                == TemporalMetrics.burndown(from: records, now: now))
+        #expect(DashboardCharts.burndownChart(TemporalMetrics.burndown(from: records, now: now))
+                == DashboardCharts.burndownChart(TemporalMetrics.burndown(from: records, now: now)))
+    }
+
+    // MARK: - S6 ETA band
+
+    @Test func etaRendersAsRangeWithConfidence() {
+        // velocity 2/window, remaining 4 ⇒ point 2 windows, band widened ±40% ⇒ low < high.
+        let estimate = TemporalMetrics.etaBand(velocity: 2, remaining: 4)
+        guard case let .band(low, high, confidence) = estimate else {
+            Issue.record("expected a band, got \(estimate)")
+            return
+        }
+        #expect(low < high)
+        #expect(low >= 0)
+        #expect(confidence == .low)
+        // Point estimate is 2 windows; ±40% ⇒ 1.2 .. 2.8.
+        #expect(abs(low - 1.2) < 1e-9)
+        #expect(abs(high - 2.8) < 1e-9)
+
+        // Rendered HTML is a RANGE with a confidence note, never a single date.
+        let rows = [DashboardProjectionRow(node: "p1", stack: nil, owner: "o", lane: nil,
+                                           milestone: nil, dependencyCount: 0, status: .pending,
+                                           nextActionHint: .waitingOnDependencies),
+                    DashboardProjectionRow(node: "p2", stack: nil, owner: "o", lane: nil,
+                                           milestone: nil, dependencyCount: 0, status: .runnable,
+                                           nextActionHint: .startWork)]
+        let section = GraphRenderer.DashboardSection(
+            heading: "Feature · demo",
+            projection: DashboardProjectionResult(rows: rows, summary: summary(rows)))
+        let html = GraphRenderer.etaBandHTML(sections: [section], velocity: 1)
+        #expect(html.contains("eta "))
+        #expect(html.contains("–"))   // an en-dash range
+        #expect(html.contains("confidence)"))
+        #expect(!html.contains("insufficient history"))
+    }
+
+    @Test func etaSuppressesOnNilZeroVelocityAndZeroRemaining() {
+        // velocity suppressed (nil) ⇒ suppressed.
+        #expect(TemporalMetrics.etaBand(velocity: nil, remaining: 5) == .suppressed)
+        // velocity 0 (no movement) ⇒ suppressed (undefined ETA, no division-by-zero).
+        #expect(TemporalMetrics.etaBand(velocity: 0, remaining: 5) == .suppressed)
+        // remaining 0 (nothing left) ⇒ suppressed.
+        #expect(TemporalMetrics.etaBand(velocity: 3, remaining: 0) == .suppressed)
+
+        // The renderer shows a `—` note, NOT a chart/value.
+        let rows = projectionRows()   // one runnable row ⇒ remaining 1
+        let section = GraphRenderer.DashboardSection(
+            heading: "Feature · demo",
+            projection: DashboardProjectionResult(rows: rows, summary: summary(rows)))
+        let suppressed = GraphRenderer.etaBandHTML(sections: [section], velocity: nil)
+        #expect(suppressed.contains("eta —"))
+        #expect(suppressed.contains("insufficient history"))
+    }
+
+    @Test func remainingCountIsPendingPlusRunnable() {
+        let rows = [
+            DashboardProjectionRow(node: "a", stack: nil, owner: "o", lane: nil, milestone: nil,
+                                   dependencyCount: 0, status: .pending, nextActionHint: .waitingOnDependencies),
+            DashboardProjectionRow(node: "b", stack: nil, owner: "o", lane: nil, milestone: nil,
+                                   dependencyCount: 0, status: .runnable, nextActionHint: .startWork),
+            DashboardProjectionRow(node: "c", stack: nil, owner: "o", lane: nil, milestone: nil,
+                                   dependencyCount: 0, status: .done, nextActionHint: .none),
+            DashboardProjectionRow(node: "d", stack: nil, owner: "o", lane: nil, milestone: nil,
+                                   dependencyCount: 0, status: .inProgress, nextActionHint: .continueWork)
+        ]
+        #expect(TemporalMetrics.remainingCount(rows) == 2)
+    }
+
+    @Test func etaNeverEmitsASingleFalsePrecisionDate() {
+        // The only two ETA shapes are `.suppressed` and `.band` — there is no `.date` case, so no code
+        // path can produce a single instant. Render both shapes and confirm neither is a bare date.
+        let rowsRemaining = [DashboardProjectionRow(node: "a", stack: nil, owner: "o", lane: nil,
+                                                    milestone: nil, dependencyCount: 0, status: .runnable,
+                                                    nextActionHint: .startWork)]
+        let section = GraphRenderer.DashboardSection(
+            heading: "Feature · demo",
+            projection: DashboardProjectionResult(rows: rowsRemaining, summary: summary(rowsRemaining)))
+        // With a velocity present ⇒ a range; without ⇒ a suppression note. Neither contains a UTC stamp.
+        let band = GraphRenderer.etaBandHTML(sections: [section], velocity: 1)
+        let suppressed = GraphRenderer.etaBandHTML(sections: [section], velocity: nil)
+        #expect(!band.contains("UTC"))
+        #expect(!band.contains("Z\""))
+        #expect(!suppressed.contains("UTC"))
+    }
+
     // MARK: - fixtures
 
     /// A section with all-`runnable` rows (no escalation/rework) carrying the given run records, so a

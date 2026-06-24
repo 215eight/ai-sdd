@@ -1,0 +1,105 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: burndown-and-eta
+
+verdict: approve
+summary: >-
+  Review of slice burndown-and-eta (dashboard-instrument, Part B, S6) against feature-plan.v1
+  (6 acceptance ids) and changeset.v1. The slice adds, beside S5's TemporalMetrics, (1) a pure
+  burndown fold — TemporalMetrics.burndown(from:now:) collects every timestamped nodeCompleted
+  (top-level + one-level scoped via isCompletion), sorts ascending (so out-of-order replay still
+  yields an ascending series), folds a monotonic cumulative-done count, and ends at the injected
+  `now`, self-suppressing to an empty array when no timestamped completion exists — rendered by
+  DashboardCharts.burndownChart as a self-contained inline-SVG step chart with an empty state; and
+  (2) a pure ETA band — TemporalMetrics.etaBand(velocity:remaining:) returning ETAEstimate, an enum
+  with STRUCTURALLY only `.suppressed` and `.band(lowWindows:highWindows:confidence:)` cases (no
+  single-date case), = remaining ÷ velocity widened by a fixed ±40% factor, SUPPRESSED ENTIRELY (the
+  guard runs BEFORE any division) when velocity is nil, velocity is 0, or remaining is 0. Both wire
+  into GraphRenderer.temporalMetricsHTML via the existing now-injected path; etaBandHTML/burndownHTML/
+  formatWindows are pure and read no clock. ALL CRITICAL PROPERTIES HOLD: ETA is never a single date
+  (structurally), suppression precedes division (no divide-by-zero), and the burndown SVG carries only
+  the mandatory xmlns namespace — no <script>/<link>/src=/external href=. Determinism holds: the only
+  Date() in the touched files is the documented GraphRenderer CLI default-param boundary; all
+  pure/render helpers take injected inputs. No scope creep into whats-changed-diff (S7) — exactly the
+  4 planned files changed, no diff/since-T references. Independently ran swift build (clean), swift test
+  (271 tests, 9 suites, green), and the live project dashboard render (burndown SVG with 14 plotted
+  points and zero external refs in the isolated svg; ETA `~6.3 d–~2.1 wk (low confidence)` — a relative
+  span, never a date). APPROVE.
+
+items:
+  - id: burndown-from-log-replay
+    verdict: pass
+    notes: >-
+      TemporalMetrics.burndown(from:now:) is a pure fold over runEvents: it collects every nodeCompleted
+      instant (top-level and one-level scoped, via isCompletion mirroring the velocity fold's completion
+      handling) whose `at` parses, sorts them ascending (so out-of-order replay still yields an
+      ascending series), and folds a monotonic non-decreasing cumulative-done count, equal instants
+      collapsing onto one step. The series is extended to the injected `now` (a trailing hold point)
+      only when now > the last completion (never rewinding). Test
+      burndownReconstructsCumulativeSeriesFromLogReplay replays three out-of-order completions (scoped +
+      top-level mixed) and asserts cumulative [1,2,3,3], ascending-by-time, ending exactly at now.
+  - id: burndown-inline-svg-no-cdn
+    verdict: pass
+    notes: >-
+      DashboardCharts.burndownChart emits a self-contained inline SVG (y-axis, x-axis, step polyline,
+      point circles, or an empty-state text node) in the same escape/aria pattern as
+      statusDonut/groupedBarChart. The only http(s) token is the mandatory
+      xmlns="http://www.w3.org/2000/svg" namespace — no <script>, <link>, src=, or external href=.
+      Verified by test burndownChartIsInlineSVGWithNoCDN (namespace stripped, then asserts no http/https
+      survives, for both populated and empty series) and independently on the live render: the isolated
+      dashboard-burndown <svg> contains 14 point circles and zero script/link/src/href, no http after
+      stripping the namespace. (The page's lone external cdn.jsdelivr ref is the pre-existing mermaid
+      loader for the graph diagram — outside this slice and not inside the burndown SVG.)
+  - id: eta-as-confidence-band-range
+    verdict: pass
+    notes: >-
+      etaBand(velocity:remaining:) returns .band(lowWindows:highWindows:confidence:) = remaining ÷
+      velocity (windows to finish) widened by the fixed ±40% etaConfidenceFactor (low = max(0,
+      point*0.6), high = point*1.4 ⇒ low < high) with a coarse .low confidence label. etaBandHTML
+      renders an en-dash range plus a "(low confidence)" note. Live render shows
+      `eta ~6.3 d–~2.1 wk (low confidence)` — a relative span. Test etaRendersAsRangeWithConfidence
+      asserts low<high, exact 1.2/2.8 for velocity 2/remaining 4, and the rendered range+confidence
+      markup (and that it does NOT contain "insufficient history").
+  - id: eta-suppressed-on-thin-history
+    verdict: pass
+    notes: >-
+      etaBand suppresses entirely (.suppressed) when velocity is nil (S5 suppressed it), velocity is 0
+      (no movement ⇒ undefined ETA), or remaining is 0 (nothing left). The guard
+      `guard let velocity, velocity > 0, remaining > 0 else { return .suppressed }` runs BEFORE any band
+      math, so no division-by-zero or false value is ever produced. etaBandHTML renders
+      `eta — (insufficient history)` — a note, not a chart. Test
+      etaSuppressesOnNilZeroVelocityAndZeroRemaining covers all three triggers plus the rendered
+      suppression note.
+  - id: no-false-precision-date
+    verdict: pass
+    notes: >-
+      ETAEstimate has STRUCTURALLY only two cases — .suppressed and .band — there is no single-date
+      case, so no code path can emit a committed completion instant. The band carries
+      lowWindows/highWindows (Doubles, in trailing-velocity windows); GraphRenderer.formatWindows
+      converts them to a RELATIVE span label (~N d / ~N wk) via velocityWindow, never an absolute date.
+      Test etaNeverEmitsASingleFalsePrecisionDate renders both the band and the suppression shapes and
+      asserts neither contains a `UTC`/`Z"` stamp. Confirmed on the live render (relative `~6.3 d–~2.1 wk`).
+  - id: deterministic-injected-now
+    verdict: pass
+    notes: >-
+      burndown, etaBand, remainingCount, burndownChart, etaBandHTML, burndownHTML, and formatWindows are
+      pure functions of injected inputs (records/now/velocity/remaining) — no network, file I/O, or wall
+      clock. grep for Date() over the three touched Sources files finds it ONLY at the documented
+      GraphRenderer dashboardPage default-param boundary (now: Date = Date()) which threads `now` inward;
+      ETA/burndown read no clock and no locale (formatWindows/roundedOneDecimal use integer arithmetic).
+      Test burndownIsDeterministicUnderFixedNow asserts byte-identical series AND chart output for
+      identical (records, now).
+
+conventions:
+  satisfied: true
+  notes: >-
+    Changes stay within the declared file scope — DashboardProjection.swift (the pure burndown fold +
+    BurndownPoint, the ETAEstimate/ETAConfidence enums + etaBand/remainingCount beside TemporalMetrics),
+    DashboardCharts.swift (the burndownChart inline-SVG helper, gaining `import Foundation` for Date),
+    GraphRenderer.swift (etaBandHTML/burndownHTML/formatWindows wired into the existing
+    temporalMetricsHTML path + minimal CSS), and EngineTests.swift (seven new TemporalMetricsTests
+    cases). No CLI, model, schema, run-store, or DashboardSection-field change; S5's velocity/projection
+    untouched. All new computation is pure and I/O-free (decision pure-temporal-module-in-engine); HTML
+    is escaped via escape/escapeHTML; ETA is structurally never a single date (decision
+    eta-suppression-threshold) and suppression precedes division (no divide-by-zero). Swift Testing
+    (@Test/#expect) per swift.md; no new files. swift build clean, swift test 271/271 green.

@@ -729,8 +729,69 @@ public enum GraphRenderer {
         return [
             "      <div class=\"verdict-temporal\" aria-label=\"Temporal metrics\">",
             "        <span class=\"temporal-velocity\">velocity \(escapeHTML(velocityText))</span>\(sliceBlock)",
+            etaBandHTML(sections: sections, velocity: velocity),
+            burndownHTML(sections: sections, now: now),
             "      </div>"
         ].joined(separator: "\n")
+    }
+
+    /// The burndown trajectory block: the cumulative-slices-done series (replayed from every section's
+    /// `runEvents` against the injected `now`) rendered as a self-contained inline-SVG chart. When the
+    /// series self-suppresses (no timestamped completion across any section) the chart renders its own
+    /// empty state, so this block is always present and the chart speaks for itself. Pure: reads only
+    /// the threaded `runEvents` and `now`.
+    static func burndownHTML(sections: [DashboardSection], now: Date) -> String {
+        // Aggregate every section's completion records into one series (project-tier burndown spans
+        // the whole portfolio's timestamped completions), then replay against the injected `now`.
+        let records = sections.flatMap { $0.runEvents }
+        let series = TemporalMetrics.burndown(from: records, now: now)
+        return [
+            "        <figure class=\"temporal-burndown\">",
+            "          <figcaption class=\"temporal-burndown-caption\">burndown</figcaption>",
+            "          \(DashboardCharts.burndownChart(series))",
+            "        </figure>"
+        ].joined(separator: "\n")
+    }
+
+    /// The ETA band block: `remaining ÷ velocity` widened into a low/high RANGE with a confidence
+    /// label, or a `—` "insufficient history" note when SUPPRESSED (velocity nil/0 or nothing
+    /// remaining). NEVER a single date — only a range or the suppression note. `remaining` is the
+    /// pending+runnable rows across all sections; `velocity` is the already-computed project velocity.
+    /// The span is labelled relative to the trailing window (e.g. "~2.4–5.6 wk") — a relative duration,
+    /// not an absolute completion instant. Pure: reads the projection rows + velocity, no wall clock.
+    static func etaBandHTML(sections: [DashboardSection], velocity: Int?) -> String {
+        let remaining = sections.reduce(0) { $0 + TemporalMetrics.remainingCount($1.projection.rows) }
+        let estimate = TemporalMetrics.etaBand(velocity: velocity, remaining: remaining)
+        let body: String
+        switch estimate {
+        case .suppressed:
+            body = "<span class=\"eta-note eta-suppressed\">eta — (insufficient history)</span>"
+        case let .band(low, high, confidence):
+            let lowText = formatWindows(low)
+            let highText = formatWindows(high)
+            body = "<span class=\"eta-band\">eta \(escapeHTML(lowText))–\(escapeHTML(highText)) <span class=\"eta-confidence\">(\(escapeHTML(confidence.rawValue)) confidence)</span></span>"
+        }
+        return "        <div class=\"temporal-eta\" aria-label=\"ETA band\">\(body)</div>"
+    }
+
+    /// A compact relative-span label for an ETA bound expressed in trailing-velocity windows. Converts
+    /// windows → days via `TemporalMetrics.velocityWindow` and prints the largest sensible unit
+    /// (weeks, then days), so a band reads e.g. `~2.4 wk` — a relative duration, never an absolute
+    /// date. Pure / deterministic: no locale or wall-clock read.
+    static func formatWindows(_ windows: Double) -> String {
+        let days = windows * (TemporalMetrics.velocityWindow / 86_400)
+        if days >= 7 {
+            return "~\(roundedOneDecimal(days / 7)) wk"
+        }
+        return "~\(roundedOneDecimal(days)) d"
+    }
+
+    /// Round a non-negative Double to one decimal place as a stable string (no locale), e.g. `2.4`.
+    private static func roundedOneDecimal(_ value: Double) -> String {
+        let scaled = (value * 10).rounded()
+        let whole = Int(scaled) / 10
+        let frac = Int(scaled) % 10
+        return "\(whole).\(frac)"
     }
 
     /// A compact, deterministic human duration for a temporal metric (cycle time / WIP age): the
@@ -925,6 +986,13 @@ public enum GraphRenderer {
         .dashboard-chart { max-width: 100%; }
         .dashboard-status-donut { justify-self: center; max-width: 360px; }
         .dashboard-grouped-bars { width: 100%; }
+        .temporal-eta { color: var(--muted); font-size: 0.92rem; margin-top: 8px; }
+        .eta-confidence { color: var(--muted); font-size: 0.82rem; }
+        .eta-suppressed { color: var(--muted); }
+        .temporal-burndown { margin: 10px 0 0; }
+        .temporal-burndown-caption { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 4px; text-transform: uppercase; }
+        .dashboard-burndown { width: 100%; max-width: 760px; }
+        .burndown-axis-label { fill: var(--muted); font-size: 0.7rem; }
         .dashboard-section { border-top: 1px solid var(--line); padding: 26px 0; }
         .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
         .dashboard-section > header p { color: var(--muted); margin: 0; }

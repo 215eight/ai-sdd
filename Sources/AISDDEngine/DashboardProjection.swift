@@ -687,6 +687,132 @@ public enum TemporalMetrics {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.date(from: at)
     }
+
+    // MARK: - Burndown (S6)
+
+    /// One point on the burndown trajectory: a timestamped instant and the cumulative count of
+    /// completed slices at that instant. Equatable/Sendable so it threads cleanly and tests can
+    /// compare the series exactly.
+    public struct BurndownPoint: Equatable, Sendable {
+        public var at: Date
+        public var cumulativeDone: Int
+
+        public init(at: Date, cumulativeDone: Int) {
+            self.at = at
+            self.cumulativeDone = cumulativeDone
+        }
+    }
+
+    /// Replay a run's records into an ascending-by-time cumulative-slices-done series, ending at the
+    /// injected `now`. Each `nodeCompleted` (top-level OR one-level scoped, mirroring the velocity
+    /// fold's completion handling) whose `at` parses advances the cumulative count at that instant.
+    /// SELF-SUPPRESSES — returns an empty array — when there is NOT a single timestamped completion
+    /// (the same gate `velocity` uses), so a legacy un-timestamped run yields the chart's empty state
+    /// rather than a fabricated flat line. Pure / I/O-free / deterministic: identical `records` + `now`
+    /// ⇒ identical series.
+    public static func burndown(from records: [RunEventRecord], now: Date) -> [BurndownPoint] {
+        // Collect every timestamped completion instant (top-level + one-level scoped), then fold them
+        // in ascending time order into a monotonic cumulative count. Sorting (rather than trusting
+        // append order) keeps the series ascending even if the log is replayed out of order.
+        var completionInstants: [Date] = []
+        for record in records {
+            guard isCompletion(record.event), let at = parse(record.at) else { continue }
+            completionInstants.append(at)
+        }
+        guard !completionInstants.isEmpty else { return [] }
+
+        // Ties broken by keeping insertion stable is irrelevant — equal instants collapse onto the
+        // same cumulative step below — so a plain ascending sort suffices.
+        completionInstants.sort()
+
+        var points: [BurndownPoint] = []
+        var cumulative = 0
+        for instant in completionInstants {
+            cumulative += 1
+            if let last = points.last, last.at == instant {
+                // Two completions at the very same instant share one point at the higher count.
+                points[points.count - 1] = BurndownPoint(at: instant, cumulativeDone: cumulative)
+            } else {
+                points.append(BurndownPoint(at: instant, cumulativeDone: cumulative))
+            }
+        }
+
+        // Extend the series to `now` so the chart's x-axis ends at the injected instant. Only append a
+        // trailing point when `now` is strictly after the last completion (a forward-moving clock);
+        // never rewind the series if `now` precedes a completion (a data glitch — keep the real data).
+        if let last = points.last, now > last.at {
+            points.append(BurndownPoint(at: now, cumulativeDone: last.cumulativeDone))
+        }
+        return points
+    }
+
+    /// True when an event is a `nodeCompleted`, whether top-level or wrapped one level in `scoped`
+    /// (the same two completion shapes the velocity fold counts via `recordCompletion`).
+    private static func isCompletion(_ event: RunEvent) -> Bool {
+        switch event {
+        case .nodeCompleted:
+            return true
+        case let .scoped(_, inner):
+            if case .nodeCompleted = inner { return true }
+            return false
+        default:
+            return false
+        }
+    }
+}
+
+// MARK: - ETA band (S6)
+
+/// A coarse confidence label for an ETA band. The wider the inherent uncertainty, the lower the
+/// confidence — here a single fixed band is emitted with a `low` label, since a velocity-derived
+/// projection over a short trailing window is inherently rough. Kept as a labelled enum so the
+/// renderer prints a word, not a fabricated percentage.
+public enum ETAConfidence: String, Equatable, Sendable {
+    case low
+    case medium
+    case high
+}
+
+/// The ETA outcome: either SUPPRESSED (insufficient history to honestly project) or a low/high RANGE
+/// of windows-to-finish with a confidence label. NEVER a single instant — the only two shapes are
+/// `suppressed` and `band`, so no code path can emit a false-precision completion date.
+public enum ETAEstimate: Equatable, Sendable {
+    /// History too thin to project: velocity nil/0 or nothing remaining. The renderer shows a `—`
+    /// "insufficient history" note, not a chart.
+    case suppressed
+    /// A banded estimate: `lowWindows`..`highWindows` trailing-velocity windows until done (`low <
+    /// high`, both ≥ 0), with a coarse confidence label. Windows, not dates — the renderer multiplies
+    /// by `TemporalMetrics.velocityWindow` only to label a relative span, never an absolute instant.
+    case band(lowWindows: Double, highWindows: Double, confidence: ETAConfidence)
+}
+
+extension TemporalMetrics {
+    /// The fixed symmetric confidence factor that widens the point estimate into a band: ±40%. A
+    /// fixed factor keeps the band deterministic and honest about the inherent roughness of a
+    /// short-window velocity projection (decision `eta-band-math`).
+    public static let etaConfidenceFactor: Double = 0.4
+
+    /// Derive an ETA band from S5's velocity and the remaining (pending + runnable) work, against the
+    /// injected `now`. SUPPRESSES ENTIRELY (`.suppressed`) — before any band math, so no division by
+    /// zero or false precision is possible — when `velocity` is nil (S5 suppressed it), `velocity` is
+    /// 0 (no movement ⇒ undefined ETA), or `remaining` is 0 (nothing left). Otherwise returns a
+    /// `.band` of `remaining ÷ velocity` windows widened symmetrically by `etaConfidenceFactor` with a
+    /// coarse confidence label — never a single instant (decision `eta-suppression-threshold`). Pure:
+    /// a function of (velocity, remaining) only; `now` is not read here (the renderer uses it only to
+    /// label the span), so identical inputs ⇒ identical output.
+    public static func etaBand(velocity: Int?, remaining: Int) -> ETAEstimate {
+        guard let velocity, velocity > 0, remaining > 0 else { return .suppressed }
+        let point = Double(remaining) / Double(velocity)   // windows to finish at the recent rate
+        let low = max(0, point * (1 - etaConfidenceFactor))
+        let high = point * (1 + etaConfidenceFactor)
+        return .band(lowWindows: low, highWindows: high, confidence: .low)
+    }
+
+    /// The remaining-work count for an ETA: the rows whose status is `pending` or `runnable` — the
+    /// not-yet-started set the projection already exposes (decision `eta-band-math`). Pure.
+    public static func remainingCount(_ rows: [DashboardProjectionRow]) -> Int {
+        rows.filter { $0.status == .pending || $0.status == .runnable }.count
+    }
 }
 
 /// A runnable node ranked by how many slices it would transitively unblock — its forward reachable

@@ -1,0 +1,35 @@
+summary: >-
+  Implemented slice burndown-and-eta (S6, dashboard-instrument Part B): two trajectory
+  views in the verdict band's temporal block, both pure functions of (records, now).
+  (1) BURNDOWN — TemporalMetrics.burndown folds a run's [RunEventRecord] (nodeCompleted
+  events, top-level and one-level scoped, whose `at` parses via TemporalMetrics.parse)
+  into an ascending, monotonic (Date, cumulativeDone) series ending at the injected
+  `now`, self-suppressing to an empty series when there is not a single timestamped
+  completion. DashboardCharts.burndownChart renders it as a NEW self-contained inline-SVG
+  step chart (no CDN — only the mandatory SVG xmlns; same escape/aria pattern as
+  statusDonut/groupedBarChart), with an empty-state for the suppressed series.
+  (2) ETA AS A BAND — TemporalMetrics.etaBand derives `remaining ÷ velocity` (remaining =
+  pending+runnable rows via remainingCount; velocity from S5's TemporalMetrics) as a
+  low/high RANGE widened by a fixed ±40% symmetric confidence factor (etaConfidenceFactor)
+  with a coarse confidence label (ETAEstimate enum: only `.suppressed` or `.band`, never a
+  single date). It SUPPRESSES ENTIRELY — a `—`/"insufficient history" note, not a chart —
+  when velocity is nil, velocity is 0, or remaining is 0, checked before any band math.
+  Both render through GraphRenderer.temporalMetricsHTML via the existing projectRollupHTML
+  path with the already-injected `now` (renderer reads no wall clock; new helpers
+  burndownHTML/etaBandHTML/formatWindows are pure). Added Swift Testing coverage
+  (TemporalMetricsTests): burndown series from out-of-order log replay, burndown suppression
+  on no-`at` and started-only runs, inline-SVG-no-CDN (xmlns-stripped), determinism, ETA
+  range (low<high) with confidence, ETA suppression on nil/0 velocity and 0 remaining,
+  remainingCount = pending+runnable, and no-false-precision-date. Minimal dashboard CSS for
+  the new burndown/ETA elements. No new ADR, schema, CLI flag, run-store, or DashboardSection
+  field; S5's velocity/projection untouched; S7 (whats-changed-diff) not implemented. swift
+  build, swift test (271 tests, 9 suites), ai-sdd validate .ai-sdd/features/dashboard-instrument,
+  the feature-plan schema check, and the live project dashboard render (burndown SVG with 14
+  plotted points, ETA `~6.3 d–~2.1 wk (low confidence)`) all pass.
+satisfies:
+  - burndown-from-log-replay
+  - burndown-inline-svg-no-cdn
+  - eta-as-confidence-band-range
+  - eta-suppressed-on-thin-history
+  - no-false-precision-date
+  - deterministic-injected-now
