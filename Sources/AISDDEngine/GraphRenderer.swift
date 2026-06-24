@@ -276,9 +276,9 @@ public enum GraphRenderer {
             "    </header>",
             "    \(statusLegend())",
             "    <section class=\"dashboard-charts\" aria-label=\"Dashboard charts\">",
-            "      \(DashboardCharts.statusDonut(summary))",
-            "      \(DashboardCharts.groupedBarChart(ownerLoadGroups(for: sections), title: "Load by owner"))",
-            "      \(DashboardCharts.groupedBarChart(featureProgressGroups(for: sections), title: "Progress by feature"))",
+            "      <figure class=\"dashboard-chart-fig dashboard-chart-donut\"><figcaption class=\"dashboard-chart-caption\">Status distribution</figcaption>\(DashboardCharts.statusDonut(summary))</figure>",
+            "      <figure class=\"dashboard-chart-fig\"><figcaption class=\"dashboard-chart-caption\">Load by owner</figcaption>\(DashboardCharts.groupedBarChart(ownerLoadGroups(for: sections), title: "Load by owner"))</figure>",
+            "      <figure class=\"dashboard-chart-fig\"><figcaption class=\"dashboard-chart-caption\">Progress by feature</figcaption>\(DashboardCharts.groupedBarChart(featureProgressGroups(for: sections), title: "Progress by feature"))</figure>",
             "    </section>",
             mermaidScript()
         ]
@@ -1072,7 +1072,10 @@ public enum GraphRenderer {
         .status-legend ul { display: flex; flex-wrap: wrap; gap: 10px 18px; justify-content: center; list-style: none; margin: 22px 0; padding: 0; }
         .status-legend li { align-items: center; color: var(--muted); display: flex; gap: 8px; font-size: 0.92rem; }
         .legend-swatch { border-radius: 999px; display: inline-block; height: 10px; width: 10px; }
-        .dashboard-charts { align-items: start; display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-bottom: 28px; }
+        .dashboard-charts { align-items: start; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); margin-bottom: 28px; }
+        .dashboard-chart-fig { margin: 0; }
+        .dashboard-chart-caption { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 6px; text-transform: uppercase; }
+        .dashboard-chart-donut { justify-self: center; text-align: center; }
         .dashboard-chart { max-width: 100%; }
         .dashboard-status-donut { justify-self: center; max-width: 360px; }
         .dashboard-grouped-bars { width: 100%; }
