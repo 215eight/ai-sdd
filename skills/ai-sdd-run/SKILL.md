@@ -9,10 +9,13 @@ The `ai-sdd` engine is a **deterministic planner**: it decides what's runnable, 
 and advances state. You **orchestrate** the loop and **dispatch a sub-agent to do each worker's
 work** — you never decide control flow and never do the work inline. The contract:
 
-- Always `next` → dispatch a sub-agent → `submit`. Never skip a step.
+- Every iteration: `status` → `next` → dispatch a sub-agent → `submit` → re-read `status`. Never
+  skip a step.
 - Never choose the node, never bypass a failing gate, never touch files outside the rendered node's
   scope.
 - The engine's **gate result** — not the sub-agent's say-so — decides pass/fail.
+- **The engine ledger is the single source of truth.** You never track slice progress in your own
+  head: completion is whatever `status` reports, never your sense of how far the run has come.
 
 ## Why a sub-agent per worker (the preferred dispatch)
 
@@ -29,22 +32,42 @@ it everything explicitly (below). State flows through **artifacts + the run stor
 
 ```sh
 swift build                                          # → .build/debug/ai-sdd (call directly for clean --json)
-.build/debug/ai-sdd start <workspace> --id <slug>   # if no run yet
 ```
+
+`<name>` is a single argument — a feature slug, an existing run id, or a unique slice name — and the
+engine resolves it the same way everywhere. A bare `<name>` **self-starts** a run when none exists
+yet, so there is no separate start step: the first `status` lands you in a valid run.
 
 **Start from a clean working tree** (everything committed). This is required — see *Scope
 discipline*.
 
-## The loop (repeat until done)
+## The loop (repeat until the engine says done)
 
-### 1. Ask the engine what's next
+### 1. Read the ledger — `status`
+Every iteration begins here. The engine ledger, not your memory, says where the run stands.
 ```sh
-.build/debug/ai-sdd next <slug> --json
+.build/debug/ai-sdd status <name> --json
 ```
-`{"status":"done"}` → stop, report. `{"status":"idle"}` → stop, report what it waits on. Otherwise a
-Worker instruction: `slice`, `node`, `task.skill`, `consumes`, `produces`, `checks`, `rework`.
+- `{"status":"done"}` → **stop and report.** This is the *only* signal that authorizes "done" — never
+  declare the run finished on your own sense of progress.
+- `{"status":"idle"}` → **stop and report verbatim what the engine says it is waiting on** (gates /
+  inputs). Do not improvise next steps or guess; surface the engine's wait reason as-is.
+- `{"status":"escalated", …}` → **stop and report** the escalated node(s) — a gate failed past its
+  rework rounds and is parked for a human.
+- `{"error":"ambiguous","candidates":[…]}` → **surface this verbatim, with the candidate list, to the
+  user** and stop. The name matched a slice in more than one feature; the user picks. Never guess.
+- `{"error":"unknown"}` → **surface verbatim** and stop. The name matched no run, feature, or slice.
+- Otherwise the run has work in flight — proceed to `next`.
 
-### 2. Dispatch a sub-agent to do the work
+### 2. Ask the engine what's next
+```sh
+.build/debug/ai-sdd next <name> --json
+```
+A Worker instruction: `slice`, `node`, `task.skill`, `consumes`, `produces`, `checks`, `rework`.
+(`next` resolves and self-starts the same `<name>` and returns the same `done` / `idle` / error
+shapes as `status` — handle them as in step 1 if you see them here.)
+
+### 3. Dispatch a sub-agent to do the work
 Spawn **one** sub-agent for this worker. Its **input** is everything it needs, explicitly:
 - the rendered instruction — role, `slice`/`stack`, `consumes` inputs, `produces`, `checks`, and any
   `rework` failures to fix this attempt;
@@ -67,7 +90,7 @@ only if truly empty, but always state Caveats):
 
 That's the middle ground: skip the full reasoning, keep the context.
 
-### 3. Log input + output (one ASCII block per invocation)
+### 4. Log input + output (one ASCII block per invocation)
 For **every** invocation, surface both — the **input** (the rendered instruction handed to the
 sub-agent) and the **output** (its structured summary) — to the user as a single plain-ASCII block.
 This is the run's observable trail (and the raw material for evals). Plain ASCII, nothing fancy: a
@@ -92,17 +115,17 @@ Keep it scannable — a reader skims the banners to follow the run, and drops in
 OUTPUT only when they want detail. If a **Caveat** flags out-of-scope work, note it for a plan
 amendment (a new slice via `ai-sdd-plan`) — don't act on it now.
 
-### 4. Submit
+### 5. Submit
 ```sh
-.build/debug/ai-sdd submit <slug> --json
+.build/debug/ai-sdd submit <name> --json
 ```
 - `advanced: true` → continue.
 - `advanced: false` → a required gate failed (`failed` + `checks[].output`). Loop: the next `next`
   re-renders this node with `rework` set; dispatch a **fresh sub-agent with the failure context**,
   fix exactly that, resubmit. Never force a gate through.
-- `sliceCompleted: true` → go to step 5.
+- `sliceCompleted: true` → go to step 6.
 
-### 5. Snapshot the slice's artifacts, then commit on slice completion
+### 6. Snapshot the slice's artifacts, then commit on slice completion
 When `submit` reports `sliceCompleted: true`, first **snapshot the slice's produced artifacts** into
 a committed per-slice directory, then **commit the slice's work** before starting the next.
 
@@ -124,14 +147,16 @@ record** — every slice's plan and review stay inspectable in the tree, committ
 without git archaeology. One commit per slice — reviewable history, **and** it resets the baseline
 (next section).
 
-### 6. Back to step 1.
+### 7. Back to step 1 — re-read `status`.
+The ledger is now the authority again: `status` confirms whether more work remains, the run is
+`done`, or it has gone `idle` / `escalated`. Trust its answer, not your own count of slices.
 
 ## Scope discipline (a clean baseline per slice)
 
 The `diff-in-scope` gate compares the working tree against the **last commit** — so it only enforces
 scope when each slice starts from a **clean tree**:
 
-- **Commit after every slice** (step 5) → the next slice diffs against that commit → its gate sees
+- **Commit after every slice** (step 6) → the next slice diffs against that commit → its gate sees
   **only that slice's changes**, and out-of-scope files are actually caught.
 - **Never start a slice on another slice's uncommitted changes.** If the tree is dirty when a new
   slice begins (a prior slice wasn't committed), **STOP and report it** — in that state the scope
@@ -145,4 +170,5 @@ scope when each slice starts from a **clean tree**:
 At `done`, summarize per slice from the logged input/output: what each worker produced, which gates
 needed rework (and whether any escalated to a human), and the commit made. Each slice's plan and
 review are browsable at `.ai-sdd/features/<slug>/slices/<slice>/`. `.build/debug/ai-sdd status
-<slug>` shows the nested state any time.
+<name>` shows the nested state any time — and remains the authority on whether the run is `done`,
+`idle`, or `escalated`.

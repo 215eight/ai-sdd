@@ -1,0 +1,105 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: run-skill-rewrite
+
+verdict: approve
+summary: >-
+  Independent review of slice run-skill-rewrite (run-integrity, S5, documentation-only) against
+  feature-plan.v1 (7 acceptance ids). The change rewrites skills/ai-sdd-run/SKILL.md into the
+  status-driven loop: the contract bullet now reads "Every iteration: status → next → dispatch a
+  sub-agent → submit → re-read status" and a new step 1 "Read the ledger — status" runs
+  `ai-sdd status <name> --json` as the first call of every iteration, with step 7 re-reading it. Done
+  is declared ONLY on {"status":"done"} (the engine ledger named the single source of truth, with
+  self-tracking of slice progress explicitly forbidden); {"status":"idle"} stops and reports the
+  engine's wait reason verbatim; {"status":"escalated"} reports the parked node; and
+  {"error":"ambiguous","candidates":[…]} and {"error":"unknown"} are surfaced verbatim with no
+  skill-side guessing. The manual `start <workspace> --id <slug>` line was removed from Setup and the
+  "if no run yet" caveat plus separate slice-name handling are gone — <name> is documented as a single
+  argument the engine resolves uniformly and self-starts. I confirmed the doc is accurate to shipped
+  engine behavior: RunResolver self-starts on a feature dir / unique slice and all three verbs
+  (status:314, next:909, submit:1020 in main.swift) share resolveRun, which emits the exact
+  {"error":"ambiguous"…}/{"error":"unknown"} shapes the doc cites (RunResolver.swift:23-25,
+  main.swift:57-62). Preserved intact: sub-agent-per-worker dispatch + agent-agnostic note, the
+  structured-summary contract (Outcome/Produced/Decisions/Caveats), the per-invocation INPUT/OUTPUT
+  ASCII block, the artifact-snapshot + one-commit-per-slice step, scope discipline, and the
+  name/description frontmatter. The doc reads coherently — step numbers were renumbered consistently
+  (steps 2-7, cross-refs updated) and is not a patchwork. `git diff --name-only HEAD` shows ONLY
+  skills/ai-sdd-run/SKILL.md (no Swift/CLI/test change). I independently ran swift build (Build
+  complete), swift test (226 tests in 8 suites passed), swift run ai-sdd validate
+  .ai-sdd/features/run-integrity (✓ valid — 6 nodes, 3 edges), and both removed-phrase grep guards
+  (each returns nothing, exit 1). All 7 ids pass; conventions hold.
+
+items:
+  - id: status-driven-loop-documented
+    verdict: pass
+    notes: >-
+      Contract bullet now reads "Every iteration: status → next → dispatch a sub-agent → submit →
+      re-read status. Never skip a step" (SKILL.md:12-13). The loop opens with step 1 "Read the ledger
+      — status" running `ai-sdd status <name> --json` (SKILL.md:46-50) before `next` (step 2), and step
+      7 re-reads status. status is both entry point and completion oracle of each iteration, exactly as
+      the acceptance requires — `next` is no longer first.
+  - id: done-only-when-engine-says
+    verdict: pass
+    notes: >-
+      Contract bullet: "The engine ledger is the single source of truth. You never track slice progress
+      in your own head: completion is whatever status reports, never your sense of how far the run has
+      come" (SKILL.md:17-18). Step 1 marks {"status":"done"} as "the *only* signal that authorizes done
+      — never declare the run finished on your own sense of progress" (SKILL.md:51-52). Self-tracking is
+      explicitly forbidden; done is engine-only.
+  - id: idle-reports-wait-reason
+    verdict: pass
+    notes: >-
+      Step 1: {"status":"idle"} → "stop and report verbatim what the engine says it is waiting on (gates
+      / inputs). Do not improvise next steps or guess; surface the engine's wait reason as-is"
+      (SKILL.md:53-54). Matches the acceptance exactly.
+  - id: no-manual-start-step
+    verdict: pass
+    notes: >-
+      The `start <workspace> --id <slug>` line was removed from Setup (deleted in the diff and replaced
+      with the self-start explanation, SKILL.md:33-39). `grep -nE "ai-sdd start " skills/ai-sdd-run/SKILL.md`
+      returns nothing (exit 1). Setup now documents the bare <name> self-starting on first status. The
+      self-start claim is true post-S3 — verified in main.swift resolveRun/selfStart (lines 43-71).
+  - id: no-if-no-run-caveats
+    verdict: pass
+    notes: >-
+      `grep -n "if no run yet" skills/ai-sdd-run/SKILL.md` returns nothing (exit 1). Separate slice-name
+      special-casing is gone: <name> is documented as a single argument — feature slug, run id, or unique
+      slice name — "resolved the same way everywhere" (SKILL.md:37-39). Confirmed against RunResolver:
+      all three verbs share resolveRun (main.swift:314,909,1020), so resolution is uniform.
+  - id: ambiguity-surfaced-verbatim
+    verdict: pass
+    notes: >-
+      Step 1: {"error":"ambiguous","candidates":[…]} → "surface this verbatim, with the candidate list,
+      to the user and stop … Never guess"; {"error":"unknown"} → "surface verbatim and stop"
+      (SKILL.md:57-59). The cited JSON matches the exact shapes the engine emits on non-zero exit
+      (RunResolver.swift:23-25; AmbiguousError/UnknownError encoders at main.swift:57-62).
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently verified: swift build (Build complete), swift test (Test run with 226 tests in 8
+      suites passed), swift run ai-sdd validate .ai-sdd/features/run-integrity (✓ valid — 6 nodes, 3
+      edges), and both removed-phrase grep guards return nothing (exit 1). `git diff --name-only HEAD`
+      shows ONLY skills/ai-sdd-run/SKILL.md — no Swift/CLI/test changes, consistent with the
+      documentation-only scope (decision documentation-only-single-file).
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Documentation-only slice; no Swift touched, so language conventions are not exercised.
+    The doc is accurate to shipped engine behavior — the bare-`next`/`status`/`submit` self-start and the
+    structured ambiguous/unknown error objects all exist in the codebase (RunResolver.swift,
+    main.swift). The frontmatter name/description is preserved. The rewrite is scoped to exactly the loop
+    shape, done/idle/escalated semantics, error surfacing, and removed caveats — the preserved sections
+    (sub-agent dispatch rationale, agent-agnostic note, structured-summary contract, INPUT/OUTPUT ASCII
+    block, snapshot + one-commit-per-slice, scope discipline) are intact, matching decision
+    preserve-unrelated-guidance. Step renumbering is consistent across all cross-references (steps 2-7,
+    scope-discipline back-ref updated to step 6). Baseline gates swift build and swift test are green.
+
+caveats: >-
+  None blocking. The slice is documentation-only and its effect is prose, so it carries no automated
+  test of its own beyond the grep guards and the unchanged swift build/test — which is correct for a
+  doc rewrite. The surfacing of the rewritten skill into per-agent dirs (.claude/skills, .agents/skills)
+  via `ai-sdd surface` is a known manual post-gate follow-up (decision manual-surface-followup), not part
+  of this slice and correctly not present in the diff. Neither affects correctness.
+
+rework: []

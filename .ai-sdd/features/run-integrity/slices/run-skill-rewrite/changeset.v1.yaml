@@ -1,0 +1,26 @@
+summary: >-
+  Rewrote skills/ai-sdd-run/SKILL.md into the status-driven loop. Every iteration now begins with
+  `ai-sdd status <name> --json` and ends by re-reading it: status → next → dispatch one sub-agent →
+  submit → re-read status. The skill declares the run "done" ONLY when `status` returns
+  {"status":"done"}, treats the engine ledger as the single source of truth, and never tracks slice
+  progress in its own head. On {"status":"idle"} it stops and reports the engine's wait reason
+  verbatim; on {"status":"escalated", …} it reports the parked node(s); and name-resolution errors
+  {"error":"ambiguous","candidates":[…]} and {"error":"unknown"} are surfaced verbatim with no
+  skill-side guessing. The manual `start` step, every "if no run yet" caveat, and all separate
+  slice-name handling were removed — a bare `<name>` self-starts via S3's engine + shared resolver.
+  Preserved unchanged in substance: the sub-agent-per-worker dispatch rationale, the agent-agnostic
+  note, the structured-summary contract, the per-invocation INPUT/OUTPUT ASCII log, the per-slice
+  artifact snapshot + one-commit-per-slice step, and the scope-discipline section. Documentation-only:
+  exactly one file changed (skills/ai-sdd-run/SKILL.md); no Swift/CLI/test changes. swift build and
+  swift test stay green (226 tests), `ai-sdd validate .ai-sdd/features/run-integrity` passes, the
+  feature-plan artifact satisfies its schema, and both removed-phrase grep guards return nothing.
+satisfies:
+  - status-driven-loop-documented
+  - done-only-when-engine-says
+  - idle-reports-wait-reason
+  - no-manual-start-step
+  - no-if-no-run-caveats
+  - ambiguity-surfaced-verbatim
+  - verification-commands
+files:
+  - skills/ai-sdd-run/SKILL.md

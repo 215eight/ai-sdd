@@ -1,0 +1,147 @@
+summary: >-
+  Rewrite skills/ai-sdd-run/SKILL.md into the status-driven loop. Every invocation runs
+  `ai-sdd status <name> --json`, then `next`, dispatches a sub-agent, then `submit`, then re-reads
+  `status`. The skill declares the run "done" only when `status` returns {"status":"done"} — never
+  on its own sense of progress; the engine's ledger is the single source of truth. On
+  {"status":"idle"} the skill stops and reports verbatim what the engine says it is waiting on, and a
+  name-resolution {"error":"ambiguous","candidates":[…]} is surfaced verbatim with the candidate
+  list. Because S3 shipped a self-starting engine and a shared name resolver, the rewrite REMOVES the
+  manual `start` step, every "if no run yet" caveat, and all separate slice-name handling — a bare
+  `/ai-sdd-run <name>` now always lands in a valid run via the engine. This slice is
+  documentation-only: it changes exactly one file, skills/ai-sdd-run/SKILL.md, and makes no Swift
+  engine or CLI changes. Surfacing the rewritten skill into per-agent dirs (.claude/skills,
+  .agents/skills) via `ai-sdd surface` is a manual post-gate step, not part of this slice's changes.
+scope:
+  in:
+    - Rewrite skills/ai-sdd-run/SKILL.md so the documented loop is status-first — each iteration is
+      `ai-sdd status <name> --json` → `next` → dispatch one sub-agent → `submit` → re-read `status` —
+      replacing the current next-first loop.
+    - Document that "done" is declared ONLY when `status` returns {"status":"done"}; the skill must
+      verify completion against the engine ledger and must never track or trust its own sense of slice
+      progress.
+    - Document that on {"status":"idle"} the skill stops and reports, verbatim, the engine's stated
+      wait reason rather than guessing or improvising next steps.
+    - Document that a name-resolution {"error":"ambiguous","candidates":[…]} is surfaced verbatim to
+      the user with the candidate list (and that an {"error":"unknown"} is likewise surfaced), so the
+      user can pick a name; the skill does not attempt to disambiguate on its own.
+    - Remove the manual `start <workspace> --id <slug>` step from Setup, since S3's self-start creates
+      a run on first `status`/`next`/`submit` when none exists.
+    - Remove every "if no run yet" caveat and any separate slice-name handling / slice-name special
+      casing, since S3's shared resolver accepts a feature slug, an existing runId, or a slice name
+      uniformly.
+    - Preserve the still-correct guidance the rewrite is NOT chartered to change — sub-agent-per-worker
+      dispatch, the agent-agnostic note, the INPUT/OUTPUT ASCII logging block, the per-slice artifact
+      snapshot + one-commit-per-slice step, and the clean-baseline / scope-discipline section.
+  out:
+    - No Swift changes — no edits to Sources/AISDDEngine, Sources/AISDDCLI, Sources/AISDDModels, or
+      Tests; the engine self-start and resolver this rewrite relies on already shipped in S3.
+    - No surfacing of the rewritten skill into per-agent dirs (.claude/skills, .agents/skills); that
+      runs post-gate via `ai-sdd surface` as a manual step and touches no files in this slice.
+    - No changes to any other skill file, to AGENTS.md, or to docs/.
+    - No change to the engine's JSON contract (status/next/submit shapes, error objects) — the rewrite
+      only documents the contract S3 already established.
+    - No plan amendment or new slice; out-of-scope observations, if any, are flagged for ai-sdd-plan,
+      not acted on here.
+acceptance:
+  - id: status-driven-loop-documented
+    description: >-
+      SKILL.md documents the loop as status → next → dispatch sub-agent → submit → re-read status, with
+      `ai-sdd status <name> --json` as the first call of every iteration rather than `next`.
+  - id: done-only-when-engine-says
+    description: >-
+      SKILL.md declares the run done ONLY when `status` returns {"status":"done"}, states the engine
+      ledger is the single source of truth, and forbids the skill from tracking its own sense of slice
+      progress.
+  - id: idle-reports-wait-reason
+    description: >-
+      SKILL.md instructs that on {"status":"idle"} the skill stops and reports the engine's stated wait
+      reason verbatim rather than improvising.
+  - id: no-manual-start-step
+    description: >-
+      SKILL.md no longer contains a manual `start` step (no `ai-sdd start <workspace> --id <slug>` line
+      in Setup or elsewhere); the run self-starts via the engine.
+  - id: no-if-no-run-caveats
+    description: >-
+      SKILL.md contains no "if no run yet" caveat and no separate slice-name handling / slice-name
+      special-case text; a single <name> argument is documented as resolved by the engine.
+  - id: ambiguity-surfaced-verbatim
+    description: >-
+      SKILL.md instructs that a name-resolution {"error":"ambiguous","candidates":[…]} is surfaced
+      verbatim with the candidate list (and {"error":"unknown"} likewise), with no skill-side guessing.
+  - id: verification-commands
+    description: >-
+      swift build and swift test stay green (no code change), swift run ai-sdd validate
+      .ai-sdd/features/run-integrity passes, the feature-plan artifact checks against its schema, and
+      the removed phrases are absent from the file (e.g. grep finds no "if no run yet").
+decisions:
+  - id: documentation-only-single-file
+    status: closed
+    decision: >-
+      Change exactly one file, skills/ai-sdd-run/SKILL.md, and make no Swift or test changes; the
+      engine behavior this rewrite documents (self-start + shared resolver) already shipped in S3.
+    rationale: >-
+      The slice brief and the run-integrity requirements both scope S5 as a documentation rewrite that
+      depends on S3; the engine already accepts a bare <name> and self-starts, so the only work is
+      aligning the skill prose to that shipped contract.
+  - id: status-first-loop-shape
+    status: closed
+    decision: >-
+      Document each loop iteration as `status <name> --json` first, then `next`, then sub-agent
+      dispatch, then `submit`, then re-read `status` — making `status` both the entry point and the
+      completion oracle of every iteration.
+    rationale: >-
+      The brief requires the skill to verify state against the engine on every invocation; leading and
+      closing each iteration with `status` makes the engine ledger the loop's authority and removes the
+      old habit of the agent trusting its own progress between calls.
+  - id: done-and-idle-from-engine-only
+    status: closed
+    decision: >-
+      Declare done only on {"status":"done"} and, on {"status":"idle"}, stop and report the engine's
+      stated wait reason verbatim; the skill never tracks slice progress in its own head.
+    rationale: >-
+      This closes the "agent thought it finished but the journal disagrees" bug class named in the
+      slice's Why section by making the engine ledger the single source of truth for completion.
+  - id: surface-name-errors-verbatim
+    status: closed
+    decision: >-
+      Surface the resolver's {"error":"ambiguous","candidates":[…]} (and {"error":"unknown"}) verbatim
+      to the user with the candidate list, and have the skill stop rather than guess a name.
+    rationale: >-
+      S3 emits these structured machine-readable error objects on a non-zero exit; passing them through
+      verbatim lets the human disambiguate while keeping the skill from inventing a resolution.
+  - id: remove-start-and-caveats
+    status: closed
+    decision: >-
+      Remove the manual `start` step, every "if no run yet" caveat, and all separate slice-name
+      handling from SKILL.md.
+    rationale: >-
+      S3's self-start and shared resolver make these unnecessary and contradictory — leaving them in
+      would reintroduce the agent-judgment branch the feature is designed to eliminate.
+  - id: preserve-unrelated-guidance
+    status: closed
+    decision: >-
+      Keep the sub-agent-per-worker dispatch rationale, the agent-agnostic note, the INPUT/OUTPUT
+      ASCII logging block, the per-slice snapshot + one-commit-per-slice step, and the scope-discipline
+      section, editing them only as needed to fit the status-first loop.
+    rationale: >-
+      Those sections are correct and out of this slice's charter; the rewrite is scoped to the loop
+      shape, done/idle semantics, error surfacing, and removed caveats, not a wholesale skill rewrite.
+  - id: manual-surface-followup
+    status: closed
+    decision: >-
+      Surfacing the rewritten skill into per-agent dirs (.claude/skills, .agents/skills) via
+      `ai-sdd surface` is a MANUAL step performed AFTER this slice's gated commit; this slice changes
+      only skills/ai-sdd-run/SKILL.md and touches neither .claude/ nor .agents/.
+    rationale: >-
+      Per closed decision D4 on the feature, the factory file manifest can declare skills/ but skill
+      surfacing runs post-gate; keeping the slice to the one declarable file passes the scope gate and
+      records the surface step as a known follow-up rather than an in-scope file change.
+files:
+  - skills/ai-sdd-run/SKILL.md
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/run-integrity
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml
+  - "! grep -n 'if no run yet' skills/ai-sdd-run/SKILL.md"
+  - "! grep -nE 'ai-sdd start ' skills/ai-sdd-run/SKILL.md"
