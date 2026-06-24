@@ -555,6 +555,13 @@ public enum TemporalMetrics {
     /// so a burst of long-past completions does not inflate the current rate.
     public static let velocityWindow: TimeInterval = 7 * 24 * 60 * 60      // 7 days
 
+    /// The "what changed" horizon: the cutoff is `now − whatsChangedWindow`, so the diff answers
+    /// "what moved in the last 7 days". A sibling of `velocityWindow` / `wipAgingThreshold` so the
+    /// cutoff lives in one place; kept distinct from `velocityWindow` (decision
+    /// `whats-changed-window-constant`) so the diff horizon can move independently of velocity's rate
+    /// window.
+    public static let whatsChangedWindow: TimeInterval = 7 * 24 * 60 * 60  // 7 days
+
     /// One slice's resolved temporal state — the per-slice cycle time and WIP age, each nil when
     /// suppressed. Equatable/Sendable so it threads onto `DashboardSection` cleanly.
     public struct SliceTiming: Equatable, Sendable {
@@ -758,6 +765,111 @@ public enum TemporalMetrics {
         default:
             return false
         }
+    }
+
+    // MARK: - What changed (S7)
+
+    /// The "what changed since the cutoff" diff: three SORTED id lists derived by replaying the log to
+    /// a prior instant and diffing the present folded state against the historical one. All three
+    /// lists empty is the explicit "no change" state (decision
+    /// `empty-window-explicit-no-change-state`) — distinguishable from absent markup because the
+    /// renderer always emits this block. Equatable/Sendable so tests compare it exactly and it threads
+    /// cleanly.
+    public struct WhatsChanged: Equatable, Sendable {
+        /// Nodes completed between the cutoff and `now` — in the present folded state's completed set
+        /// but not the historical one. Sorted ascending.
+        public var completed: [String]
+        /// Nodes newly blocked (rework — non-empty failedChecks — OR escalated) in the present folded
+        /// state that were not blocked in the historical folded state. Sorted ascending.
+        public var newlyBlocked: [String]
+        /// Nodes newly escalated since the cutoff — in the present escalated set but not the historical
+        /// one. A subset of the human-action signal the attention band cares about. Sorted ascending.
+        public var newlyEscalated: [String]
+
+        public init(completed: [String] = [], newlyBlocked: [String] = [],
+                    newlyEscalated: [String] = []) {
+            self.completed = completed
+            self.newlyBlocked = newlyBlocked
+            self.newlyEscalated = newlyEscalated
+        }
+
+        /// The explicit "no change" state: every list empty. The renderer prints an explicit
+        /// "no change" line for this, never blank/broken markup.
+        public var isEmpty: Bool {
+            completed.isEmpty && newlyBlocked.isEmpty && newlyEscalated.isEmpty
+        }
+    }
+
+    /// Replay a run's records to the cutoff (`now − window`) and diff the historical folded state
+    /// against the present folded state, listing what COMPLETED, what is NEWLY BLOCKED (rework or
+    /// escalated), and what is NEWLY ESCALATED since the cutoff. The historical state folds (via the
+    /// existing `Reducer`) only records whose parsed `at` is `<=` cutoff; the present state folds all
+    /// records whose `at` parses. Records with a nil/unparseable `at` (legacy / un-timestamped) are
+    /// EXCLUDED from BOTH folds (decision `legacy-at-nil-excluded`), so a run with no parseable `at`
+    /// yields the explicit no-change state. Pure / I/O-free / deterministic: identical `records` +
+    /// `now` + `window` ⇒ byte-identical output (the lists are sorted).
+    public static func whatsChanged(from records: [RunEventRecord], now: Date,
+                                    window: TimeInterval = whatsChangedWindow) -> WhatsChanged {
+        let cutoff = now.addingTimeInterval(-window)
+
+        // Pair each record with its parsed `at`, dropping records whose `at` does not parse (legacy /
+        // un-timestamped) so they enter NEITHER fold — never guessed onto an instant.
+        let timestamped: [(event: RunEvent, at: Date)] = records.compactMap { record in
+            guard let at = parse(record.at) else { return nil }
+            return (record.event, at)
+        }
+
+        // Historical: only the records at/<= the cutoff, in original (append) order. Present: every
+        // parseable-`at` record. The same `Reducer` the live dashboard uses folds both.
+        let historicalEvents = timestamped.filter { $0.at <= cutoff }.map { $0.event }
+        let presentEvents = timestamped.map { $0.event }
+        let historical = Reducer.reduce(RunState(), events: historicalEvents)
+        let present = Reducer.reduce(RunState(), events: presentEvents)
+
+        let historicalCompleted = completedIds(of: historical)
+        let presentCompleted = completedIds(of: present)
+        let historicalBlocked = blockedIds(of: historical)
+        let presentBlocked = blockedIds(of: present)
+        let historicalEscalated = escalatedIds(of: historical)
+        let presentEscalated = escalatedIds(of: present)
+
+        return WhatsChanged(
+            completed: presentCompleted.subtracting(historicalCompleted).sorted(),
+            newlyBlocked: presentBlocked.subtracting(historicalBlocked).sorted(),
+            newlyEscalated: presentEscalated.subtracting(historicalEscalated).sorted())
+    }
+
+    /// Completed node ids gathered across the top-level state and one-level `scoped` slice state
+    /// (matching the per-slice granularity S5 uses), de-duplicated. Slice ids are namespaced as
+    /// `<slice>/<node>` so a node id reused across slices is not conflated.
+    private static func completedIds(of state: RunState) -> Set<String> {
+        gather(state) { $0.completedNodes }
+    }
+
+    /// Escalated node ids gathered across top-level + one-level scoped slice state, de-duplicated.
+    private static func escalatedIds(of state: RunState) -> Set<String> {
+        gather(state) { $0.escalatedNodes }
+    }
+
+    /// Blocked node ids (rework OR escalated) gathered across top-level + one-level scoped slice state.
+    /// "Blocked" = a node carrying non-empty `failedChecks` (rework) OR present in `escalatedNodes`
+    /// (decision `diff-value-shape-and-blocked-definition`).
+    private static func blockedIds(of state: RunState) -> Set<String> {
+        gather(state) { sub in
+            let rework = Set(sub.failedChecks.compactMap { $0.value.isEmpty ? nil : $0.key })
+            return rework.union(sub.escalatedNodes)
+        }
+    }
+
+    /// Collect a per-state id set from the top-level state and each one-level `scoped` slice state,
+    /// namespacing the slice-scoped ids as `<slice>/<node>` so two slices' identically-named nodes
+    /// stay distinct. Deterministic regardless of dictionary iteration order (the caller sorts).
+    private static func gather(_ state: RunState, _ select: (RunState) -> Set<String>) -> Set<String> {
+        var ids = select(state)
+        for (slice, sub) in state.slices {
+            for node in select(sub) { ids.insert("\(slice)/\(node)") }
+        }
+        return ids
     }
 }
 

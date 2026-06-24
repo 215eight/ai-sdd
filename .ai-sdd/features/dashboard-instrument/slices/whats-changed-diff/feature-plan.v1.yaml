@@ -1,0 +1,79 @@
+summary: >-
+  Add the "what changed since T-7d" view to the project dashboard: a pure
+  replay-and-diff over the matched run's timestamped append-only event records.
+  Fold only records whose RFC 3339 `at` parses and is <= a cutoff (the injected
+  `now` minus a fixed 7-day window) into a historical RunState via the existing
+  Reducer, fold every parseable-`at` record into the present RunState, then diff
+  the two folded states to list what COMPLETED, what is NEWLY BLOCKED (rework /
+  escalated), and what is NEWLY ESCALATED since the cutoff. Deterministic from
+  the injected `now` plus the window; no wall-clock in pure functions. An empty
+  window (no parseable change in [cutoff, now]) renders an explicit "no change"
+  state, not a broken or empty diff. The diff is computed in TemporalMetrics
+  (pure, I/O-free, unit-tested) and rendered by a GraphRenderer block in the
+  verdict band's temporal section, reusing the already-threaded `runEvents` and
+  the injected `now` the sibling S5/S6 blocks consume.
+scope:
+  in:
+    - Add a pure TemporalMetrics.whatsChanged(from:now:window:) function that returns a deterministic diff value from a run's [RunEventRecord] plus an injected `now` and a window TimeInterval.
+    - Reconstruct the historical RunState at the cutoff by folding (via the existing Reducer) only the records whose `at` parses (TemporalMetrics.parse) and is <= cutoff (cutoff = now - window); reconstruct the present RunState by folding all records whose `at` parses.
+    - Diff the two folded RunStates into three id lists - completed since cutoff, newly blocked since cutoff, newly escalated since cutoff - keyed by node id, gathered across one-level `scoped` slice state and top-level state in a deterministic (sorted) order.
+    - Define a fixed window constant (whatsChangedWindow = 7 days) on TemporalMetrics, a sibling of velocityWindow / wipAgingThreshold, so the cutoff lives in one place.
+    - Represent the empty window explicitly - a result whose three lists are all empty is the "no change" state, distinguishable from a suppressed/absent diff, and the renderer prints an explicit "no change since T-7d" line rather than blank or broken markup.
+    - Add a pure GraphRenderer block (whatsChangedHTML(sections:now:)) that aggregates every section's `runEvents`, computes the diff against the injected `now`, and renders the completed / newly-blocked / newly-escalated lists or the explicit no-change line; wire it into the verdict band's temporal section next to the burndown block, threading the same injected `now`.
+    - Add focused Swift Testing coverage in EngineTests for replay-to-prior-instant, each of the three diff lists, the explicit empty-window no-change state, and determinism under a fixed injected `now` + window.
+  out:
+    - No new event types, RunStore persistence changes, RunMeta/RunState shape changes, or Reducer fold changes - the diff is a pure projection over existing records folded by the existing Reducer.
+    - No wall-clock read inside any pure projection or renderer function; `now` and the window are injected exactly as S5/S6 inject `now`.
+    - No timestamp backfill - records with `at == nil` (legacy / un-timestamped) are excluded from both folds (see decision legacy-at-nil-excluded), never guessed onto an instant.
+    - No new dashboard mode, CLI flag, second dashboard path, run-matching change, or chart library; this layers onto the shipped --project --dashboard render and the already-threaded runEvents.
+    - No ETA/velocity/burndown/cycle-time behavior change (S5/S6); no false-precision date; no server / auto-refresh / live multi-machine view.
+acceptance:
+  - id: replay-to-prior-instant
+    description: Given a timestamped-record fixture and an injected `now` plus the 7-day window, TemporalMetrics reconstructs the historical RunState at the cutoff (now - window) by folding only records whose parsed `at` is <= cutoff via the existing Reducer, so the diff is computed against a genuine point-in-time replay rather than the present state.
+  - id: diff-lists-completed
+    description: The diff lists every node that became completed between the cutoff and `now` - present in the present-state completedNodes but not in the historical-state completedNodes (across top-level and one-level scoped slice state) - in a deterministic sorted order.
+  - id: diff-lists-newly-blocked
+    description: The diff lists every node newly blocked since the cutoff - a node carrying failed checks (rework) or escalated in the present folded state that was not blocked in the historical folded state - in a deterministic sorted order.
+  - id: diff-lists-newly-escalated
+    description: The diff lists every node newly escalated since the cutoff - present in the present-state escalatedNodes but not in the historical-state escalatedNodes - in a deterministic sorted order.
+  - id: empty-window-explicit-no-change-state
+    description: When nothing changed in [cutoff, now] (all three lists empty - including a run whose only records are pre-cutoff, or a legacy run with no parseable `at`), the result is the explicit "no change" state and the renderer prints an explicit "no change since T-7d" line, never a broken or empty diff.
+  - id: deterministic-injected-now-and-window
+    description: The diff and its rendered HTML are a pure function of (records, injected `now`, window) with no wall-clock, file, or network access, so identical inputs yield byte-identical output; tests assert this against a fixed injected `now`.
+  - id: verification-commands
+    description: swift build, swift test, ai-sdd validate .ai-sdd/features/dashboard-instrument, the project dashboard render, and the feature-plan schema check all pass after implementation.
+decisions:
+  - id: replay-to-cutoff-via-reducer
+    status: closed
+    decision: Reconstruct the historical state at the cutoff by folding, with the existing Reducer.reduce(_:events:), exactly the records whose parsed `at` (TemporalMetrics.parse) is <= cutoff (cutoff = now - window), preserving record order; reconstruct the present state by folding all parseable-`at` records. Diff the two folded RunStates.
+    rationale: The Reducer is the single source of truth for event->state, so replaying a time-filtered prefix reuses the same fold the live dashboard uses - no parallel state machine. Filtering by parsed `at` (not append index) is what makes the replay a genuine point-in-time cut, matching how S5/S6 already read `at`.
+  - id: legacy-at-nil-excluded
+    status: closed
+    decision: Records whose `at` is nil or unparseable (legacy / un-timestamped) are excluded from BOTH the historical fold and the present fold, so they never enter the diff. A run with no parseable `at` therefore yields the explicit no-change state.
+    rationale: Mirrors the suppression discipline S5/S6 already enforce (a nil `at` drives suppression, never a guessed instant). Excluding from both sides keeps the diff symmetric and honest - an un-timestamped event cannot be attributed to either side of the cutoff, so including it on either side would fabricate a change. This is consistent with TemporalMetrics.metrics/burndown, which only ever count parseable-`at` events.
+  - id: whats-changed-window-constant
+    status: closed
+    decision: Add a fixed public static let whatsChangedWindow - a TimeInterval of 7 * 24 * 60 * 60 (7 days) - on TemporalMetrics, a sibling of velocityWindow and wipAgingThreshold; the cutoff is computed as now.addingTimeInterval(-whatsChangedWindow).
+    rationale: The brief fixes the window at T-7d and forbids wall-clock derivation. A named constant alongside the existing window constants keeps the cutoff in one place and lets tests inject it explicitly. Reusing velocityWindow (also 7d) is rejected so the "what changed" horizon can move independently of velocity's rate window.
+  - id: diff-value-shape-and-blocked-definition
+    status: closed
+    decision: The function returns a small Equatable/Sendable value with three sorted [String] id lists - completed, newlyBlocked, newlyEscalated. "Blocked" = a node with non-empty failedChecks (rework) OR in escalatedNodes; "newly blocked" = blocked in the present folded state but not blocked in the historical folded state. "newlyEscalated" is the escalated-only subset (present escalatedNodes minus historical escalatedNodes). Node ids are gathered from top-level state and one-level scoped slice state (matching the per-slice granularity S5 uses), de-duplicated and sorted ascending.
+    rationale: Three explicit lists answer the EM's "what moved" question directly and are trivially Equatable for exact-match tests. Defining blocked as rework-or-escalated captures both "newly stuck on a gate" and "newly parked for a human"; the escalated sub-list calls out the human-action subset the attention band cares about. Sorting makes output deterministic independent of record/dictionary order.
+  - id: render-placement-and-empty-state
+    status: closed
+    decision: Render the diff as a GraphRenderer.whatsChangedHTML(sections:now:) block inside the verdict band's temporal section (temporalMetricsHTML), placed next to burndownHTML, aggregating sections.flatMap { $0.runEvents } and reading the same injected `now`. When all three lists are empty the block prints one explicit "no change since 7d" line; otherwise it prints the three labelled lists. The block is always present (mirrors burndownHTML's always-present empty state), so an empty window is an explicit state, not absent markup.
+    rationale: S5/S6 already thread runEvents onto every DashboardSection and pass the injected `now` down through temporalMetricsHTML; placing the new block there reuses that wiring with no new plumbing and keeps the renderer a pure derivation (TemporalMetrics does the computation). Always-present-with-empty-state matches the shipped burndown pattern, satisfying the brief's explicit-no-change requirement.
+  - id: files-scope
+    status: closed
+    decision: Limit the change to TemporalMetrics (new constant + pure whatsChanged function), whose home file is DashboardProjection.swift; the renderer block in GraphRenderer.swift; and tests in EngineTests.swift. No CLI, RunStore, Reducer, model, or schema files are touched.
+    rationale: TemporalMetrics already lives in DashboardProjection.swift and is the established home for pure time-axis projections; GraphRenderer.temporalMetricsHTML is the established render seam; EngineTests is the established test target. The diff needs no new event, persistence, or topology, so the surface stays minimal.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/dashboard-instrument
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/db.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

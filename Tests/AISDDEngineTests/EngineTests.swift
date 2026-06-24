@@ -4818,6 +4818,80 @@ struct TemporalMetricsTests {
         #expect(!suppressed.contains("UTC"))
     }
 
+    // MARK: - S7 what changed (replay-to-cutoff diff)
+
+    @Test func whatsChangedReplaysToPriorInstantAndListsCompleted() {
+        // Slice `s1` completed 10 days ago (BEFORE the 7d cutoff ⇒ in the historical state); slice `s2`
+        // completed 2 days ago (AFTER the cutoff ⇒ new). Only `s2`'s node is "completed since".
+        let records = [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -10 * 86_400),
+            scoped("s2", .nodeCompleted(node: "b", producedArtifacts: []), at: -2 * 86_400)
+        ]
+        let diff = TemporalMetrics.whatsChanged(from: records, now: now)
+        // The replay reconstructs the historical state (s1 already done), so only s2 is newly completed.
+        #expect(diff.completed == ["s2/b"])
+        #expect(diff.newlyBlocked.isEmpty)
+        #expect(diff.newlyEscalated.isEmpty)
+    }
+
+    @Test func whatsChangedListsNewlyBlockedAndNewlyEscalated() {
+        // Slice `s1` escalated 1 day ago (after cutoff) ⇒ newly blocked AND newly escalated. Slice
+        // `s2` hit a failed gate (checkFailed) 1 day ago ⇒ newly blocked (rework) but NOT escalated.
+        let records = [
+            scoped("s1", .escalated(node: "rev", checks: ["g1"]), at: -1 * 86_400),
+            scoped("s2", .checkFailed(node: "impl", checks: ["g2"]), at: -1 * 86_400)
+        ]
+        let diff = TemporalMetrics.whatsChanged(from: records, now: now)
+        #expect(diff.newlyBlocked == ["s1/rev", "s2/impl"])   // both, sorted ascending
+        #expect(diff.newlyEscalated == ["s1/rev"])            // only the escalated subset
+        #expect(diff.completed.isEmpty)
+    }
+
+    @Test func whatsChangedEmptyWindowIsExplicitNoChangeState() {
+        // Everything happened BEFORE the cutoff (all 10–12 days ago) ⇒ identical historical/present
+        // states ⇒ all three lists empty ⇒ the explicit no-change state.
+        let preCutoff = [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -10 * 86_400),
+            scoped("s1", .escalated(node: "rev", checks: ["g"]), at: -12 * 86_400)
+        ]
+        let diff = TemporalMetrics.whatsChanged(from: preCutoff, now: now)
+        #expect(diff.isEmpty)
+
+        // The renderer prints the explicit no-change line, never blank/broken markup.
+        let html = GraphRenderer.whatsChangedHTML(sections: [section(records: preCutoff)], now: now)
+        #expect(html.contains("no change since 7d"))
+        #expect(html.contains("what changed · 7d"))
+    }
+
+    @Test func whatsChangedExcludesLegacyAtNilFromBothFolds() {
+        // A legacy run whose only records have NO `at` ⇒ excluded from both folds ⇒ explicit no-change
+        // state (never attributed to either side of the cutoff).
+        let legacy = [
+            scopedNoStamp("s1", .nodeCompleted(node: "a", producedArtifacts: [])),
+            scopedNoStamp("s2", .escalated(node: "rev", checks: ["g"]))
+        ]
+        #expect(TemporalMetrics.whatsChanged(from: legacy, now: now).isEmpty)
+        let html = GraphRenderer.whatsChangedHTML(sections: [section(records: legacy)], now: now)
+        #expect(html.contains("no change since 7d"))
+    }
+
+    @Test func whatsChangedIsDeterministicUnderFixedNow() {
+        // Identical records + identical `now` + window ⇒ byte-identical diff AND byte-identical HTML.
+        let records = [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -1 * 86_400),
+            scoped("s2", .escalated(node: "rev", checks: ["g"]), at: -2 * 86_400)
+        ]
+        #expect(TemporalMetrics.whatsChanged(from: records, now: now)
+                == TemporalMetrics.whatsChanged(from: records, now: now))
+        #expect(GraphRenderer.whatsChangedHTML(sections: [section(records: records)], now: now)
+                == GraphRenderer.whatsChangedHTML(sections: [section(records: records)], now: now))
+        // The populated block lists the completed + newly-escalated ids (no empty-state line).
+        let html = GraphRenderer.whatsChangedHTML(sections: [section(records: records)], now: now)
+        #expect(html.contains("s1/a"))
+        #expect(html.contains("s2/rev"))
+        #expect(!html.contains("no change since 7d"))
+    }
+
     // MARK: - fixtures
 
     /// A section with all-`runnable` rows (no escalation/rework) carrying the given run records, so a

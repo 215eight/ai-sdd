@@ -1,0 +1,40 @@
+summary: >-
+  Implemented slice whats-changed-diff (S7, dashboard-instrument Part B): the
+  "what changed since T-7d" view as a pure replay-and-diff over the matched run's
+  timestamped event records. TemporalMetrics.whatsChanged(from:now:window:) folds
+  (via the existing Reducer) only records whose parsed `at` (TemporalMetrics.parse)
+  is <= the cutoff (now - window) into a HISTORICAL RunState, folds every
+  parseable-`at` record into the PRESENT RunState, then diffs the two: nodes
+  COMPLETED, NEWLY BLOCKED (non-empty failedChecks rework OR escalated), and NEWLY
+  ESCALATED since the cutoff. Ids are gathered across the top-level state and
+  one-level scoped slice state (slice-scoped ids namespaced `<slice>/<node>`),
+  de-duplicated and returned as three SORTED [String] lists on an Equatable/Sendable
+  WhatsChanged value; all three empty is the explicit no-change state (isEmpty).
+  Records with a nil/unparseable `at` (legacy / un-timestamped) are EXCLUDED from
+  BOTH folds, so a run with no parseable `at` yields the no-change state.
+  Added a fixed whatsChangedWindow = 7 days constant on TemporalMetrics, a sibling
+  of velocityWindow / wipAgingThreshold, kept distinct from velocityWindow so the
+  diff horizon can move independently. GraphRenderer.whatsChangedHTML(sections:now:)
+  aggregates every section's runEvents, computes the diff against the injected `now`,
+  and renders the completed / newly-blocked / newly-escalated lists or, when empty,
+  one explicit "no change since 7d" line; it is ALWAYS present (mirrors the burndown
+  empty-state) and wired into temporalMetricsHTML next to burndownHTML, reusing the
+  already-threaded runEvents and injected `now`. No wall-clock in any pure function;
+  no new event type, RunStore/Reducer/RunState change, CLI flag, schema, or
+  DashboardSection field. Added Swift Testing coverage (TemporalMetricsTests):
+  replay-to-prior-instant reconstructs the historical state and lists only newly
+  completed; newly-blocked vs newly-escalated subset; explicit empty-window
+  no-change state (renderer prints the no-change line); legacy-at-nil excluded from
+  both folds; determinism under a fixed injected `now` (diff and HTML byte-identical).
+  swift build, swift test (276 tests, 9 suites), ai-sdd validate
+  .ai-sdd/features/dashboard-instrument, the feature-plan schema check, and the live
+  project dashboard render (the "what changed · 7d" block lists the 8 slices the live
+  run completed in the last 7d) all pass.
+satisfies:
+  - replay-to-prior-instant
+  - diff-lists-completed
+  - diff-lists-newly-blocked
+  - diff-lists-newly-escalated
+  - empty-window-explicit-no-change-state
+  - deterministic-injected-now-and-window
+  - verification-commands

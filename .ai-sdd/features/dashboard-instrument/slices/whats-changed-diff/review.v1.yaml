@@ -1,0 +1,113 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: whats-changed-diff
+
+verdict: approve
+summary: >-
+  Review of FINAL slice whats-changed-diff (dashboard-instrument, Part B, S7) against feature-plan.v1
+  (7 acceptance ids) and changeset.v1. The slice adds, beside S5/S6's TemporalMetrics, a pure
+  replay-and-diff: TemporalMetrics.whatsChanged(from:now:window:) computes cutoff = now - window
+  (whatsChangedWindow = 7d, a sibling constant kept distinct from velocityWindow), pairs each record
+  with its parsed `at` dropping nil/unparseable ones (legacy excluded from BOTH folds), then folds the
+  historical state via the EXISTING Reducer over records with parsed `at` <= cutoff and the present
+  state via the same Reducer over all parseable-`at` records — NO hand-rolled parallel state machine.
+  It diffs the two folded RunStates into three SORTED id lists: completed = presentCompleted MINUS
+  historicalCompleted, newlyBlocked = presentBlocked MINUS historicalBlocked (blocked = non-empty
+  failedChecks rework UNION escalatedNodes), newlyEscalated = presentEscalated MINUS historicalEscalated.
+  Critically "newly" means CHANGED WITHIN THE WINDOW (present-but-not-historical), not "currently in
+  that state" — a node already in-state before the cutoff is in both folds and excluded. Ids are
+  gathered across top-level state and one-level scoped slice state (namespaced <slice>/<node>),
+  de-duplicated, sorted ascending. WhatsChanged.isEmpty (all three lists empty) is the explicit
+  no-change state; GraphRenderer.whatsChangedHTML always emits the block and prints `no change since 7d`
+  when empty, mirroring the burndown empty-state, wired into temporalMetricsHTML next to burndownHTML
+  reusing the threaded runEvents + injected `now`. DETERMINISM holds: the only Date() in the touched
+  Sources files is the documented GraphRenderer CLI default-param boundary (now: Date = Date(),
+  GraphRenderer.swift:247); whatsChanged/whatsChangedHTML read no clock, and sorted output ⇒
+  byte-identical for identical inputs. No scope creep — exactly the 3 planned files changed, no new
+  event type / Reducer / RunState / RunStore / CLI / schema / DashboardSection-field change.
+  Independently ran swift build (clean), swift test (276 tests, 9 suites, green), ai-sdd validate
+  dashboard-instrument (valid), the feature-plan schema check (satisfies feature-plan.v1), and the live
+  project dashboard render — the `what changed · 7d` block lists the slices the live run completed in
+  the last 7d, sorted and sanely namespaced. APPROVE.
+
+items:
+  - id: replay-to-prior-instant
+    verdict: pass
+    notes: >-
+      The historical state is reconstructed by folding, via the EXISTING Reducer.reduce(RunState(),
+      events: historicalEvents), only the records whose parsed `at` (TemporalMetrics.parse) is <=
+      cutoff (cutoff = now - window), in original append order; the present state folds all
+      parseable-`at` records via the SAME Reducer — no parallel state machine that could diverge from
+      live semantics. Filtering is by parsed `at`, not append index, so the replay is a genuine
+      point-in-time cut. Test whatsChangedReplaysToPriorInstantAndListsCompleted pins s1 completed 10d
+      ago (pre-cutoff ⇒ folded into the historical state as already-done) and s2 completed 2d ago
+      (post-cutoff), and asserts only `s2/b` is newly completed — proving the historical state is a real
+      reconstruction, not the present state.
+  - id: diff-lists-completed
+    verdict: pass
+    notes: >-
+      completed = presentCompleted.subtracting(historicalCompleted).sorted(). "Newly" correctly means
+      CHANGED WITHIN THE WINDOW (in the present completed set but NOT the historical one), not "currently
+      completed": a node completed before the cutoff is in both folds and excluded. Ids are gathered
+      across top-level state and one-level scoped slice state (gather namespaces slice ids as
+      <slice>/<node>), de-duplicated and sorted ascending. The live dashboard render confirms a sorted,
+      sanely-namespaced completed list of the slices done in the last 7d.
+  - id: diff-lists-newly-blocked
+    verdict: pass
+    notes: >-
+      newlyBlocked = presentBlocked.subtracting(historicalBlocked).sorted(), where blocked = non-empty
+      failedChecks (rework) UNION escalatedNodes (decision diff-value-shape-and-blocked-definition). Same
+      changed-in-window semantics (present-minus-historical), not currently-blocked. Test
+      whatsChangedListsNewlyBlockedAndNewlyEscalated proves both an escalated node (`s1/rev`) and a
+      checkFailed rework node (`s2/impl`) appear, sorted ascending.
+  - id: diff-lists-newly-escalated
+    verdict: pass
+    notes: >-
+      newlyEscalated = presentEscalated.subtracting(historicalEscalated).sorted() — the present escalated
+      set minus the historical escalated set, the human-action subset the attention band cares about.
+      Same changed-in-window semantics. The same test asserts the escalated-only subset is `["s1/rev"]`,
+      correctly EXCLUDING the rework-only node `s2/impl` that appears in newlyBlocked but not
+      newlyEscalated.
+  - id: empty-window-explicit-no-change-state
+    verdict: pass
+    notes: >-
+      WhatsChanged.isEmpty (all three lists empty) is the explicit no-change state, and
+      GraphRenderer.whatsChangedHTML ALWAYS emits the block, printing one explicit `no change since 7d`
+      line when isEmpty — never blank or broken markup (mirrors burndownHTML's always-present empty
+      state). Two tests cover it: whatsChangedEmptyWindowIsExplicitNoChangeState (a run whose only records
+      are pre-cutoff ⇒ identical historical/present states) and whatsChangedExcludesLegacyAtNilFromBothFolds
+      (legacy run with no parseable `at`); both assert isEmpty AND the rendered no-change line + caption.
+  - id: deterministic-injected-now-and-window
+    verdict: pass
+    notes: >-
+      whatsChanged and whatsChangedHTML are pure functions of (records, injected now, window) — no
+      network, file, or wall-clock access. grep for Date() across the touched Sources files finds it ONLY
+      at the documented GraphRenderer CLI render boundary (now: Date = Date(), GraphRenderer.swift:247),
+      a defaulted param that threads `now` inward; the pure functions read no clock. Output lists are
+      sorted ⇒ byte-identical for identical inputs. Test whatsChangedIsDeterministicUnderFixedNow asserts
+      both the diff and the rendered HTML are byte-identical across two calls under a fixed injected `now`
+      (Date(timeIntervalSince1970: 1_700_000_000)), and that the populated block lists the expected ids
+      with no no-change line.
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran all required commands: swift build (clean), swift test (276 tests, 9 suites, all
+      passed), ai-sdd validate .ai-sdd/features/dashboard-instrument (valid — 8 nodes), ai-sdd check
+      against feature-plan.schema.yaml (satisfies feature-plan.v1), and ai-sdd graph .ai-sdd --project
+      --dashboard --out /tmp/rev.html — the `what changed · 7d` block renders and lists the slices the
+      live run completed in the last 7d, sorted and namespaced sanely.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Changes stay within the declared file scope — DashboardProjection.swift (the whatsChangedWindow
+    constant + the pure whatsChanged function, the Equatable/Sendable WhatsChanged value, and the private
+    completedIds/escalatedIds/blockedIds/gather helpers, all beside TemporalMetrics), GraphRenderer.swift
+    (whatsChangedHTML/whatsChangedList wired into the existing temporalMetricsHTML path next to
+    burndownHTML), and EngineTests.swift (five new TemporalMetricsTests cases). No new event type,
+    Reducer fold, RunState/RunMeta shape, RunStore persistence, CLI flag, schema, or DashboardSection
+    field — the diff is a pure projection over existing records folded by the existing Reducer (decisions
+    replay-to-cutoff-via-reducer, files-scope). Legacy at==nil records are excluded from BOTH folds
+    (decision legacy-at-nil-excluded), proven by a test. HTML is escaped via escapeHTML; the block is
+    always-present with an explicit empty state. Swift Testing (@Test/#expect) per swift.md; no new files.
+    swift build clean, swift test 276/276 green.

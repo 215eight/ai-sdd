@@ -731,7 +731,58 @@ public enum GraphRenderer {
             "        <span class=\"temporal-velocity\">velocity \(escapeHTML(velocityText))</span>\(sliceBlock)",
             etaBandHTML(sections: sections, velocity: velocity),
             burndownHTML(sections: sections, now: now),
+            whatsChangedHTML(sections: sections, now: now),
             "      </div>"
+        ].joined(separator: "\n")
+    }
+
+    /// The "what changed since T-7d" block: replays every section's `runEvents` to the cutoff
+    /// (`now − whatsChangedWindow`) and diffs against the present, listing what COMPLETED, what is
+    /// NEWLY BLOCKED, and what is NEWLY ESCALATED. ALWAYS present — when the diff is the explicit
+    /// no-change state (an empty window, or a legacy run with no parseable `at`) it prints one explicit
+    /// "no change since 7d" line, mirroring the burndown block's always-present empty state, so an
+    /// empty window is an explicit state rather than absent markup. Pure: reads only the threaded
+    /// `runEvents` and the injected `now`; `TemporalMetrics` does the computation.
+    static func whatsChangedHTML(sections: [DashboardSection], now: Date) -> String {
+        // Aggregate every section's records (the project-tier "what changed" spans the whole portfolio,
+        // exactly like burndown), then diff against the injected `now`.
+        let records = sections.flatMap { $0.runEvents }
+        let diff = TemporalMetrics.whatsChanged(from: records, now: now)
+
+        let body: String
+        if diff.isEmpty {
+            body = "        <p class=\"whats-changed-empty\">no change since 7d</p>"
+        } else {
+            body = [
+                whatsChangedList(label: "completed", cssClass: "whats-changed-completed",
+                                 ids: diff.completed),
+                whatsChangedList(label: "newly blocked", cssClass: "whats-changed-blocked",
+                                 ids: diff.newlyBlocked),
+                whatsChangedList(label: "newly escalated", cssClass: "whats-changed-escalated",
+                                 ids: diff.newlyEscalated)
+            ].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+
+        return [
+            "      <div class=\"temporal-whats-changed\" aria-label=\"What changed since 7d\">",
+            "        <span class=\"whats-changed-caption\">what changed · 7d</span>",
+            body,
+            "      </div>"
+        ].joined(separator: "\n")
+    }
+
+    /// One labelled `<ul>` of changed ids, or `""` when the list is empty (so an empty category emits
+    /// no markup, while the always-present no-change line is handled by the caller). Ids are escaped.
+    private static func whatsChangedList(label: String, cssClass: String, ids: [String]) -> String {
+        guard !ids.isEmpty else { return "" }
+        let items = ids.map { "          <li>\(escapeHTML($0))</li>" }.joined(separator: "\n")
+        return [
+            "        <div class=\"\(cssClass)\">",
+            "          <span class=\"whats-changed-label\">\(escapeHTML(label))</span>",
+            "          <ul class=\"whats-changed-list\">",
+            items,
+            "          </ul>",
+            "        </div>"
         ].joined(separator: "\n")
     }
 
