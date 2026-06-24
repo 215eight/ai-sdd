@@ -1,0 +1,18 @@
+milestone: m1-time-axis-ready
+outcome: pass
+criteria:
+  - id: swift-build
+    status: pass
+  - id: swift-test
+    status: pass
+  - id: ai-sdd-validate
+    status: pass
+evidence: >-
+  m1.integration command run on the run-integrity-and-dashboard tree:
+  "swift build && swift test && swift run ai-sdd validate .ai-sdd" (exit 0).
+  swift build: complete. swift test: 226 tests in 8 suites passed, 0 failures.
+  swift run ai-sdd validate .ai-sdd: ai-sdd-feature valid — 3 nodes, 3 edges,
+  4 workers, 8 checks. Named smokes covered transitively and green: Z-suffixed
+  UTC `at` on fresh events; legacy absolute pipelineDir reconciled not dropped
+  (matchedStateStillMatchesAbsolutePipelineDir); slice owner from git identity
+  (ownerIsUnownedWithoutGitIdentity).
