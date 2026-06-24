@@ -1,0 +1,30 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: dashboard-instrument, version: 1 }
+spec:
+  # Part B of the run-integrity-and-dashboard program. Phase 1 (no-new-data): S1 scaffold ∥ S2
+  # critical-path; S3 attention + S4 detail follow both. The automated m1-no-data-band milestone gates
+  # phase 1 → phase 2. Phase 2 (temporal, needs run-integrity's `at` events): S5 metrics-core ∥ S7
+  # whats-changed after the milestone; S6 burndown+eta follows S5.
+  semantics: enabler
+  nodes:
+    - { id: dashboard-band-scaffold, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: critical-path-and-ranking, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: attention-band, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: detail-graph-context, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: m1-no-data-band, worker: milestone-gate, owner: [maintainer] }
+    - { id: temporal-metrics-core, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: burndown-and-eta, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: whats-changed-diff, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: dashboard-band-scaffold, to: attention-band }
+    - { from: critical-path-and-ranking, to: attention-band }
+    - { from: dashboard-band-scaffold, to: detail-graph-context }
+    - { from: critical-path-and-ranking, to: detail-graph-context }
+    - { from: dashboard-band-scaffold, to: m1-no-data-band }
+    - { from: critical-path-and-ranking, to: m1-no-data-band }
+    - { from: attention-band, to: m1-no-data-band }
+    - { from: detail-graph-context, to: m1-no-data-band }
+    - { from: m1-no-data-band, to: temporal-metrics-core }
+    - { from: m1-no-data-band, to: whats-changed-diff }
+    - { from: temporal-metrics-core, to: burndown-and-eta }

@@ -1,0 +1,14 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: milestone-gate }
+spec:
+  # AUTOMATED intra-feature milestone (D2) — the m1-no-data-band phase gate. Validates that the
+  # no-new-data dashboard (verdict / attention / portfolio / detail bands, project-first, slice-ids on
+  # nodes, critical path) renders correctly before the temporal band layers on. The deterministic
+  # `m1.integration` check is the hard gate (build + test + spec-validation); `validation-result.structure`
+  # enforces `outcome == pass`. The four-band render behaviours are asserted by phase-1 slices' own
+  # tests, so `swift test` here transitively covers them. Manual ↔ automated swaps only this kind/checks.
+  workerKind: transform
+  produces: [{ schema: validation-result.v1 }]
+  task: { skill: validate-milestone }
+  checks: [validation-result.structure, m1.integration]

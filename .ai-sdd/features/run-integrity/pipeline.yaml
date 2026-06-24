@@ -1,0 +1,19 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: run-integrity, version: 1 }
+spec:
+  # Part A of the run-integrity-and-dashboard program. S1/S2/S3 are independent (parallel);
+  # S4 follows S2 (stale-surfacing complements migration); S5 & S6 follow S3 (skill + hook rely on
+  # the self-starting resolver). S1 (timestamps + owner) is the keystone the program milestone gates on.
+  semantics: enabler
+  nodes:
+    - { id: event-timestamps-and-owner, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: pipelinedir-relative-and-migration, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: name-resolver-self-start, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: stale-run-surfacing, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: run-skill-rewrite, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: precommit-tripwire, kind: pipeline, pipeline: ../.., stack: swift }
+  edges:
+    - { from: pipelinedir-relative-and-migration, to: stale-run-surfacing }
+    - { from: name-resolver-self-start, to: run-skill-rewrite }
+    - { from: name-resolver-self-start, to: precommit-tripwire }

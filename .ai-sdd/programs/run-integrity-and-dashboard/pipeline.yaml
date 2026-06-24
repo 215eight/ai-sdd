@@ -1,0 +1,16 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: run-integrity-and-dashboard, version: 1 }
+spec:
+  # Run integrity + dashboard-as-instrument program (run-integrity-brief.md).
+  # run-integrity → m1-time-axis-ready (automated) → dashboard-instrument. Single-owner; the milestone
+  # is the integration gate that holds `dashboard-instrument` until `run-integrity` lands the
+  # reconciliation + timestamped events (the time axis) + owner-from-git and verifies them together.
+  semantics: enabler
+  nodes:
+    - { id: run-integrity, kind: pipeline, pipeline: ../../features/run-integrity, stack: swift, owner: [maintainer] }
+    - { id: m1-time-axis-ready, worker: milestone-gate, owner: [maintainer] }
+    - { id: dashboard-instrument, kind: pipeline, pipeline: ../../features/dashboard-instrument, stack: swift, owner: [maintainer] }
+  edges:
+    - { from: run-integrity, to: m1-time-axis-ready }
+    - { from: m1-time-axis-ready, to: dashboard-instrument }

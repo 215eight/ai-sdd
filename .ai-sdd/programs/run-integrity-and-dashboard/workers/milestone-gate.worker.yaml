@@ -1,0 +1,16 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: milestone-gate }
+spec:
+  # AUTOMATED milestone (D3) — the m1-time-axis-ready gate. A process validates that `run-integrity`
+  # landed cleanly before `dashboard-instrument` builds on it: it runs the integration command and
+  # records validation-result.v1. The deterministic `m1.integration` check is the hard gate (re-runs
+  # the command, gated on exit code); `validation-result.structure` enforces `outcome == pass`.
+  # Manual ↔ automated swaps only this kind/checks — inputs/outputs (validation-result.v1) are
+  # unchanged. The reconciliation, UTC-`at`, and owner-from-git behaviours are asserted by
+  # run-integrity's own tests, so `swift test` in the integration command transitively covers the
+  # smokes.
+  workerKind: transform
+  produces: [{ schema: validation-result.v1 }]
+  task: { skill: validate-milestone }
+  checks: [validation-result.structure, m1.integration]
