@@ -1,0 +1,22 @@
+milestone: m1-no-data-band
+outcome: pass
+criteria:
+  - id: swift-build
+    status: pass
+  - id: swift-test
+    status: pass
+  - id: ai-sdd-validate
+    status: pass
+  - id: dashboard-renders
+    status: pass
+evidence: >-
+  m1.integration command run from the repo root on the run-integrity-and-dashboard
+  tree: "swift build && swift test && swift run ai-sdd validate .ai-sdd" (exit 0).
+  swift build: complete. swift test: 256 tests in 8 suites passed, 0 failures.
+  swift run ai-sdd validate .ai-sdd: ai-sdd-feature valid — 3 nodes, 3 edges,
+  4 workers, 8 checks. dashboard-renders: `swift run ai-sdd graph .ai-sdd
+  --project --dashboard --out /tmp/m1.html` wrote /tmp/m1.html (82KB); all four
+  bands present — verdict, Attention, Portfolio (project-first per-feature
+  breakdown), and per-feature detail with slice ids on nodes (89 slice refs) plus
+  critical-path marking (4 critical-path markers). Specific render behaviours are
+  asserted transitively by the phase-1 slice tests (all green).
