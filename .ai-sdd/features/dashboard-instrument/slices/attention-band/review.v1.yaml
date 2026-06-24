@@ -1,0 +1,113 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: attention-band
+
+verdict: approve
+summary: >-
+  Review of slice attention-band (dashboard-instrument, Part B, S3) against feature-plan.v1 (8
+  acceptance ids) and changeset.v1. The slice adds the triage band between the verdict and portfolio
+  bands in projectRollupHTML: escalations and rework loops derived from each DashboardSection's
+  projection rows (status .escalated / .rework), plus top unblockers CONSUMED from S2's
+  DashboardCriticalPath.runnableRanking threaded onto DashboardSection. I independently verified:
+  (1) the renderer does NOT re-derive ranking — attentionItems reads section.runnableRanking and only
+  re-sorts (desc unblockCount, asc id) and caps at 3; the actual transitive-unblock computation stays
+  in DashboardCriticalPath.runnableRanking, which the assemblers call. (2) The threaded field
+  runnableRanking: [RankedRunnable] is defaulted ([]) and Equatable-preserving, mirroring how staleRun
+  was added; BOTH ProjectDashboardAssembler (build-pattern + feature sections) and
+  ProgramDashboardAssembler populate it via runnableRanking(env.spec, state: match.state). (3) The
+  empty state renders literally nothing — attentionBandHTML returns "" and projectRollupHTML filters
+  empty fragments; the clean-state test asserts the ELEMENT's absence via the `<section
+  class="attention-band"` literal, which appears ONLY as the rendered element (CSS uses the distinct
+  `.attention-band {` form), so it is a true element-absence check, not a class-string match. (4) Both
+  band functions are pure — the only Date() in GraphRenderer is the pre-existing injected default on
+  dashboardPage; no wall-clock read inside the band. (5) No scope creep into S4 or temporal work.
+  swift build clean; swift test green (249 tests, 8 suites, 7 new attention tests); graph dashboard
+  render to /tmp/rev.html confirmed band order verdict < attention < portfolio. All 8 acceptance ids
+  pass — APPROVE.
+
+items:
+  - id: lists-escalations
+    verdict: pass
+    notes: >-
+      attentionItems scans each section's projection rows and emits AttentionItem(kind: .escalation)
+      for every .escalated row, naming the section heading as feature and row.node as slice
+      (GraphRenderer.swift ~L494-496), listed in full. Test attentionBandListsEscalationsAndRework
+      asserts the escalation item appears for an escalated node ("Feature · a", "n1").
+  - id: lists-rework
+    verdict: pass
+    notes: >-
+      .rework rows produce AttentionItem(kind: .rework) with feature/slice (GraphRenderer.swift
+      ~L497-498), also listed in full ahead of unblockers. Same test asserts the rework item appears
+      ("Feature · b", "n0"). Reuses the projected row status (the single escalated→rework precedence
+      source), per the closed escalation-rework-source decision.
+  - id: lists-top-unblockers-from-S2-ranking
+    verdict: pass
+    notes: >-
+      Top unblockers are taken from the threaded section.runnableRanking (S2's
+      DashboardCriticalPath.runnableRanking output), filtered to unblockCount>0, sorted descending
+      unblockCount then ascending id, and capped at attentionUnblockerCap=3. Critically the renderer
+      does NOT recompute the ranking — it only re-sorts/caps the already-ranked RankedRunnable values;
+      the transitive descendant computation lives in DashboardCriticalPath and is invoked by the
+      assemblers. Tests attentionBandListsTopUnblockersFromS2Ranking (descending order; 0-count
+      dropped) and attentionBandTopUnblockersOrderedAcrossSectionsAndCapped (cross-section merge,
+      result ["b1","b2","a1"] = 9,4,2 capped at 3 dropping the 1) both pass.
+  - id: each-item-names-feature-slice
+    verdict: pass
+    notes: >-
+      Every AttentionItem carries feature (section.heading) and slice (row.node or
+      RankedRunnable.node); attentionBandHTML renders both as attention-slice / attention-feature
+      spans for escalations, rework, and unblockers alike. Test attentionBandItemsNameFeatureAndSlice
+      asserts the escalated slice (>n0</span>), the unblocker slice (>u-node</span>), and the feature
+      heading (>Feature · alpha</span>) all appear in the page.
+  - id: empty-when-nothing-to-act-on
+    verdict: pass
+    notes: >-
+      attentionBandHTML returns "" when attentionItems is empty (no escalations, no rework, no
+      unblockCount>0 runnables); projectRollupHTML builds [verdict, attention, portfolio] and filters
+      empty fragments, so no section element, heading, or empty box is emitted. Test
+      attentionBandRendersNothingWhenNothingToActOn asserts both attentionItems(...).isEmpty and the
+      page-level ELEMENT absence via !page.contains("<section class=\"attention-band\"") and
+      !page.contains(">Attention</h2>"). I verified the `<section class="attention-band"` literal
+      occurs ONLY at the rendered element in source (grep) while the CSS uses the distinct
+      `.attention-band {` (dot+space) form — so this is a genuine element-absence assertion, not a
+      style-string false-positive.
+  - id: deterministic-no-wallclock
+    verdict: pass
+    notes: >-
+      attentionItems and attentionBandHTML take only sections (projection rows + threaded ranking) as
+      input. grep confirms the sole Date() reference in GraphRenderer is the pre-existing injected
+      default on dashboardPage's signature (the single wall-clock boundary owned by the Graph command);
+      no Date()/FileManager/Process/URL inside the band. Test attentionBandIsPureAndDeterministic
+      asserts identical items and byte-identical page output across two calls.
+  - id: band-placement-between-verdict-and-portfolio
+    verdict: pass
+    notes: >-
+      projectRollupHTML returns [verdict, attention, portfolio] filtered and joined, so the band sits
+      after verdict and before portfolio. Test attentionBandRendersBetweenVerdictAndPortfolio asserts
+      verdict < attention < portfolio by relative HTML position. Independently confirmed in the live
+      render of /tmp/rev.html: verdict-band@offset 29967 < attention-band@30335 < portfolio-band@31195.
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran swift build (Build complete) and swift test (249 tests / 8 suites, all pass —
+      the 7 new attention-band tests present and green; count rose from 242 in S2 to 249 confirming the
+      added tests). swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/rev.html wrote the
+      file with correct band placement. Plan also lists ai-sdd validate
+      .ai-sdd/features/dashboard-instrument; build + full test suite + render all pass.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Changes confined to the three declared files (GraphRenderer.swift: attention-band
+    derivation + render + rollup wiring + the DashboardSection field + CSS; DashboardProjection.swift:
+    both assemblers populate the threaded ranking; EngineTests.swift: 7 new Swift Testing @Test/#expect
+    cases) per the file-scope decision. The runnableRanking field is defaulted and Equatable-preserving
+    (source-stable, mirroring staleRun). No verdict/portfolio derivation, status-precedence,
+    ranking-re-derivation, RunState/Scheduler/CLI/schema, or DashboardCharts change introduced; S4
+    (detail-graph context) and phase-2 temporal work are untouched. HTML values are escaped via the
+    existing escapeHTML. No invented lint.
+
+caveats: >-
+  none. The attention band consumes S2's ranking rather than re-deriving it, the empty state leaks no
+  element (assertion verified against the element literal, not the CSS string), and no wall-clock read
+  was introduced. Approve.

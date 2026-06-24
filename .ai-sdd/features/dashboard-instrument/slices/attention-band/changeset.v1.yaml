@@ -1,0 +1,32 @@
+summary: >-
+  Add the attention/triage band rendered between the verdict band and the portfolio band in the
+  project dashboard rollup (rollup order is now verdict, attention, portfolio). The band lists
+  ESCALATIONS and REWORK loops derived purely from the already-assembled DashboardSection projection
+  rows (status .escalated / .rework), plus TOP UNBLOCKERS consumed from S2's
+  DashboardCriticalPath.runnableRanking — taken in its descending-unblockCount / ascending-id order,
+  excluding unblockCount==0, and capped at the top 3 so the on-fire items are not buried. Each item
+  names its feature (section heading) and slice (row / RankedRunnable node). The band renders the
+  empty string (no section element, no heading, no empty box) when there are no escalations, no
+  rework, and no qualifying unblockers; projectRollupHTML appends the fragment only when non-empty.
+  A defaulted `runnableRanking: [RankedRunnable]` field was threaded onto
+  GraphRenderer.DashboardSection (Equatable-preserving, source-stable — mirroring how staleRun was
+  added) and is populated by BOTH the ProjectDashboardAssembler (build-pattern + feature sections)
+  and the ProgramDashboardAssembler via DashboardCriticalPath.runnableRanking(spec, state:), where
+  the PipelineSpec and folded RunState already live. The derivation (attentionItems) and HTML render
+  (attentionBandHTML) are pure — no file, network, or wall-clock I/O — so identical inputs yield
+  byte-identical output. Files: GraphRenderer.swift (attention-band derivation + render + rollup
+  wiring + the DashboardSection field + CSS), DashboardProjection.swift (assemblers populate the
+  threaded ranking), EngineTests.swift (7 new tests). No verdict/portfolio derivation, status
+  precedence, ranking re-derivation, or any new wall-clock read was introduced; S4 (detail-graph
+  context) and the phase-2 temporal work are out of scope and untouched. swift build, swift test
+  (249 tests, 8 suites), ai-sdd validate .ai-sdd/features/dashboard-instrument, the graph dashboard
+  render, and the feature-plan check all pass.
+satisfies:
+  - lists-escalations
+  - lists-rework
+  - lists-top-unblockers-from-S2-ranking
+  - each-item-names-feature-slice
+  - empty-when-nothing-to-act-on
+  - deterministic-no-wallclock
+  - band-placement-between-verdict-and-portfolio
+  - verification-commands

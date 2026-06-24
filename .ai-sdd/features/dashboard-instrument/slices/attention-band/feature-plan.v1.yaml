@@ -1,0 +1,83 @@
+summary: >-
+  Add the attention band — the triage panel between the verdict band (S1) and the
+  portfolio band (S1) in the project dashboard rollup. It lists the 3–6 items needing a
+  human: escalations and rework loops (derived from the already-assembled
+  DashboardSection projection rows) plus top unblockers (consumed from S2's
+  DashboardCriticalPath.runnableRanking). Each item names its feature and slice. The band
+  renders literally nothing — no header, no empty box — when there are no escalations, no
+  rework, and no notable unblockers. Rendering stays pure and reads no wall clock.
+scope:
+  in:
+    - Render an attention band inside projectRollupHTML, ordered AFTER the verdict band and BEFORE the portfolio band, so the rollup becomes [verdict, attention, portfolio].
+    - Derive ESCALATIONS from DashboardSection projection rows whose status is .escalated; each entry names its feature (from the section heading) and slice (row.node).
+    - Derive REWORK loops from DashboardSection projection rows whose status is .rework; each entry names its feature and slice.
+    - Derive TOP UNBLOCKERS by consuming S2's DashboardCriticalPath.runnableRanking output (RankedRunnable node + unblockCount); each entry names its feature and slice and reflects the descending downstream-unblock ordering S2 already computes.
+    - Thread the per-section runnable ranking onto GraphRenderer.DashboardSection as a new optional field (defaulted to empty, mirroring how staleRun was added) so the renderer stays pure and the assemblers (ProjectDashboardAssembler / ProgramDashboardAssembler) — where the PipelineSpec and folded RunState already live — populate it via DashboardCriticalPath.runnableRanking.
+    - Emit NOTHING (an empty string fragment, no section element, no heading) when a dashboard has no escalations, no rework, and no qualifying top unblockers across all sections.
+    - Add a pure attention-band derivation function (sections -> attention items) and an HTML render function, both unit-tested without I/O, plus a clean-state fixture asserting empty output and a fixture asserting escalation/rework/unblocker items appear with their feature and slice names.
+  out:
+    - The detail band's per-feature graph context and slice-ids-on-every-node — that is S4 (detail-graph-context), phase 1.
+    - All temporal-band work (cycle time, WIP aging, velocity, burndown, ETA, "what changed since T-7d") — phase 2 slices S5–S7; the attention band reads no `at` events and no injected time-series.
+    - Re-deriving the runnable ranking itself — the critical-path / runnable-ranking computation already shipped in S2 (DashboardCriticalPath); this slice only consumes it.
+    - Changes to verdict-band or portfolio-band derivation/markup, DashboardProjection status precedence, RunState/RunStore, Scheduler, or DashboardCharts.
+    - Any wall-clock read inside the band; any new dashboard rendering path (reuse the shipped dashboardPage / projectRollupHTML).
+acceptance:
+  - id: lists-escalations
+    description: When any section row has status .escalated, the attention band lists it as an escalation item; a fixture with an escalated node asserts the item appears.
+  - id: lists-rework
+    description: When any section row has status .rework, the attention band lists it as a rework-loop item; a fixture with a rework node asserts the item appears.
+  - id: lists-top-unblockers-from-S2-ranking
+    description: The band lists top unblockers taken from S2's DashboardCriticalPath.runnableRanking (RankedRunnable), in that ranking's descending downstream-unblock order; a fixture asserts the highest-unblock-count runnable appears ahead of lower ones.
+  - id: each-item-names-feature-slice
+    description: Every attention item (escalation, rework, or unblocker) names the feature it concerns (from the section heading) and the slice id (the row/RankedRunnable node), asserted by fixture text.
+  - id: empty-when-nothing-to-act-on
+    description: A clean-state fixture with no escalations, no rework, and no qualifying top unblockers produces NO attention-band output — no header and no empty box (the rendered fragment is empty and the page contains no attention-band section element).
+  - id: deterministic-no-wallclock
+    description: The attention-band derivation and render functions are pure (no file, network, or wall-clock I/O); identical inputs yield byte-identical output, and the band reads no Date().
+  - id: band-placement-between-verdict-and-portfolio
+    description: In the rendered rollup the attention band appears after the verdict band and before the portfolio band (rollup order is verdict, attention, portfolio), asserted by relative position in the HTML.
+  - id: verification-commands
+    description: swift build, swift test, and swift run ai-sdd validate .ai-sdd/features/dashboard-instrument all pass after implementation.
+decisions:
+  - id: band-placement
+    status: closed
+    decision: Render the attention band inside projectRollupHTML between the verdict and portfolio bands, changing its return from [verdict, portfolio] to [verdict, attention, portfolio].
+    rationale: The brief and S1 band structure place triage as the second thing on the page, directly under the verdict and above the portfolio; projectRollupHTML already owns that pure, wall-clock-free rollup region.
+  - id: escalation-rework-source
+    status: closed
+    decision: Derive escalations and rework loops from the already-assembled DashboardSection projection rows (status .escalated / .rework), naming the feature from section.heading and the slice from row.node.
+    rationale: DashboardProjection already classifies per-node status via its escalated→rework precedence; reusing the projected rows avoids a second status source and keeps one source of truth, matching how portfolioBlocker already reads these rows.
+  - id: consume-s2-ranking
+    status: closed
+    decision: Take top unblockers from S2's DashboardCriticalPath.runnableRanking output (RankedRunnable), not a re-derivation, preserving its descending-unblockCount-then-ascending-id order.
+    rationale: S2 shipped runnableRanking as the canonical, deterministic downstream-unblock ranking tied to the same Scheduler.runnable source the dashboard uses; the brief requires top-unblocker ordering to come from that ranking.
+  - id: ranking-seam-on-section
+    status: closed
+    decision: Add an optional runnableRanking field (defaulted to empty []) to GraphRenderer.DashboardSection; the assemblers populate it by calling DashboardCriticalPath.runnableRanking(spec, state:) where the PipelineSpec and folded RunState already live, and the renderer reads it without recomputation.
+    rationale: DashboardSection currently carries only projection rows, not the raw spec/state runnableRanking needs; threading it as a defaulted field mirrors exactly how staleRun was added (source-stable existing call sites, Equatable preserved) and keeps GraphRenderer pure with no spec/Scheduler dependency at render time.
+  - id: top-unblocker-count
+    status: closed
+    decision: Cap the band at the top items needed to stay within the brief's 3–6 triage budget by taking at most the top 3 runnable nodes by unblockCount (after escalations and rework, which are always shown in full), and exclude any runnable whose unblockCount is 0 (it unblocks nothing, so it is not a notable unblocker).
+    rationale: The brief frames the band as the 3–6 items needing a human and "top/notable unblockers"; escalations and rework are the on-fire items shown in full, while unblockers are advisory and capped so a long runnable list does not bury the actionable items. unblockCount==0 means nothing downstream is freed, so it is not surfaced — which is also what makes the empty-state assertion hold when the only runnables unblock nothing.
+  - id: empty-state-rendering
+    status: closed
+    decision: The attention-band fragment is built by a pure function that returns an empty string when there are no escalations, no rework, and no qualifying (unblockCount>0, top-N) unblockers; projectRollupHTML appends the fragment only when non-empty, so the page emits no attention-band section element, heading, or empty box.
+    rationale: The brief requires the band to render literally nothing (no empty-state noise) when there is nothing to act on; emitting an empty string rather than an empty container guarantees no header/box leaks into the page and is directly assertable by a clean-state fixture.
+  - id: purity-no-wallclock
+    status: closed
+    decision: Keep both the attention-band derivation and its HTML render pure — inputs are the assembled sections (rows + threaded ranking) only, with no Date() read and no I/O.
+    rationale: dashboardPage already isolates the single wall-clock boundary to the Graph command; the attention band, like the verdict trajectory and portfolio rows, must be a pure derivation so output is byte-identical for identical inputs and deterministically testable.
+  - id: file-scope
+    status: closed
+    decision: Limit changes to GraphRenderer.swift (attention-band derivation + render + rollup wiring + the DashboardSection field), DashboardProjection.swift (assemblers populate the threaded ranking via DashboardCriticalPath.runnableRanking), and EngineTests.swift (pure-derivation, empty-state, and ordering tests).
+    rationale: The renderer owns the rollup, the assemblers own spec/state and are the only place runnableRanking inputs exist, and tests live with the engine; no CLI, schema, or DashboardCharts change is needed since the band reuses the shipped dashboard path.
+files:
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/dashboard-instrument
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/db.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

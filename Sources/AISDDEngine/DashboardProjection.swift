@@ -160,7 +160,8 @@ public enum ProgramDashboardAssembler {
             projection: projection,
             mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
                                                     inheritedOwner: env.metadata.owner ?? []),
-            staleRun: match.stale)
+            staleRun: match.stale,
+            runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state))
     }
 
     /// A sub-pipeline loader closure for `DashboardProjection.project(program:…)`: for a `kind ==
@@ -205,7 +206,8 @@ public enum ProjectDashboardAssembler {
                 projection: projection,
                 mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
                                                         inheritedOwner: env.metadata.owner ?? []),
-                staleRun: match.stale)
+                staleRun: match.stale,
+                runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state))
         }
 
         let featuresDir = homeURL.appendingPathComponent("features", isDirectory: true)
@@ -227,7 +229,8 @@ public enum ProjectDashboardAssembler {
                     projection: projection,
                     mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
                                                             inheritedOwner: env.metadata.owner ?? []),
-                    staleRun: match.stale))
+                    staleRun: match.stale,
+                    runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state)))
             } else {
                 sections.append(.init(heading: "Feature · \(name)", projection: emptyProjection()))
             }

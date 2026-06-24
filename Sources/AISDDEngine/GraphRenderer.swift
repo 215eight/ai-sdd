@@ -133,13 +133,21 @@ public enum GraphRenderer {
         // trailing feature/program segment instead). Defaulted to false so existing `DashboardSection`
         // call sites and `Equatable` are unchanged; Part B's verdict band reuses this same flag.
         public var staleRun: Bool
+        // The section's runnable slices ranked by transitive downstream-unblock count, as computed by
+        // `DashboardCriticalPath.runnableRanking` from the section's spec + folded state. The assemblers
+        // (where spec/state live) populate it; the renderer reads it without recomputation so it stays
+        // pure. Defaulted to [] — mirroring how `staleRun` was added — so existing `DashboardSection`
+        // call sites and `Equatable` are source-stable, and a section with no ranking simply contributes
+        // no unblockers to the attention band.
+        public var runnableRanking: [RankedRunnable]
 
         public init(heading: String, projection: DashboardProjectionResult, mermaid: String? = nil,
-                    staleRun: Bool = false) {
+                    staleRun: Bool = false, runnableRanking: [RankedRunnable] = []) {
             self.heading = heading
             self.projection = projection
             self.mermaid = mermaid
             self.staleRun = staleRun
+            self.runnableRanking = runnableRanking
         }
     }
 
@@ -441,8 +449,114 @@ public enum GraphRenderer {
         return "—"
     }
 
-    /// The whole-project rollup: a verdict band (trajectory + generation timestamp + freshness badge)
-    /// and a portfolio band (one health row per feature), rendered before any per-feature detail.
+    // MARK: - Attention band (triage)
+
+    /// The kind of triage item an attention entry represents, in rendering precedence: escalations and
+    /// rework loops are on-fire (shown in full), top unblockers are advisory (capped).
+    public enum AttentionKind: String, Equatable, Sendable {
+        case escalation
+        case rework
+        case unblocker
+    }
+
+    /// One triage item in the attention band: its kind, the feature it concerns (the section heading),
+    /// and the slice id (a projection-row node or a ranked-runnable node). `unblockCount` is set only
+    /// for unblockers (how many downstream slices it would free); it is 0 for escalations/rework.
+    public struct AttentionItem: Equatable, Sendable {
+        public var kind: AttentionKind
+        public var feature: String
+        public var slice: String
+        public var unblockCount: Int
+        public init(kind: AttentionKind, feature: String, slice: String, unblockCount: Int = 0) {
+            self.kind = kind
+            self.feature = feature
+            self.slice = slice
+            self.unblockCount = unblockCount
+        }
+    }
+
+    /// At most this many unblockers are surfaced, keeping the band within the brief's 3–6 triage
+    /// budget so escalations/rework (always shown in full) are not buried under a long runnable list.
+    static let attentionUnblockerCap = 3
+
+    /// Derive the attention-band items purely from the already-assembled sections (rows + threaded
+    /// ranking) — no new data source, no wall clock. ESCALATIONS (status `.escalated`) and REWORK loops
+    /// (status `.rework`) come from each section's projection rows and are listed in full, each naming
+    /// its feature (section heading) and slice (`row.node`). TOP UNBLOCKERS come from S2's
+    /// `runnableRanking` threaded onto the section: across all sections, runnables with
+    /// `unblockCount > 0` are taken in that ranking's order (descending unblock count, then ascending
+    /// id) and capped at `attentionUnblockerCap`. Identical inputs yield identical output.
+    public static func attentionItems(for sections: [DashboardSection]) -> [AttentionItem] {
+        var escalations: [AttentionItem] = []
+        var rework: [AttentionItem] = []
+        for section in sections {
+            for row in section.projection.rows {
+                switch row.status {
+                case .escalated:
+                    escalations.append(AttentionItem(kind: .escalation, feature: section.heading, slice: row.node))
+                case .rework:
+                    rework.append(AttentionItem(kind: .rework, feature: section.heading, slice: row.node))
+                default:
+                    break
+                }
+            }
+        }
+        // Flatten the per-section rankings, preserving each section's S2 order, then keep the global
+        // descending-unblock / ascending-id order and cap. unblockCount == 0 unblocks nothing, so it is
+        // not a notable unblocker (and is what keeps the empty state empty when runnables free nothing).
+        let unblockers = sections
+            .flatMap { section in
+                section.runnableRanking
+                    .filter { $0.unblockCount > 0 }
+                    .map { AttentionItem(kind: .unblocker, feature: section.heading, slice: $0.node,
+                                         unblockCount: $0.unblockCount) }
+            }
+            .sorted { lhs, rhs in
+                if lhs.unblockCount != rhs.unblockCount { return lhs.unblockCount > rhs.unblockCount }
+                return lhs.slice < rhs.slice
+            }
+            .prefix(attentionUnblockerCap)
+        return escalations + rework + Array(unblockers)
+    }
+
+    /// Render the attention band as an HTML fragment from the assembled sections. Pure: it reads only
+    /// the derived `attentionItems` (no I/O, no wall clock). Returns the EMPTY STRING when there is
+    /// nothing to act on (no escalations, no rework, no qualifying unblockers) — no section element, no
+    /// heading, no empty box — so a clean dashboard emits no attention-band markup at all.
+    static func attentionBandHTML(sections: [DashboardSection]) -> String {
+        let items = attentionItems(for: sections)
+        guard !items.isEmpty else { return "" }
+        let groups: [(AttentionKind, String)] = [
+            (.escalation, "Escalations"),
+            (.rework, "Rework loops"),
+            (.unblocker, "Top unblockers")
+        ]
+        var lines = [
+            "    <section class=\"attention-band\" aria-label=\"Attention\">",
+            "      <h2>Attention</h2>"
+        ]
+        for (kind, title) in groups {
+            let groupItems = items.filter { $0.kind == kind }
+            guard !groupItems.isEmpty else { continue }
+            lines.append("      <div class=\"attention-group attention-\(kind.rawValue)\">")
+            lines.append("        <h3>\(escapeHTML(title))</h3>")
+            lines.append("        <ul>")
+            for item in groupItems {
+                let suffix = kind == .unblocker
+                    ? " <span class=\"attention-unblock-count\">(unblocks \(item.unblockCount))</span>"
+                    : ""
+                lines.append("          <li><span class=\"attention-slice\">\(escapeHTML(item.slice))</span> <span class=\"attention-feature\">\(escapeHTML(item.feature))</span>\(suffix)</li>")
+            }
+            lines.append("        </ul>")
+            lines.append("      </div>")
+        }
+        lines.append("    </section>")
+        return lines.joined(separator: "\n")
+    }
+
+    /// The whole-project rollup: a verdict band (trajectory + generation timestamp + freshness badge),
+    /// the attention/triage band (escalations, rework, top unblockers — or nothing when clear), and a
+    /// portfolio band (one health row per feature), rendered before any per-feature detail.
     private static func projectRollupHTML(sections: [DashboardSection], now: Date) -> String {
         let trajectory = dashboardTrajectory(for: sections)
         let stale = sections.contains { $0.staleRun }
@@ -488,7 +602,12 @@ public enum GraphRenderer {
             "    </section>"
         ].joined(separator: "\n")
 
-        return [verdict, portfolio].joined(separator: "\n")
+        // Order: verdict, then the triage band (appended only when non-empty, so a clean dashboard
+        // shows no attention markup), then portfolio.
+        let attention = attentionBandHTML(sections: sections)
+        return [verdict, attention, portfolio]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 
     private static func trajectoryClass(_ trajectory: DashboardTrajectory) -> String {
@@ -657,6 +776,16 @@ public enum GraphRenderer {
         .verdict-freshness { font-size: 0.82rem; font-weight: 700; }
         .verdict-freshness.stale { color: var(--status-rework); }
         .verdict-freshness.fresh { color: var(--status-done); }
+        .attention-band { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 18px; padding: 16px 20px; }
+        .attention-band h2 { margin: 0 0 12px; }
+        .attention-band h3 { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; margin: 12px 0 6px; text-transform: uppercase; }
+        .attention-band ul { list-style: none; margin: 0; padding: 0; }
+        .attention-band li { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
+        .attention-escalation h3 { color: var(--status-escalated); }
+        .attention-rework h3 { color: var(--status-rework); }
+        .attention-slice { font-weight: 700; }
+        .attention-feature { color: var(--muted); font-size: 0.9rem; }
+        .attention-unblock-count { color: var(--muted); font-size: 0.82rem; }
         .portfolio-band { margin: 0 0 28px; }
         .portfolio-band h2 { margin-bottom: 12px; }
         .portfolio-table { border-collapse: collapse; font-size: 0.92rem; width: 100%; }

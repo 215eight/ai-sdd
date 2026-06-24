@@ -1617,6 +1617,115 @@ struct EngineTests {
         #expect(page.contains("class=\"portfolio-band\""))
     }
 
+    // MARK: - Attention band (triage — dashboard-instrument S3)
+
+    /// A section carrying a threaded `runnableRanking` (S2 output) so the attention band's
+    /// top-unblocker derivation can be exercised purely.
+    private func attentionSection(heading: String, statuses: [DashboardStatus],
+                                  ranking: [RankedRunnable] = []) -> GraphRenderer.DashboardSection {
+        var section = portfolioSection(heading: heading, statuses: statuses, owner: "alice")
+        section.runnableRanking = ranking
+        return section
+    }
+
+    @Test func attentionBandListsEscalationsAndRework() {
+        // .escalated and .rework rows surface as escalation / rework items naming their feature/slice.
+        let sections = [
+            attentionSection(heading: "Feature · a", statuses: [.done, .escalated]),
+            attentionSection(heading: "Feature · b", statuses: [.rework, .runnable])
+        ]
+        let items = GraphRenderer.attentionItems(for: sections)
+        #expect(items.contains(GraphRenderer.AttentionItem(kind: .escalation, feature: "Feature · a", slice: "n1")))
+        #expect(items.contains(GraphRenderer.AttentionItem(kind: .rework, feature: "Feature · b", slice: "n0")))
+    }
+
+    @Test func attentionBandListsTopUnblockersFromS2Ranking() {
+        // Top unblockers come from the threaded ranking, in descending unblock-count order; a 0-count
+        // runnable is excluded (it unblocks nothing).
+        let sections = [
+            attentionSection(heading: "Feature · a", statuses: [.runnable, .runnable], ranking: [
+                RankedRunnable(node: "big", unblockCount: 5),
+                RankedRunnable(node: "small", unblockCount: 1),
+                RankedRunnable(node: "leaf", unblockCount: 0)
+            ])
+        ]
+        let unblockers = GraphRenderer.attentionItems(for: sections).filter { $0.kind == .unblocker }
+        #expect(unblockers.map(\.slice) == ["big", "small"])   // descending count, 0-count dropped
+        #expect(unblockers.first?.unblockCount == 5)
+    }
+
+    @Test func attentionBandTopUnblockersOrderedAcrossSectionsAndCapped() {
+        // Unblockers from different sections are merged into one descending-count / ascending-id order
+        // and capped at the top 3.
+        let sections = [
+            attentionSection(heading: "Feature · a", statuses: [.runnable], ranking: [
+                RankedRunnable(node: "a1", unblockCount: 2)
+            ]),
+            attentionSection(heading: "Feature · b", statuses: [.runnable], ranking: [
+                RankedRunnable(node: "b1", unblockCount: 9),
+                RankedRunnable(node: "b2", unblockCount: 4),
+                RankedRunnable(node: "b3", unblockCount: 1)
+            ])
+        ]
+        let unblockers = GraphRenderer.attentionItems(for: sections).filter { $0.kind == .unblocker }
+        #expect(unblockers.map(\.slice) == ["b1", "b2", "a1"])   // 9, 4, 2 — capped at 3, drops the 1
+    }
+
+    @Test func attentionBandItemsNameFeatureAndSlice() {
+        let sections = [
+            attentionSection(heading: "Feature · alpha", statuses: [.escalated], ranking: [
+                RankedRunnable(node: "u-node", unblockCount: 3)
+            ])
+        ]
+        let page = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        #expect(page.contains("class=\"attention-band\""))
+        // Every item names its feature (heading) and slice id.
+        #expect(page.contains(">n0</span>"))           // the escalated slice
+        #expect(page.contains(">u-node</span>"))       // the unblocker slice
+        #expect(page.contains(">Feature · alpha</span>"))
+    }
+
+    @Test func attentionBandRendersNothingWhenNothingToActOn() {
+        // No escalations, no rework, and only 0-count unblockers ⇒ no attention markup at all.
+        let sections = [
+            attentionSection(heading: "Feature · a", statuses: [.done, .runnable], ranking: [
+                RankedRunnable(node: "leaf", unblockCount: 0)
+            ])
+        ]
+        #expect(GraphRenderer.attentionItems(for: sections).isEmpty)
+        #expect(GraphRenderer.attentionBandHTML(sections: sections).isEmpty)
+        let page = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        // No attention-band SECTION element and no heading (the class name still appears once in CSS).
+        #expect(!page.contains("<section class=\"attention-band\""))
+        #expect(!page.contains(">Attention</h2>"))
+    }
+
+    @Test func attentionBandRendersBetweenVerdictAndPortfolio() {
+        let sections = [
+            attentionSection(heading: "Feature · a", statuses: [.escalated], ranking: [])
+        ]
+        let page = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        let verdictAt = try! #require(page.range(of: "class=\"verdict-band\"")).lowerBound
+        let attentionAt = try! #require(page.range(of: "class=\"attention-band\"")).lowerBound
+        let portfolioAt = try! #require(page.range(of: "class=\"portfolio-band\"")).lowerBound
+        #expect(verdictAt < attentionAt)
+        #expect(attentionAt < portfolioAt)
+    }
+
+    @Test func attentionBandIsPureAndDeterministic() {
+        let sections = [
+            attentionSection(heading: "Feature · a", statuses: [.escalated, .rework], ranking: [
+                RankedRunnable(node: "u", unblockCount: 2)
+            ])
+        ]
+        let first = GraphRenderer.attentionItems(for: sections)
+        let second = GraphRenderer.attentionItems(for: sections)
+        #expect(first == second)
+        let firstHTML = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        let secondHTML = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        #expect(firstHTML == secondHTML)
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.
