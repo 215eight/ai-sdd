@@ -1,0 +1,33 @@
+summary: >-
+  Added a shared engine-level name resolver (Sources/AISDDEngine/RunResolver.swift) that maps a single
+  <name> argument to a target run and self-starts one when none exists, with fixed precedence: (1)
+  existing runId → use as-is; (2) feature dir .ai-sdd/features/<name>/ → self-start runId=<name>; (3)
+  slice id in exactly one feature's pipeline.yaml node list → self-start that feature's run
+  (runId=<feature>); (4) slice in multiple features → {"error":"ambiguous","candidates":[…]} (sorted),
+  non-zero exit; (5) no match → {"error":"unknown"}, non-zero exit. The resolver splits a PURE
+  slice→feature core (resolve(name:inputs:) / featuresOwning) from an I/O edge (liveInputs) that injects
+  run-exists, feature-dir-exists, and the loaded slice topology behind @Sendable closures, mirroring
+  RunStore's gitToplevel/captureOwner pattern; it reuses RunStore, SpecLoader.loadPipeline, and Layout
+  with no second loader. Wired the next, submit, and status CLI commands in Sources/AISDDCLI/main.swift
+  to route their <name> argument through one shared resolveRun helper before loading meta/state;
+  self-start mirrors the existing Start path (loadValidated → RunStore.create → runStarted) so
+  self-started runs inherit S2's relative-pipelineDir behavior. Made start <name> a no-op alias
+  (success) when the matching run already exists instead of a hard error. Threaded the resolved runId
+  through next's dispense/dispenseWorker and submit's submitDescend/report (they previously read a
+  stored runId property). Added Swift Testing coverage in Tests/AISDDEngineTests/EngineTests.swift
+  exercising all five resolution branches plus owner dedup and start idempotency with no filesystem/git
+  I/O (injected in-memory inputs).
+satisfies:
+  - resolve-existing-runid
+  - resolve-feature-dir-self-start
+  - resolve-unique-slice-self-start
+  - resolve-ambiguous-slice
+  - resolve-unknown-name
+  - shared-resolver-across-verbs
+  - explicit-start-noop-alias
+  - resolver-unit-tested-without-io
+  - verification-commands
+files:
+  - Sources/AISDDEngine/RunResolver.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift

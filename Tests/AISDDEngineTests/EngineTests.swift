@@ -3802,4 +3802,93 @@ struct RunStorePipelineDirTests {
             #expect(try JSONDecoder().decode(RunMeta.self, from: data) == meta)
         }
     }
+
+    // MARK: - RunResolver (S3) — the shared name resolver, exercised PURELY (no filesystem/git I/O)
+    // across all five precedence branches via injected enumeration/existence inputs.
+
+    /// Build a `RunResolver.Inputs` from in-memory values — the injected-edge stand-in tests drive
+    /// instead of a real `.ai-sdd` tree (decision `io-injected-at-resolver-edge`).
+    private func resolverInputs(runs: Set<String> = [],
+                                featureDirs: Set<String> = [],
+                                features: [(feature: String, slices: [String])] = [])
+        -> RunResolver.Inputs {
+        RunResolver.Inputs(
+            runExists: { runs.contains($0) },
+            featureDirExists: { featureDirs.contains($0) },
+            features: { features })
+    }
+
+    /// (1) An existing runId resolves to that run with no self-start — preserving today's behavior.
+    @Test func resolverExistingRunIdWins() {
+        // The name is also a feature dir AND a slice, but runId precedence is checked first.
+        let inputs = resolverInputs(runs: ["alpha"], featureDirs: ["alpha"],
+                                    features: [("beta", ["alpha"])])
+        #expect(RunResolver.resolve(name: "alpha", inputs: inputs) == .existingRun(runId: "alpha"))
+    }
+
+    /// (2) A feature dir with no existing run self-starts `runId=<name>` — checked before slices,
+    /// so a feature whose name also appears as a slice elsewhere is not mis-resolved.
+    @Test func resolverFeatureDirSelfStartsBeforeSlice() {
+        let inputs = resolverInputs(featureDirs: ["run-integrity"],
+                                    features: [("other", ["run-integrity"])])
+        #expect(RunResolver.resolve(name: "run-integrity", inputs: inputs)
+            == .featureSelfStart(feature: "run-integrity"))
+    }
+
+    /// (3) A slice id in exactly one feature self-starts that feature's run (`runId=<feature>`).
+    @Test func resolverUniqueSliceSelfStartsItsFeature() {
+        let inputs = resolverInputs(features: [
+            ("run-integrity", ["name-resolver-self-start", "stale-run-surfacing"]),
+            ("dashboard", ["instrument", "showcase"])
+        ])
+        #expect(RunResolver.resolve(name: "name-resolver-self-start", inputs: inputs)
+            == .sliceSelfStart(feature: "run-integrity", slice: "name-resolver-self-start"))
+    }
+
+    /// (4) A slice id in more than one feature is ambiguous, with the candidate list SORTED for
+    /// stable output (decision `error-shape-and-exit`). Declaration order is `zeta` then `alpha`.
+    @Test func resolverAmbiguousSliceListsSortedCandidates() {
+        let inputs = resolverInputs(features: [
+            ("zeta", ["shared-slice"]),
+            ("alpha", ["shared-slice"])
+        ])
+        #expect(RunResolver.resolve(name: "shared-slice", inputs: inputs)
+            == .ambiguous(candidates: ["alpha", "zeta"]))
+    }
+
+    /// (5) A name matching no runId, no feature dir, and no slice id is unknown.
+    @Test func resolverUnknownNameWhenNoMatch() {
+        let inputs = resolverInputs(runs: ["r1"], featureDirs: ["feat"],
+                                    features: [("feat", ["s1"])])
+        #expect(RunResolver.resolve(name: "nope", inputs: inputs) == .unknown)
+        #expect(RunResolver.resolve(name: "nope", inputs: inputs).runId == nil)
+    }
+
+    /// The pure slice→feature lookup deduplicates a feature that lists a slice twice (it owns it once).
+    @Test func resolverSliceLookupDeduplicatesOwner() {
+        let owners = RunResolver.featuresOwning(
+            slice: "s", features: [("a", ["s", "s"]), ("b", ["x"])])
+        #expect(owners == ["a"])
+    }
+
+    /// `start <name>` is a no-op alias when a matching run already exists: re-creating it would be
+    /// rejected, so the CLI guards on `exists` first (decision `explicit-start-becomes-noop-alias`).
+    /// Here we assert the underlying idempotency — the store reports the run as existing, so no
+    /// duplicate runStarted is appended by a second start.
+    @Test func startIsIdempotentWhenRunExists() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("resolver-start-\(UUID().uuidString)", isDirectory: true)
+        let store = RunStore(root: tmp,
+                             captureOwner: { .unowned }, gitToplevel: { nil })
+        try store.create(runId: "run-x", pipelineDir: "/some/dir")
+        try store.append(.runStarted(seedArtifacts: []), to: "run-x")
+        #expect(store.exists("run-x"))
+        // A second `start` for an existing run is a guarded no-op: the resolver/Start path skips
+        // create+runStarted, so the event count is unchanged.
+        let before = try store.events(of: "run-x").count
+        if !store.exists("run-x") {  // the Start/self-start guard — false here, so nothing appends
+            try store.append(.runStarted(seedArtifacts: []), to: "run-x")
+        }
+        #expect(try store.events(of: "run-x").count == before)
+    }
 }

@@ -34,6 +34,48 @@ private func encodeJSON<T: Encodable>(_ value: T) throws -> String {
     return String(decoding: try encoder.encode(value), as: UTF8.self)
 }
 
+/// Resolve a `<name>` argument (a runId, feature slug, or unique slice name) to a runId via the one
+/// shared engine resolver, self-starting a run when none exists (S3). On a feature-dir or unique-slice
+/// match with no run, this mirrors the Start command — validate the feature pipeline dir, create the
+/// run, append `runStarted` — so a self-started run is indistinguishable from a hand-started one and
+/// inherits S2's relative-pipelineDir behavior. On ambiguity/no-match it prints the structured JSON
+/// object to stdout and throws `ExitCode.failure` (non-zero), starting no run. Used by next/submit/status.
+private func resolveRun(name: String) throws -> String {
+    let store = runStore()
+    let resolution = RunResolver.resolve(
+        name: name, inputs: RunResolver.liveInputs(workspace: workspace(), store: store))
+
+    switch resolution {
+    case let .existingRun(runId):
+        return runId
+    case let .featureSelfStart(feature):
+        try selfStart(runId: feature, featureName: feature, store: store)
+        return feature
+    case let .sliceSelfStart(feature, _):
+        try selfStart(runId: feature, featureName: feature, store: store)
+        return feature
+    case let .ambiguous(candidates):
+        struct AmbiguousError: Encodable { let error = "ambiguous"; let candidates: [String] }
+        print(try encodeJSON(AmbiguousError(candidates: candidates)))
+        throw ExitCode.failure
+    case .unknown:
+        struct UnknownError: Encodable { let error = "unknown" }
+        print(try encodeJSON(UnknownError()))
+        throw ExitCode.failure
+    }
+}
+
+/// Self-start a run for a feature, mirroring the Start command's create+runStarted sequence
+/// (decision `self-start-mirrors-start-command`). Idempotent: if the run already exists (e.g. a
+/// concurrent self-start) this is a no-op, so re-resolving is safe.
+private func selfStart(runId: String, featureName: String, store: RunStore) throws {
+    guard !store.exists(runId) else { return }
+    let dir = RunResolver.featureDir(workspace: workspace(), feature: featureName)
+    _ = try loadValidated(dir.path)
+    try store.create(runId: runId, pipelineDir: dir.standardizedFileURL.path)
+    try store.append(.runStarted(seedArtifacts: []), to: runId)
+}
+
 /// A node that expands into a sub-pipeline (a slice).
 private func isSlice(_ node: PipelineNode) -> Bool { node.pipeline != nil }
 
@@ -244,7 +286,13 @@ struct Start: ParsableCommand {
         let (env, _, _) = try loadValidated(dir)
         let runId = id ?? "run-\(UUID().uuidString.prefix(8).lowercased())"
         let store = runStore()
-        guard !store.exists(runId) else { throw ValidationError("run '\(runId)' already exists") }
+        // `start` is an explicit verb but a no-op alias when a matching run already exists
+        // (decision `explicit-start-becomes-noop-alias`): re-running is idempotent, not an error.
+        guard !store.exists(runId) else {
+            print("run \(runId) already started on pipeline '\(env.metadata.name)' (no-op)")
+            print("→ ai-sdd status \(runId)")
+            return
+        }
 
         let pipelineDir = URL(fileURLWithPath: dir, isDirectory: true).standardizedFileURL.path
         try store.create(runId: runId, pipelineDir: pipelineDir)
@@ -259,14 +307,12 @@ struct Start: ParsableCommand {
 
 struct Status: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Show a Run's state and what is runnable now.")
-    @Argument(help: "Run id.")
-    var runId: String
+    @Argument(help: "Run id, feature slug, or unique slice name (self-starts a run when none exists).")
+    var name: String
 
     func run() throws {
+        let runId = try resolveRun(name: name)
         let store = runStore()
-        guard store.exists(runId) else {
-            throw ValidationError("no run '\(runId)' (looked in .ai-sdd/runs)")
-        }
         let meta = try store.meta(of: runId)
         let state = try store.state(of: runId)
         let (env, _, _) = try loadValidated(meta.pipelineDir)
@@ -841,18 +887,16 @@ struct Next: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Render the next runnable Worker's instruction and mark it in progress."
     )
-    @Argument(help: "Run id.")
-    var runId: String
+    @Argument(help: "Run id, feature slug, or unique slice name (self-starts a run when none exists).")
+    var name: String
     @Flag(name: .long, help: "Emit the instruction as JSON instead of Markdown.")
     var json = false
     @Option(name: .long, help: "Pick a specific runnable node instead of the engine's default.")
     var node: String?
 
     func run() throws {
+        let runId = try resolveRun(name: name)
         let store = runStore()
-        guard store.exists(runId) else {
-            throw ValidationError("no run '\(runId)' (looked in .ai-sdd/runs)")
-        }
         let meta = try store.meta(of: runId)
         let (env, workers, _) = try loadValidated(meta.pipelineDir)
         let pipeline = env.spec
@@ -876,7 +920,7 @@ struct Next: ParsableCommand {
             return
         }
 
-        try dispense(store: store, dir: meta.pipelineDir, node: pickNode,
+        try dispense(store: store, runId: runId, dir: meta.pipelineDir, node: pickNode,
                      workers: workers, state: state, pathIds: [], stack: nil, scope: { $0 })
     }
 
@@ -884,12 +928,12 @@ struct Next: ParsableCommand {
     /// slice (kind: pipeline) is marked in progress, then we recurse into its sub-pipeline,
     /// composing `scope` so the leaf's events nest under every ancestor slice. Works to arbitrary
     /// depth (program → feature → slice → worker) — the self-similar model made executable (ADR-0028).
-    private func dispense(store: RunStore, dir: String, node: PipelineNode,
+    private func dispense(store: RunStore, runId: String, dir: String, node: PipelineNode,
                           workers: [String: WorkerSpec], state: RunState,
                           pathIds: [String], stack: String?,
                           scope: (RunEvent) -> RunEvent) throws {
         guard isSlice(node) else {
-            try dispenseWorker(store: store, node: node,
+            try dispenseWorker(store: store, runId: runId, node: node,
                                worker: node.worker.flatMap { workers[$0] } ?? WorkerSpec(),
                                state: state, path: pathIds, stack: stack, scope: scope)
             return
@@ -905,7 +949,7 @@ struct Next: ParsableCommand {
             try emitIdle(state: subState, pipeline: subEnv.spec)
             return
         }
-        try dispense(store: store, dir: subDir, node: subNode,
+        try dispense(store: store, runId: runId, dir: subDir, node: subNode,
                      workers: subWorkers, state: subState,
                      pathIds: pathIds + [node.id], stack: node.stack ?? stack,
                      scope: { scope(.scoped(slice: node.id, event: $0)) })
@@ -914,7 +958,7 @@ struct Next: ParsableCommand {
     /// Render a Worker node and mark it in progress. Idempotent — re-running `next` before
     /// `submit` re-renders the same node and appends no duplicate event. `path` is the chain of
     /// ancestor slice ids (empty at the top level); the innermost is the worker's direct slice.
-    private func dispenseWorker(store: RunStore, node: PipelineNode, worker: WorkerSpec,
+    private func dispenseWorker(store: RunStore, runId: String, node: PipelineNode, worker: WorkerSpec,
                                 state: RunState, path: [String], stack: String?,
                                 scope: (RunEvent) -> RunEvent) throws {
         if !state.inProgressNodes.contains(node.id) {
@@ -951,8 +995,8 @@ struct Submit: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Submit an in-progress node's output: validate it, run its gates, advance or rework."
     )
-    @Argument(help: "Run id.")
-    var runId: String
+    @Argument(help: "Run id, feature slug, or unique slice name (self-starts a run when none exists).")
+    var name: String
     @Option(name: .long, help: "Which in-progress node to submit (required if more than one).")
     var node: String?
     @Option(name: .long, parsing: .upToNextOption,
@@ -962,10 +1006,8 @@ struct Submit: ParsableCommand {
     var json = false
 
     func run() throws {
+        let runId = try resolveRun(name: name)
         let store = runStore()
-        guard store.exists(runId) else {
-            throw ValidationError("no run '\(runId)' (looked in .ai-sdd/runs)")
-        }
         let meta = try store.meta(of: runId)
         let (env, workers, checks) = try loadValidated(meta.pipelineDir)
         let pipeline = env.spec
@@ -978,10 +1020,10 @@ struct Submit: ParsableCommand {
         let topTarget = try resolve(node, among: state.inProgressNodes, level: "")
         let topNode = pipeline.nodes.first { $0.id == topTarget }!
 
-        let result = try submitDescend(store: store, dir: meta.pipelineDir, node: topNode,
+        let result = try submitDescend(store: store, runId: runId, dir: meta.pipelineDir, node: topNode,
                                        workers: workers, checks: checks, pipeline: pipeline,
                                        state: state, pathIds: [], stack: nil, scope: { $0 })
-        try report(outcome: result.outcome, path: result.path, completedSlices: result.completed,
+        try report(runId: runId, outcome: result.outcome, path: result.path, completedSlices: result.completed,
                    topPipeline: pipeline, topState: try store.state(of: runId))
     }
 
@@ -990,7 +1032,7 @@ struct Submit: ParsableCommand {
     /// completed — at *its parent's* scope — cascading up to the program root so dependents at
     /// every level unlock (ADR-0028). Returns the leaf outcome, the leaf's ancestor path, and the
     /// slice ids that completed (innermost first).
-    private func submitDescend(store: RunStore, dir: String, node: PipelineNode,
+    private func submitDescend(store: RunStore, runId: String, dir: String, node: PipelineNode,
                                workers: [String: WorkerSpec], checks: [String: CheckSpec],
                                pipeline: PipelineSpec, state: RunState,
                                pathIds: [String], stack: String?,
@@ -1016,7 +1058,7 @@ struct Submit: ParsableCommand {
         let subTarget = try resolve(nil, among: subState.inProgressNodes, level: "slice '\(node.id)': ")
         let subNode = subEnv.spec.nodes.first { $0.id == subTarget }!
 
-        var result = try submitDescend(store: store, dir: subDir, node: subNode,
+        var result = try submitDescend(store: store, runId: runId, dir: subDir, node: subNode,
                                        workers: subWorkers, checks: subChecks,
                                        pipeline: subEnv.spec, state: subState,
                                        pathIds: pathIds + [node.id], stack: node.stack ?? stack,
@@ -1047,7 +1089,7 @@ struct Submit: ParsableCommand {
             + "(\(inProgress.sorted().joined(separator: ", ")))")
     }
 
-    private func report(outcome: AdvanceOutcome, path: [String], completedSlices: [String],
+    private func report(runId: String, outcome: AdvanceOutcome, path: [String], completedSlices: [String],
                         topPipeline: PipelineSpec, topState: RunState) throws {
         let label = (path + [outcome.node]).joined(separator: "/")
         let runnable = Scheduler.runnable(topState, topPipeline)

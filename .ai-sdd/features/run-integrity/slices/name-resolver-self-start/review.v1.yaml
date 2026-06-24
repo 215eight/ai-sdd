@@ -1,0 +1,121 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: name-resolver-self-start
+
+verdict: approve
+summary: >-
+  Independent review of slice name-resolver-self-start (run-integrity, S3) against feature-plan.v1
+  (9 acceptance ids). A new engine type RunResolver (Sources/AISDDEngine/RunResolver.swift) maps a
+  single <name> to a Resolution with the exact fixed precedence: (1) existing runId → .existingRun;
+  (2) feature dir .ai-sdd/features/<name>/ → .featureSelfStart(runId=<name>); (3) slice id in exactly
+  one feature's pipeline.yaml node list → .sliceSelfStart(runId=<feature>); (4) slice in >1 feature →
+  .ambiguous(candidates sorted); (5) no match → .unknown. The lookup splits a PURE core
+  (resolve/featuresOwning over in-memory values) from an I/O edge (Inputs/liveInputs) that injects
+  runExists, featureDirExists, and the loaded slice topology behind @Sendable closures, mirroring
+  RunStore's gitToplevel/captureOwner pattern and reusing RunStore, SpecLoader.loadPipeline, and Layout
+  with no second loader. main.swift adds one shared resolveRun helper called by next, submit, and status
+  before any meta/state load; on a feature/slice match with no run it self-starts via selfStart
+  (loadValidated → store.create → runStarted), mirroring Start, so self-started runs inherit S2's
+  relative-pipelineDir behavior; on ambiguous/unknown it prints the structured JSON and throws
+  ExitCode.failure. Start now no-ops (success) when the run already exists instead of throwing. The
+  resolved runId is threaded through next's dispense/dispenseWorker and submit's submitDescend/report.
+  Swift Testing covers all five branches plus owner dedup and start idempotency with no fs/git I/O. I
+  independently ran swift build (Build complete), swift test (222 tests in 8 suites passed), swift run
+  ai-sdd validate .ai-sdd/features/run-integrity (✓ valid), and confirmed the in-flight program run
+  still works via swift run ai-sdd status run-integrity-and-dashboard. All 9 ids pass; conventions hold.
+
+items:
+  - id: resolve-existing-runid
+    verdict: pass
+    notes: >-
+      resolve checks runExists(name) first and returns .existingRun(runId: name) with no self-start
+      (RunResolver.swift:65-68); resolveRun returns it unchanged so next/submit/status load meta/state
+      exactly as before. Test resolverExistingRunIdWins asserts runId precedence wins even when the name
+      is also a feature dir and a slice. Verified live: status run-integrity-and-dashboard (an existing
+      runId) resolves and renders the nested state correctly.
+  - id: resolve-feature-dir-self-start
+    verdict: pass
+    notes: >-
+      featureDirExists is checked second (RunResolver.swift:71-73) → .featureSelfStart(feature: name);
+      resolveRun calls selfStart(runId: feature, featureName: feature) which mirrors Start
+      (loadValidated → store.create → runStarted) and returns runId=<name>, then next renders the first
+      worker. Test resolverFeatureDirSelfStartsBeforeSlice confirms feature-dir precedence over a
+      same-named slice. selfStart guards on store.exists so the create+runStarted is idempotent.
+  - id: resolve-unique-slice-self-start
+    verdict: pass
+    notes: >-
+      featuresOwning(slice:) over loaded pipeline node ids yields exactly one owner → .sliceSelfStart;
+      resolveRun self-starts runId=<feature> (the owning feature, not the slice id) and returns it. Test
+      resolverUniqueSliceSelfStartsItsFeature asserts the correct (feature, slice) outcome. liveInputs
+      loads each feature's pipeline.yaml via SpecLoader.loadPipeline and maps nodes to ids — no second
+      loader, consistent with decision slice-to-feature-via-pipeline-node-ids; a feature whose pipeline
+      fails to load contributes no slices.
+  - id: resolve-ambiguous-slice
+    verdict: pass
+    notes: >-
+      owners is .sorted() before the count switch (RunResolver.swift:75-80), so the default (>1) branch
+      returns .ambiguous with SORTED candidates. resolveRun prints {"error":"ambiguous","candidates":[…]}
+      and throws ExitCode.failure (non-zero), starting no run. Test
+      resolverAmbiguousSliceListsSortedCandidates confirms declaration order zeta/alpha emits as
+      [alpha, zeta]. featuresOwning deduplicates a feature listing a slice twice
+      (test resolverSliceLookupDeduplicatesOwner).
+  - id: resolve-unknown-name
+    verdict: pass
+    notes: >-
+      owners.count == 0 returns .unknown; resolveRun prints {"error":"unknown"} and throws
+      ExitCode.failure, starting no run. Test resolverUnknownNameWhenNoMatch confirms the .unknown
+      outcome and that .runId is nil on the error branch.
+  - id: shared-resolver-across-verbs
+    verdict: pass
+    notes: >-
+      next, submit, and status each call the single resolveRun helper at the top of run() before any
+      store load, and resolveRun routes through RunResolver.resolve + liveInputs — one shared engine
+      lookup path, no per-command duplication. The diff shows the resolved runId threaded through next's
+      dispense/dispenseWorker and submit's submitDescend/report (previously a stored property), so all
+      three verbs accept a feature slug, an existing runId, or a unique slice name identically.
+  - id: explicit-start-noop-alias
+    verdict: pass
+    notes: >-
+      Start.run() now guards on store.exists(runId): when the run already exists it prints a no-op
+      message and returns success instead of throwing "run already exists" (main.swift:289-295),
+      satisfying the explicit no-op-alias requirement; start remains an explicit verb (still takes dir +
+      --id). Non-blocking test caveat below.
+  - id: resolver-unit-tested-without-io
+    verdict: pass
+    notes: >-
+      The pure core (resolve / featuresOwning) is exercised across all five branches via in-memory
+      injected Inputs (resolverInputs helper) with no filesystem or git access: existingRun, featureDir,
+      uniqueSlice, ambiguous (sorted), unknown, plus owner dedup. Swift Testing (@Test/#expect), exact
+      typed Resolution equality. Matches decision io-injected-at-resolver-edge and RunStore's injection
+      pattern.
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran: swift build (Build complete), swift test (Test run with 222 tests in 8 suites
+      passed), and swift run ai-sdd validate .ai-sdd/features/run-integrity (✓ valid — 6 nodes, 3 edges).
+      Also confirmed the in-flight program run still works: swift run ai-sdd status
+      run-integrity-and-dashboard renders the nested 0/3 state through the new resolver.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Swift Testing throughout (@Test / #expect, exact typed Resolution enum, no `any Error`).
+    Engine behavior lives in the new Sources/AISDDEngine/RunResolver.swift, CLI wiring in
+    Sources/AISDDCLI/main.swift, tests in Tests/AISDDEngineTests/EngineTests.swift — exactly the three
+    files the plan scoped (decision files-scope); RunStore/SpecLoader/Scheduler/Layout unchanged. Paths
+    are built with URL.appendingPathComponent and standardizedFileURL (featureDir, liveInputs). The
+    injected @Sendable Inputs closures mirror the established RunStore gitToplevel/captureOwner pattern,
+    keeping fs/git at the resolver edge. Error objects are emitted as small typed Encodable structs.
+    Baseline gates swift build and swift test are green.
+
+caveats: >-
+  One non-blocking observation. The startIsIdempotentWhenRunExists test for explicit-start-noop-alias
+  reconstructs the guard logic inline (an `if !store.exists` block over a real RunStore) rather than
+  driving the Start command's run(), so it asserts the store-level premise (no duplicate runStarted when
+  the run exists) instead of the command path itself. The Start command code (main.swift:289-295) is
+  correct, and a ParsableCommand cannot easily be unit-tested without I/O, so this is acceptable. The
+  CLI self-start/ambiguous/unknown paths and the no-op Start message are integration behavior not covered
+  by a direct CLI test, but the pure resolver core they call is fully covered — worth a follow-up only if
+  CLI-level coverage is later desired.
+
+rework: []

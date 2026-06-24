@@ -1,0 +1,167 @@
+summary: >-
+  Add one shared engine-level name resolver, used by the next, submit, and status CLI verbs, that
+  maps a single <name> argument to a runId and self-starts a run when none exists. Resolution order:
+  (1) an existing runId is used as-is; (2) a feature dir .ai-sdd/features/<name>/ starts a run
+  runId=<name> then advances; (3) a slice id appearing in exactly one feature's pipeline.yaml node
+  list starts that feature's run (runId=<feature>) then advances; (4) a slice in multiple features
+  returns {"error":"ambiguous","candidates":[…]} with a non-zero exit; (5) no match returns
+  {"error":"unknown"} with a non-zero exit. start <name> stays an explicit verb and is a no-op alias
+  when a matching run already exists. The resolver lives in AISDDEngine, not the CLI shim, so all
+  three verbs share a single lookup path, and its pure slice->feature core is unit-tested without I/O.
+scope:
+  in:
+    - Add a new resolver type to Sources/AISDDEngine (e.g. RunResolver.swift) that resolves a <name>
+      argument to a target run, reusing the existing RunStore, SpecLoader, and Layout substrate — no
+      second loader and no new persistence format.
+    - Define a pure slice->feature lookup over loaded PipelineSpec node ids (each feature's slice
+      list is its pipeline.yaml nodes), returning the unique owning feature, the ambiguous candidate
+      list, or no match — exercised in tests from in-memory pipeline specs with no filesystem access.
+    - Keep filesystem and git access at the resolver edge via injected closures (the features-dir
+      enumeration, per-feature pipeline load, and run existence check), mirroring RunStore's
+      gitToplevel / captureOwner injection pattern so the core stays I/O-free and testable.
+    - Resolution precedence is checked in this fixed order — existing runId first, then feature dir
+      .ai-sdd/features/<name>/, then unique slice id across features, then ambiguous, then unknown.
+    - On a feature-dir or unique-slice match with no existing run, self-start by validating the
+      feature pipeline dir, creating the run (runId=<name> for a feature, runId=<feature> for a
+      slice) and appending runStarted, exactly mirroring the existing Start command, then proceed.
+    - Wire the resolver into the next, submit, and status commands in Sources/AISDDCLI/main.swift so
+      each accepts a feature slug, an existing runId, or a slice name in place of the bare runId, and
+      resolves it through the one shared path before loading meta/state.
+    - Emit a structured JSON error object ({"error":"ambiguous","candidates":[…]} or
+      {"error":"unknown"}) and exit non-zero when resolution fails, for all three verbs.
+    - Keep start <name> an explicit verb — when a matching run already exists it is a no-op alias
+      (success, no duplicate run) rather than the current hard error.
+    - Add focused Swift Testing coverage in Tests/AISDDEngineTests/EngineTests.swift for all five
+      resolution branches (runId, feature dir, unique slice, ambiguous, unknown) and the no-op start.
+  out:
+    - No changes to the RunStore persistence format, event log shape, Reducer, Scheduler, or the
+      RunMeta / pipelineDir relative-and-heal behavior shipped in S2.
+    - No changes to event timestamps / owner capture (S1), stale-run surfacing (S4), the ai-sdd-run
+      skill (S5), or the pre-commit tripwire (S6) — those are separate slices.
+    - No new top-level CLI subcommand and no change to validate, check, scope, cover, compile, graph,
+      plan, surface, or drift.
+    - No program-vs-feature directory disambiguation beyond the documented feature-dir + slice-list
+      lookup under .ai-sdd/features/*; programs under .ai-sdd/programs are not enumerated by this slice.
+    - No new architecture decision or ADR edit; no change to docs/architecture.md or docs/decisions.md.
+acceptance:
+  - id: resolve-existing-runid
+    description: >-
+      next/submit/status <name> where <name> is an existing runId resolves to that run with no
+      self-start and behaves exactly as passing a runId does today.
+  - id: resolve-feature-dir-self-start
+    description: >-
+      next <feature> where .ai-sdd/features/<feature>/ exists and no run exists self-starts a run
+      with runId=<feature> (validate + create + runStarted) and returns the first worker instruction.
+  - id: resolve-unique-slice-self-start
+    description: >-
+      next <slice> where the slice id appears in exactly one feature's pipeline.yaml node list
+      self-starts that feature's run (runId=<feature>) and returns the first worker instruction.
+  - id: resolve-ambiguous-slice
+    description: >-
+      A <name> that is a slice id in more than one feature returns the structured object
+      {"error":"ambiguous","candidates":[…]} listing the candidate features and exits non-zero,
+      starting no run.
+  - id: resolve-unknown-name
+    description: >-
+      A <name> that matches no existing runId, no feature dir, and no slice id returns
+      {"error":"unknown"} and exits non-zero, starting no run.
+  - id: shared-resolver-across-verbs
+    description: >-
+      next, submit, and status all route the <name> argument through the same engine resolver, so a
+      feature slug, an existing runId, or a unique slice name works identically on all three verbs.
+  - id: explicit-start-noop-alias
+    description: >-
+      start <name> remains an explicit verb and is a no-op alias (success, no duplicate run) when a
+      matching run already exists, instead of erroring.
+  - id: resolver-unit-tested-without-io
+    description: >-
+      The resolver's slice->feature lookup is unit-tested without filesystem or git I/O across all
+      five branches via injected enumeration/existence inputs (Swift Testing, exact typed outcomes).
+  - id: verification-commands
+    description: >-
+      swift build, swift test, and swift run ai-sdd validate .ai-sdd/features/run-integrity pass
+      after implementation.
+decisions:
+  - id: resolver-lives-in-engine
+    status: closed
+    decision: >-
+      Implement the resolver as a new type in Sources/AISDDEngine (e.g. RunResolver.swift), not in
+      the CLI shim, and call it from the next/submit/status commands.
+    rationale: >-
+      The slice brief and the run-integrity requirements both state the resolver lives in the engine
+      and is the single lookup path shared by all three verbs; the CLI commands stay thin shims over
+      engine behavior, matching the existing Start/Status/Next/Submit shape in main.swift.
+  - id: slice-to-feature-via-pipeline-node-ids
+    status: closed
+    decision: >-
+      Treat each feature's slice list as the node ids of its .ai-sdd/features/<feature>/pipeline.yaml,
+      loaded with SpecLoader.loadPipeline(atDirectory:); a slice id present in exactly one feature's
+      node list resolves to that feature.
+    rationale: >-
+      Feature pipelines (e.g. run-integrity, project-status-dashboard) declare their slices as
+      kind:pipeline nodes whose id is the slice name; reusing SpecLoader.loadPipeline keeps the
+      decode-only topology read consistent with graph/project enumeration and avoids a second loader.
+  - id: resolution-precedence-order
+    status: closed
+    decision: >-
+      Check precedence strictly in order: (1) existing runId, (2) feature dir, (3) unique slice id,
+      (4) ambiguous slice, (5) unknown — first match wins.
+    rationale: >-
+      This is the exact order the slice brief specifies; runId-first preserves today's behavior for
+      callers already passing a runId, and feature-dir before slice avoids a feature whose name also
+      appears as a slice elsewhere being mis-resolved.
+  - id: self-start-mirrors-start-command
+    status: closed
+    decision: >-
+      Self-start by reusing the existing Start path: standardize/validate the feature pipeline dir,
+      RunStore.create(runId:pipelineDir:), then append a runStarted event; runId=<name>
+      for a feature-dir match and runId=<feature> for a slice match.
+    rationale: >-
+      Start already encodes the correct create+runStarted sequence and RunStore.create already
+      relativizes pipelineDir per S2; reusing it guarantees self-started runs are indistinguishable
+      from hand-started ones and avoids duplicating persistence logic.
+  - id: error-shape-and-exit
+    status: closed
+    decision: >-
+      On ambiguity emit {"error":"ambiguous","candidates":[…]} with the sorted candidate feature
+      list; on no match emit {"error":"unknown"}; both exit non-zero (ExitCode.failure) for all three
+      verbs.
+    rationale: >-
+      The brief fixes these two JSON shapes and non-zero exits; a stable machine-readable object lets
+      the downstream S5 skill and S6 hook react deterministically, and sorting candidates keeps output
+      stable for tests.
+  - id: explicit-start-becomes-noop-alias
+    status: closed
+    decision: >-
+      Change the Start command so that when the resolved run already exists it succeeds as a no-op
+      alias rather than throwing "run already exists".
+    rationale: >-
+      The brief requires start <name> to remain an explicit verb but be a no-op when a matching run
+      exists, so re-running start is idempotent and safe inside the status-driven loop.
+  - id: io-injected-at-resolver-edge
+    status: closed
+    decision: >-
+      Keep filesystem/git access (features-dir enumeration, per-feature pipeline load, run-exists
+      check) behind injected closures, leaving a pure slice->feature core that tests drive from
+      in-memory PipelineSpec values.
+    rationale: >-
+      The run-integrity constraints require pure resolver functions unit-tested without I/O, matching
+      RunStore's existing gitToplevel/captureOwner injection; this lets all five branches be covered
+      deterministically in EngineTests without a real .ai-sdd tree.
+  - id: files-scope
+    status: closed
+    decision: >-
+      Limit the change to one new engine file (Sources/AISDDEngine/RunResolver.swift), the CLI
+      commands in Sources/AISDDCLI/main.swift, and tests in Tests/AISDDEngineTests/EngineTests.swift.
+    rationale: >-
+      The resolver is new engine behavior plus a CLI wiring change; RunStore, SpecLoader, Scheduler,
+      and Layout already provide the needed substrate and must not change, so no other files are touched.
+files:
+  - Sources/AISDDEngine/RunResolver.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/run-integrity
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml
