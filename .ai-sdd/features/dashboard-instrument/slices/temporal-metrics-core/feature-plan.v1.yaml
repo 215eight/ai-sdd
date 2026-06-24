@@ -1,0 +1,86 @@
+summary: >-
+  Add the first time-axis dashboard metrics — per-slice cycle time (completed − started),
+  WIP aging (now − started for in-progress slices, flagged past a threshold), and velocity
+  (completions per trailing window) — computed as pure functions from run-integrity's
+  timestamped `at` events (RunEventRecord) with an INJECTED `now`. Velocity replaces the
+  S1 placeholder so it co-derives the verdict band's trajectory. Every metric SELF-SUPPRESSES
+  (renders `—` / contributes nothing) when a run lacks enough timestamped history, so legacy
+  un-timestamped events (`at == nil`) never produce a zero or false precision.
+scope:
+  in:
+    - Add a pure temporal-metrics module in AISDDEngine that folds a run's [RunEventRecord] (from RunStore.eventsWithMetadata) plus an injected `now` into per-slice cycle time, per-slice WIP age, and a feature-level velocity (completions in a trailing window).
+    - Identify a slice's start and completion from RunEvent.nodeStarted(node:) and RunEvent.nodeCompleted(node:_:), pairing each with its record's `at` (RFC 3339 UTC `…Z` string parsed via the same ISO8601 formatter RunStore.utcZ uses); descend through RunEvent.scoped(slice:event:) so a node's events are attributed to the right slice.
+    - Cycle time = parsed(at of nodeCompleted) − parsed(at of nodeStarted) for a slice that has BOTH timestamped events; nil/suppressed otherwise.
+    - WIP age = `now` − parsed(at of nodeStarted) for a slice started-but-not-completed with a timestamped start; flagged when it exceeds a named threshold constant; nil/suppressed when the start `at` is absent.
+    - Velocity = count of nodeCompleted events whose `at` falls within [now − window, now], over a named trailing-window constant; nil/suppressed when there are zero timestamped completions to count from (thin/legacy history).
+    - Thread the matched run's [RunEventRecord] for each section into the dashboard so the verdict/portfolio render can read temporal metrics; thread the already-existing injected `now` (read once at the CLI wall-clock boundary, main.swift) down to where metrics are computed and rendered.
+    - Wire velocity into the verdict trajectory: extend the trajectory derivation so a present (non-suppressed) velocity signal co-derives `on track` / `slipping` / `stalled` alongside the existing escalation/rework precedence, replacing the S1 "velocity deferred / not read" placeholder; when velocity is suppressed the trajectory falls back to today's escalation/rework-only behavior unchanged.
+    - Render cycle time and WIP age per slice and velocity in the verdict band, showing `—` for any suppressed metric; pure render with no wall-clock read.
+    - Add focused Swift Testing coverage: a timestamped-event fixture with a fixed injected `now` asserting deterministic cycle time / WIP age / velocity values and the velocity→trajectory effect; a thin-history / un-timestamped fixture asserting every metric self-suppresses (renders `—`, contributes no trajectory signal) rather than emitting zeros.
+  out:
+    - Burndown (cumulative-done log replay) and ETA-as-a-band — that is S6 (burndown-and-eta).
+    - The whats-changed-since-T-7d replay-to-prior-instant + diff — that is S7 (whats-changed-diff).
+    - Any wall-clock read inside a pure function, gate, or check; `now` is always an injected parameter.
+    - Timestamp backfill, effort/story-point weighting, a single-date false-precision ETA, server/auto-refresh/live multi-machine, or a second dashboard path — the shipped renderer + assemblers are reused.
+    - No changes to RunStore persistence format, RunEvent/RunEventRecord shapes, Reducer, Scheduler, or DashboardProjection status precedence.
+acceptance:
+  - id: cycle-time-from-at-events
+    description: Per-slice cycle time is computed as (nodeCompleted.at − nodeStarted.at) from a timestamped-event fixture; a slice with both timestamped events yields its exact elapsed duration deterministically.
+  - id: wip-aging-from-injected-now
+    description: For a slice started-but-not-completed with a timestamped start, WIP age = injected `now` − nodeStarted.at, and is flagged when it exceeds the named threshold constant; the value is deterministic for a fixed injected `now`.
+  - id: velocity-trailing-window
+    description: Velocity counts nodeCompleted events whose `at` falls within the named trailing window ending at the injected `now`, producing a deterministic completions-per-window count for a fixed `now`.
+  - id: velocity-feeds-verdict-trajectory
+    description: A present (non-suppressed) velocity co-derives the verdict trajectory, replacing the S1 placeholder that explicitly did not read velocity; a fixture asserts velocity changes the rendered trajectory.
+  - id: self-suppress-on-thin-or-legacy-history
+    description: A thin-history or un-timestamped (`at == nil`) fixture shows every temporal metric rendering `—` / contributing no trajectory signal rather than emitting zeros or false precision.
+  - id: deterministic-injected-now
+    description: All temporal metrics derive from the injected `now` parameter and parsed `at` strings only — no wall-clock read in any pure function — so identical inputs yield byte-identical output.
+  - id: existing-behavior-preserved
+    description: When velocity is suppressed the trajectory equals today's escalation/rework-only result; existing dashboard modes, swift build, and swift test stay green.
+  - id: verification-commands
+    description: swift build, swift test, ai-sdd validate .ai-sdd/features/dashboard-instrument, the project dashboard render, and the feature-plan schema check all pass after implementation.
+decisions:
+  - id: pure-temporal-module-in-engine
+    status: closed
+    decision: "Add temporal-metrics computation as pure I/O-free functions in AISDDEngine (a TemporalMetrics enum, sibling to DashboardCriticalPath), taking [RunEventRecord] and an injected `now: Date` and returning per-slice cycle time / WIP age and a feature velocity. No file, network, or wall-clock access inside."
+    rationale: Mirrors the established pure-projection boundary (DashboardCriticalPath, DashboardProjection) so the metrics are unit-tested without I/O, exactly as swift.md and the brief require.
+  - id: identify-slices-from-scoped-node-events
+    status: closed
+    decision: A slice's start/completion are RunEvent.nodeStarted(node:) and RunEvent.nodeCompleted(node:_:) carried inside RunEvent.scoped(slice:event:); the module unwraps `scoped` to attribute each node event to its slice and pairs it with the enclosing record's `at`.
+    rationale: This is exactly how the Reducer and RunStore already represent per-slice progress (Run.swift); reusing it avoids inventing a second event model.
+  - id: parse-at-with-runstore-formatter
+    status: closed
+    decision: Parse each record's RFC 3339 UTC `…Z` `at` string with the same zone-pinned ISO8601 formatter RunStore.utcZ produces; a record with `at == nil` or an unparseable `at` is treated as "no timestamp" for that event.
+    rationale: "`at` is stored canonically by RunStore.utcZ; parsing with the matching formatter keeps storage and read symmetric and total-ordered, and a nil/bad `at` degrades to suppression, never a guessed instant."
+  - id: now-injected-from-cli-boundary
+    status: closed
+    decision: Reuse the existing single wall-clock boundary — `let now = Date()` in main.swift's dashboardDoc() — already injected into GraphRenderer.dashboardPage(now:). Thread that same `now` (and the matched run's [RunEventRecord], read via RunStore.eventsWithMetadata in the assemblers) down to the verdict render where temporal metrics are computed. No pure function ever reads the clock.
+    rationale: The injection path already exists for the verdict timestamp; extending it to the temporal metrics keeps `now` a single injected value with one consumer boundary, satisfying decision D5 / the brief's "now is a parameter, never read from the clock".
+  - id: self-suppression-rule
+    status: closed
+    decision: Each metric returns nil (rendered as `—`, contributing no signal) unless its required timestamped inputs are present — cycle time needs BOTH a timestamped start and completion for the slice; WIP age needs a timestamped start on an in-progress slice; velocity needs at least one timestamped completion in the window. A suppressed metric is never substituted with 0.
+    rationale: Honest-gaps / no-false-precision is the slice's core guarantee (acceptance + D5); legacy `at == nil` events must suppress, not zero-fill.
+  - id: velocity-feeds-trajectory
+    status: closed
+    decision: Extend GraphRenderer.dashboardTrajectory so a present (non-suppressed) velocity co-derives the verdict trajectory alongside the existing escalation→rework precedence, replacing the S1 placeholder comment "velocity is explicitly deferred ... and not read". When velocity is suppressed, the derivation falls back to today's escalation/rework-only result unchanged.
+    rationale: The S1 scaffold deliberately left velocity as a deferred input (GraphRenderer.swift line 411); this slice is the one that wires it, and the fallback preserves existing behavior for thin-history runs.
+  - id: render-in-verdict-band
+    status: closed
+    decision: Render cycle time / WIP age / velocity in the verdict band via projectRollupHTML (the existing pure verdict/portfolio render that already receives `now`), showing `—` for any suppressed metric; thread the per-section temporal inputs onto the assembled sections the way staleRun / runnableRanking / requirementsDefinition were threaded.
+    rationale: The verdict band is where trajectory + generation timestamp already live and where `now` already flows, so temporal metrics layer in without a new render path or a second `now` consumer.
+  - id: minimal-files
+    status: closed
+    decision: Touch DashboardProjection.swift (pure TemporalMetrics functions + thread the matched run's records through the assemblers), GraphRenderer.swift (verdict-band render + velocity→trajectory wiring + the DashboardSection field that carries temporal inputs), main.swift (pass the per-section [RunEventRecord]/now into assembly if not already reachable), and EngineTests.swift (the two fixtures). No new files.
+    rationale: All temporal computation, the verdict render, and the section model already live in these files; adding behavior in place keeps the change minimal and matches the dashboard-cli-integration mirror plan's file scope.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/dashboard-instrument
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/db.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

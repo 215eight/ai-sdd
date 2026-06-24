@@ -152,10 +152,18 @@ public enum GraphRenderer {
         // recomputing. Defaulted to [] so existing call sites and `Equatable` stay source-stable; an
         // empty set marks nothing.
         public var criticalPathNodes: Set<String>
+        // The matched run's persisted records (`RunStore.eventsWithMetadata`), threaded by the
+        // assemblers (the file-aware boundary) so Part B's pure temporal metrics — cycle time, WIP
+        // age, velocity — read the same run the projection does WITHOUT the renderer touching the
+        // store or the wall clock. Defaulted to [] — mirroring how `staleRun`/`runnableRanking` were
+        // added — so existing `DashboardSection` call sites and `Equatable` stay source-stable; an
+        // empty list (or one with no timestamped `at`s) makes every temporal metric self-suppress.
+        public var runEvents: [RunEventRecord]
 
         public init(heading: String, projection: DashboardProjectionResult, mermaid: String? = nil,
                     staleRun: Bool = false, runnableRanking: [RankedRunnable] = [],
-                    requirementsDefinition: String? = nil, criticalPathNodes: Set<String> = []) {
+                    requirementsDefinition: String? = nil, criticalPathNodes: Set<String> = [],
+                    runEvents: [RunEventRecord] = []) {
             self.heading = heading
             self.projection = projection
             self.mermaid = mermaid
@@ -163,6 +171,7 @@ public enum GraphRenderer {
             self.runnableRanking = runnableRanking
             self.requirementsDefinition = requirementsDefinition
             self.criticalPathNodes = criticalPathNodes
+            self.runEvents = runEvents
         }
     }
 
@@ -408,21 +417,55 @@ public enum GraphRenderer {
     // MARK: - Project rollup (verdict + portfolio bands)
 
     /// The one derived project trajectory. Escalation is the strongest signal and dominates rework
-    /// (feature decision D4); velocity is explicitly deferred to the temporal slices and not read.
+    /// (feature decision D4); a present (non-suppressed) project velocity then co-derives the result
+    /// (decision `velocity-feeds-trajectory`), and a suppressed velocity falls back to the
+    /// escalation/rework-only signal unchanged.
     public enum DashboardTrajectory: String, Equatable, Sendable {
         case onTrack = "on track"
         case slipping
         case stalled
     }
 
-    /// Derive the project trajectory from the aggregated section rows ONLY (no new data source, no
-    /// wall clock): `stalled` when any node is escalated, else `slipping` when any node is in rework,
-    /// else `on track`. Pure and total over the section list.
+    /// Derive the project trajectory from the aggregated section rows ONLY (no velocity, no wall
+    /// clock): `stalled` when any node is escalated, else `slipping` when any node is in rework, else
+    /// `on track`. This is the escalation/rework-only fallback the velocity-aware overload defers to
+    /// when velocity is suppressed; kept as a public entry point so existing callers stay source-stable.
     public static func dashboardTrajectory(for sections: [DashboardSection]) -> DashboardTrajectory {
         let statuses = sections.flatMap(\.projection.rows).map(\.status)
         if statuses.contains(.escalated) { return .stalled }
         if statuses.contains(.rework) { return .slipping }
         return .onTrack
+    }
+
+    /// The velocity-aware trajectory (decision `velocity-feeds-trajectory`). Escalation→rework keep
+    /// strict precedence (escalation ⇒ `stalled`, rework ⇒ `slipping`); only when neither fires does a
+    /// PRESENT project velocity co-derive the verdict: zero completions in the trailing window ⇒
+    /// `slipping` (movement stalled), a positive count ⇒ `on track`. When velocity is SUPPRESSED
+    /// (no timestamped completion to count — thin/legacy history) the result equals the row-only
+    /// `dashboardTrajectory(for:)` unchanged. Pure: `now` is injected; no wall clock is read.
+    public static func dashboardTrajectory(for sections: [DashboardSection], now: Date) -> DashboardTrajectory {
+        let base = dashboardTrajectory(for: sections)
+        // Escalation/rework dominate velocity, so only refine the otherwise-clean `on track` verdict.
+        guard base == .onTrack else { return base }
+        guard let velocity = projectVelocity(for: sections, now: now) else { return base }
+        return velocity > 0 ? .onTrack : .slipping
+    }
+
+    /// The feature-level project velocity for the verdict band: the sum of each section's
+    /// (non-suppressed) trailing-window completion count, computed purely from the threaded
+    /// `runEvents` against the injected `now`. Returns nil — SUPPRESSED — when NO section has a single
+    /// timestamped completion to count (thin/legacy history), so the verdict band renders `—` rather
+    /// than a false `0` (decision `self-suppression-rule`).
+    static func projectVelocity(for sections: [DashboardSection], now: Date) -> Int? {
+        var total = 0
+        var anyPresent = false
+        for section in sections {
+            if let velocity = TemporalMetrics.metrics(from: section.runEvents, now: now).velocity {
+                total += velocity
+                anyPresent = true
+            }
+        }
+        return anyPresent ? total : nil
     }
 
     /// One portfolio health row, derived purely from a section: status headline, slice-count %
@@ -596,7 +639,9 @@ public enum GraphRenderer {
     /// the attention/triage band (escalations, rework, top unblockers — or nothing when clear), and a
     /// portfolio band (one health row per feature), rendered before any per-feature detail.
     private static func projectRollupHTML(sections: [DashboardSection], now: Date) -> String {
-        let trajectory = dashboardTrajectory(for: sections)
+        // Velocity co-derives the trajectory (replacing S1's deferred placeholder); a suppressed
+        // velocity falls back to the escalation/rework-only signal unchanged.
+        let trajectory = dashboardTrajectory(for: sections, now: now)
         let stale = sections.contains { $0.staleRun }
         // The freshness badge REUSES run-integrity's `⚠ stale run` marker — the single trust
         // mechanism — lit when any attached run is stale, and otherwise omitted.
@@ -607,6 +652,7 @@ public enum GraphRenderer {
             "    <section class=\"verdict-band\" aria-label=\"Project verdict\">",
             "      <span class=\"verdict-kicker\">verdict</span>",
             "      <p class=\"verdict-trajectory trajectory-\(trajectoryClass(trajectory))\">\(escapeHTML(trajectory.rawValue))</p>",
+            temporalMetricsHTML(sections: sections, now: now),
             "      <p class=\"verdict-meta\">",
             "        <span class=\"verdict-generated\">generated \(escapeHTML(formatTimestamp(now)))</span>",
             "        \(freshnessBadge)",
@@ -646,6 +692,57 @@ public enum GraphRenderer {
         return [verdict, attention, portfolio]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
+    }
+
+    /// The time-axis metrics block in the verdict band: the feature-level VELOCITY (completions in the
+    /// trailing window), then per-slice CYCLE TIME and WIP AGE — each rendered as `—` when SUPPRESSED
+    /// (its timestamped inputs are absent), never as a false `0`. Pure: reads only the threaded
+    /// `runEvents` and the injected `now` (no wall clock, no store). The renderer stays a pure
+    /// derivation — `TemporalMetrics` does the computation.
+    static func temporalMetricsHTML(sections: [DashboardSection], now: Date) -> String {
+        let velocity = projectVelocity(for: sections, now: now)
+        let velocityText = velocity.map { "\($0) / 7d" } ?? "—"
+
+        // Per-slice cycle time / WIP age, gathered across sections in section + slice-id order so the
+        // output is deterministic. Each section labels its slices by the section heading's feature.
+        var sliceLines: [String] = []
+        for section in sections {
+            let metrics = TemporalMetrics.metrics(from: section.runEvents, now: now)
+            for slice in metrics.slices.keys.sorted() {
+                guard let timing = metrics.slices[slice] else { continue }
+                let cycle = timing.cycleTime.map(formatDuration) ?? "—"
+                let wip = timing.wipAge.map(formatDuration) ?? "—"
+                let agingClass = timing.aging ? " temporal-aging" : ""
+                sliceLines.append([
+                    "          <li class=\"temporal-slice\(agingClass)\">",
+                    "            <span class=\"temporal-slice-id\">\(escapeHTML(slice))</span>",
+                    "            <span class=\"temporal-cycle\">cycle \(escapeHTML(cycle))</span>",
+                    "            <span class=\"temporal-wip\">wip \(escapeHTML(wip))</span>",
+                    "          </li>"
+                ].joined(separator: "\n"))
+            }
+        }
+        let sliceBlock = sliceLines.isEmpty
+            ? ""
+            : "\n        <ul class=\"temporal-slices\">\n\(sliceLines.joined(separator: "\n"))\n        </ul>"
+
+        return [
+            "      <div class=\"verdict-temporal\" aria-label=\"Temporal metrics\">",
+            "        <span class=\"temporal-velocity\">velocity \(escapeHTML(velocityText))</span>\(sliceBlock)",
+            "      </div>"
+        ].joined(separator: "\n")
+    }
+
+    /// A compact, deterministic human duration for a temporal metric (cycle time / WIP age): the
+    /// largest sensible unit — days, then hours, then minutes, then seconds — with no locale or
+    /// wall-clock read, so the same interval always renders byte-identically. A negative interval is
+    /// clamped to `0s` (a backwards pair is a data glitch, not a negative duration).
+    static func formatDuration(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval.rounded()))
+        if seconds >= 86_400 { return "\(seconds / 86_400)d \((seconds % 86_400) / 3_600)h" }
+        if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
+        if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
+        return "\(seconds)s"
     }
 
     private static func trajectoryClass(_ trajectory: DashboardTrajectory) -> String {

@@ -161,7 +161,8 @@ public enum ProgramDashboardAssembler {
             mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
                                                     inheritedOwner: env.metadata.owner ?? []),
             staleRun: match.stale,
-            runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state))
+            runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state),
+            runEvents: match.records)
     }
 
     /// A sub-pipeline loader closure for `DashboardProjection.project(program:…)`: for a `kind ==
@@ -180,7 +181,8 @@ public enum ProgramDashboardAssembler {
     /// Reconcile a program dir against the run store. First the exact-path match (S2's
     /// `resolvedPath`); on a miss, the shared best-effort fallback surfaces an unreconcilable run by
     /// trailing segment so a stale program run is attributed, not dropped.
-    static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> (state: RunState?, stale: Bool) {
+    static func matchedState(for pipelineDir: URL, in runStore: RunStore)
+        -> (state: RunState?, stale: Bool, records: [RunEventRecord]) {
         DashboardRunMatch.matchedState(for: pipelineDir, in: runStore)
     }
 }
@@ -207,7 +209,8 @@ public enum ProjectDashboardAssembler {
                 mermaid: GraphRenderer.dashboardMermaid(env.spec, rows: projection.rows,
                                                         inheritedOwner: env.metadata.owner ?? []),
                 staleRun: match.stale,
-                runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state))
+                runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state),
+                runEvents: match.records)
         }
 
         let featuresDir = homeURL.appendingPathComponent("features", isDirectory: true)
@@ -236,7 +239,8 @@ public enum ProjectDashboardAssembler {
                     staleRun: match.stale,
                     runnableRanking: DashboardCriticalPath.runnableRanking(env.spec, state: match.state),
                     requirementsDefinition: requirementsDefinition(at: entry, fileManager: fileManager),
-                    criticalPathNodes: criticalPath))
+                    criticalPathNodes: criticalPath,
+                    runEvents: match.records))
             } else {
                 sections.append(.init(heading: "Feature · \(name)", projection: emptyProjection()))
             }
@@ -268,7 +272,8 @@ public enum ProjectDashboardAssembler {
     /// Reconcile a feature/build-pattern dir against the run store: exact-path match first, then the
     /// shared best-effort fallback so an unreconcilable run surfaces (with `stale: true`) instead of
     /// the feature dropping to all-pending.
-    private static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> (state: RunState?, stale: Bool) {
+    private static func matchedState(for pipelineDir: URL, in runStore: RunStore)
+        -> (state: RunState?, stale: Bool, records: [RunEventRecord]) {
         DashboardRunMatch.matchedState(for: pipelineDir, in: runStore)
     }
 
@@ -332,7 +337,12 @@ public enum ProjectDashboardAssembler {
 /// relative-resolving matches keep today's behavior and are never flagged. Pure aside from the run
 /// store reads the assemblers already do; no wall clock, no git.
 enum DashboardRunMatch {
-    static func matchedState(for pipelineDir: URL, in runStore: RunStore) -> (state: RunState?, stale: Bool) {
+    /// The reconciled run for a dir: its folded `state`, the `stale` freshness flag, and the run's
+    /// persisted `records` (`[RunEventRecord]`, via `RunStore.eventsWithMetadata`) so Part B's
+    /// temporal metrics read the same matched run the projection does. `records` is empty when no run
+    /// is attached or the records fail to load (graceful degradation ⇒ every metric self-suppresses).
+    static func matchedState(for pipelineDir: URL, in runStore: RunStore)
+        -> (state: RunState?, stale: Bool, records: [RunEventRecord]) {
         let expected = pipelineDir.standardizedFileURL.path
         let target = pipelineDir.standardizedFileURL.lastPathComponent
         let runIds = (try? runStore.runIds()) ?? []
@@ -342,7 +352,8 @@ enum DashboardRunMatch {
             guard let meta = try? runStore.meta(of: runId),
                   resolvedPath(meta.pipelineDir, base: runStore.base) == expected
             else { continue }
-            return (try? runStore.state(of: runId), false)
+            return (try? runStore.state(of: runId), false,
+                    (try? runStore.eventsWithMetadata(of: runId)) ?? [])
         }
 
         // (2) Best-effort: an unreconcilable run (absolute stored pipelineDir resolving nowhere)
@@ -352,10 +363,11 @@ enum DashboardRunMatch {
                   isUnreconcilable(meta.pipelineDir, base: runStore.base),
                   trailingSegment(of: meta.pipelineDir) == target
             else { continue }
-            return (try? runStore.state(of: runId), true)
+            return (try? runStore.state(of: runId), true,
+                    (try? runStore.eventsWithMetadata(of: runId)) ?? [])
         }
 
-        return (nil, false)
+        return (nil, false, [])
     }
 
     /// Resolve a stored `RunMeta.pipelineDir` to a comparable standardized path. An ABSOLUTE stored
@@ -525,6 +537,155 @@ public enum DashboardProjection {
             totals[row.status, default: 0] += 1
         }
         return totals
+    }
+}
+
+/// The per-slice and feature-level time-axis metrics, all derived PURELY from a run's persisted
+/// `[RunEventRecord]` plus an INJECTED `now: Date` — no file, network, or wall-clock access. Every
+/// metric SELF-SUPPRESSES (returns nil) when its required timestamped inputs are absent or
+/// unparseable, so a legacy un-timestamped (`at == nil`) event never produces a zero or false
+/// precision (decision `self-suppression-rule`). Sibling of `DashboardCriticalPath`: a pure
+/// projection the renderer reads without recomputation (decision `pure-temporal-module-in-engine`).
+public enum TemporalMetrics {
+    /// WIP older than this is flagged as aging in the verdict band. A named threshold so the cutoff
+    /// lives in one place; in-progress work younger than this is shown un-flagged.
+    public static let wipAgingThreshold: TimeInterval = 3 * 24 * 60 * 60   // 3 days
+
+    /// Velocity counts completions whose `at` falls within `[now − window, now]`. A trailing window
+    /// so a burst of long-past completions does not inflate the current rate.
+    public static let velocityWindow: TimeInterval = 7 * 24 * 60 * 60      // 7 days
+
+    /// One slice's resolved temporal state — the per-slice cycle time and WIP age, each nil when
+    /// suppressed. Equatable/Sendable so it threads onto `DashboardSection` cleanly.
+    public struct SliceTiming: Equatable, Sendable {
+        /// `nodeCompleted.at − nodeStarted.at` for a slice with BOTH timestamped events; nil otherwise.
+        public var cycleTime: TimeInterval?
+        /// `now − nodeStarted.at` for a started-but-not-completed slice with a timestamped start; nil
+        /// otherwise. `aging` is true only when a present `wipAge` exceeds `wipAgingThreshold`.
+        public var wipAge: TimeInterval?
+        public var aging: Bool
+
+        public init(cycleTime: TimeInterval? = nil, wipAge: TimeInterval? = nil, aging: Bool = false) {
+            self.cycleTime = cycleTime
+            self.wipAge = wipAge
+            self.aging = aging
+        }
+    }
+
+    /// The whole set of metrics for one run's records, computed against `now`: a per-slice timing map
+    /// (cycle time / WIP age) keyed by slice id, and the feature-level trailing-window velocity. Pure.
+    public struct Metrics: Equatable, Sendable {
+        public var slices: [String: SliceTiming]
+        /// Completions whose timestamped `at` fell in the trailing window ending at `now`. nil —
+        /// SUPPRESSED — when there is NOT a single timestamped completion to count FROM (thin/legacy
+        /// history), so a present velocity may legitimately be 0 (all completions fell outside the
+        /// window) but is never a 0 manufactured from absent timestamps (decision D5).
+        public var velocity: Int?
+
+        public init(slices: [String: SliceTiming] = [:], velocity: Int? = nil) {
+            self.slices = slices
+            self.velocity = velocity
+        }
+    }
+
+    /// One scoped node-event resolved to (slice, parsed-at) — the unit cycle time / WIP age fold over.
+    private struct ScopedNodeEvent {
+        var slice: String
+        var node: String
+        var at: Date?
+    }
+
+    /// Fold a run's records into the full metric set against the injected `now`. Pure / deterministic:
+    /// identical `records` + `now` ⇒ identical output.
+    public static func metrics(from records: [RunEventRecord], now: Date) -> Metrics {
+        var started: [String: Date?] = [:]      // slice → first nodeStarted's parsed at (nil ⇒ no stamp)
+        var completed: [String: Date?] = [:]    // slice → matching nodeCompleted's parsed at
+        var velocityCount = 0
+        var sawTimestampedCompletion = false
+
+        let windowStart = now.addingTimeInterval(-velocityWindow)
+        // A completion's parsed `at` (top-level or one-level scoped) feeds velocity: ANY timestamped
+        // completion proves the run has history to count from (so velocity is PRESENT, decision D5 /
+        // "zero timestamped completions to count from ⇒ suppressed"), while only those whose `at`
+        // falls in the trailing window are counted — so a present velocity may legitimately be 0.
+        func recordCompletion(_ at: Date?) {
+            guard let at else { return }   // no timestamp ⇒ contributes nothing, never suppression-defeating
+            sawTimestampedCompletion = true
+            if at >= windowStart, at <= now { velocityCount += 1 }
+        }
+
+        for record in records {
+            let at = parse(record.at)
+            if case .nodeCompleted = record.event { recordCompletion(at) }
+            guard let scoped = scopedNodeEvent(record.event, at: at) else { continue }
+            switch unwrapInner(record.event) {
+            case .nodeStarted:
+                if started[scoped.slice] == nil { started[scoped.slice] = scoped.at }
+            case .nodeCompleted:
+                completed[scoped.slice] = scoped.at
+                recordCompletion(scoped.at)
+            default:
+                break
+            }
+        }
+
+        var slices: [String: SliceTiming] = [:]
+        let allSlices = Set(started.keys).union(completed.keys)
+        for slice in allSlices {
+            let startAt = started[slice] ?? nil
+            let completeAt = completed[slice] ?? nil
+            var timing = SliceTiming()
+            // Cycle time: needs BOTH a timestamped start and completion (decision `self-suppression-rule`).
+            if let startAt, let completeAt {
+                timing.cycleTime = completeAt.timeIntervalSince(startAt)
+            }
+            // WIP age: started-but-not-completed slice with a timestamped start.
+            if completed[slice] == nil, let startAt {
+                let age = now.timeIntervalSince(startAt)
+                timing.wipAge = age
+                timing.aging = age > wipAgingThreshold
+            }
+            if timing.cycleTime != nil || timing.wipAge != nil {
+                slices[slice] = timing
+            }
+        }
+
+        return Metrics(slices: slices, velocity: sawTimestampedCompletion ? velocityCount : nil)
+    }
+
+    /// Resolve a record's event to its scoped (slice, node, at) when it is a `scoped` wrapper carrying
+    /// a `nodeStarted`/`nodeCompleted`; nil for any other shape (a top-level node event has no slice
+    /// to attribute against in this per-slice model). Descends ONE level of `scoped` — the per-slice
+    /// granularity the dashboard shows — pairing the inner node event with the record's parsed `at`.
+    private static func scopedNodeEvent(_ event: RunEvent, at: Date?) -> ScopedNodeEvent? {
+        guard case let .scoped(slice, inner) = event else { return nil }
+        switch inner {
+        case let .nodeStarted(node):
+            return ScopedNodeEvent(slice: slice, node: node, at: at)
+        case let .nodeCompleted(node, _):
+            return ScopedNodeEvent(slice: slice, node: node, at: at)
+        default:
+            return nil
+        }
+    }
+
+    /// The inner event of a one-level `scoped` wrapper (for switching on its case), or the event
+    /// itself when unscoped.
+    private static func unwrapInner(_ event: RunEvent) -> RunEvent {
+        if case let .scoped(_, inner) = event { return inner }
+        return event
+    }
+
+    /// Parse a stored RFC 3339 UTC `…Z` `at` string with the SAME zone-pinned ISO-8601 formatter
+    /// `RunStore.utcZ` produces, so storage and read are symmetric (decision
+    /// `parse-at-with-runstore-formatter`). A nil or unparseable `at` ⇒ nil (treated as "no
+    /// timestamp"), which is what drives suppression — never a guessed instant.
+    static func parse(_ at: String?) -> Date? {
+        guard let at else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: at)
     }
 }
 

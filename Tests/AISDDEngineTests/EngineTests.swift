@@ -4543,3 +4543,143 @@ struct RunStorePipelineDirTests {
         #expect(try store.events(of: "run-x").count == before)
     }
 }
+
+/// Part B (S5): the pure time-axis metrics — cycle time, WIP aging, velocity — over `[RunEventRecord]`
+/// with a FIXED injected `now`, plus the velocity→trajectory wiring and the self-suppression contract.
+struct TemporalMetricsTests {
+    // A fixed wall-clock instant the whole suite injects, so every assertion is deterministic.
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)   // 2023-11-14T22:13:20Z
+
+    /// A `RunEventRecord` carrying a scoped node event stamped at `now + offset` via the SAME
+    /// `RunStore.utcZ` canonical formatter the store writes with, so parse/format is symmetric.
+    private func scoped(_ slice: String, _ inner: RunEvent, at offset: TimeInterval) -> RunEventRecord {
+        RunEventRecord(event: .scoped(slice: slice, event: inner),
+                       at: RunStore.utcZ(now.addingTimeInterval(offset)))
+    }
+
+    /// A scoped node event with NO timestamp (`at == nil`) — the legacy / un-timestamped shape that
+    /// must drive suppression, never a zero.
+    private func scopedNoStamp(_ slice: String, _ inner: RunEvent) -> RunEventRecord {
+        RunEventRecord(event: .scoped(slice: slice, event: inner), at: nil)
+    }
+
+    @Test func cycleTimeFromAtEvents() {
+        // Slice `s1`: started 2h before `now`, completed 30m before `now` ⇒ cycle = 90 minutes.
+        let records = [
+            scoped("s1", .nodeStarted(node: "impl"), at: -7_200),
+            scoped("s1", .nodeCompleted(node: "impl", producedArtifacts: ["x.v1"]), at: -1_800)
+        ]
+        let metrics = TemporalMetrics.metrics(from: records, now: now)
+        #expect(metrics.slices["s1"]?.cycleTime == 5_400)   // 90 min
+        // A completed slice has no live WIP age.
+        #expect(metrics.slices["s1"]?.wipAge == nil)
+    }
+
+    @Test func wipAgingFromInjectedNow() {
+        // Slice `s2`: started 4 days before `now`, never completed ⇒ WIP age = 4d, flagged aging
+        // (past the 3-day threshold). Slice `s3`: started 1h ago ⇒ aged 1h, NOT flagged.
+        let records = [
+            scoped("s2", .nodeStarted(node: "impl"), at: -4 * 86_400),
+            scoped("s3", .nodeStarted(node: "impl"), at: -3_600)
+        ]
+        let metrics = TemporalMetrics.metrics(from: records, now: now)
+        #expect(metrics.slices["s2"]?.wipAge == Double(4 * 86_400))
+        #expect(metrics.slices["s2"]?.aging == true)
+        #expect(metrics.slices["s2"]?.cycleTime == nil)
+        #expect(metrics.slices["s3"]?.wipAge == Double(3_600))
+        #expect(metrics.slices["s3"]?.aging == false)
+    }
+
+    @Test func velocityTrailingWindow() {
+        // Two completions inside the 7-day window, one 10 days back (outside) ⇒ velocity = 2.
+        let records = [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -1 * 86_400),
+            scoped("s2", .nodeCompleted(node: "b", producedArtifacts: []), at: -6 * 86_400),
+            scoped("s3", .nodeCompleted(node: "c", producedArtifacts: []), at: -10 * 86_400)
+        ]
+        #expect(TemporalMetrics.metrics(from: records, now: now).velocity == 2)
+    }
+
+    @Test func velocityFeedsVerdictTrajectory() {
+        // A clean run (no escalation/rework) with a POSITIVE velocity reads `on track`; the same
+        // sections whose only timestamped completion is OUTSIDE the window — a PRESENT velocity of 0,
+        // not a suppressed one — read `slipping`, proving velocity (not just rows) co-derives the
+        // trajectory (replacing the S1 placeholder).
+        let movingSection = section(records: [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -1 * 86_400)
+        ])
+        let stalledSection = section(records: [
+            scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -30 * 86_400)
+        ])
+        #expect(GraphRenderer.dashboardTrajectory(for: [movingSection], now: now) == .onTrack)
+        #expect(GraphRenderer.dashboardTrajectory(for: [stalledSection], now: now) == .slipping)
+    }
+
+    @Test func selfSuppressOnThinOrLegacyHistory() {
+        // Un-timestamped (legacy `at == nil`) events: cycle time, WIP age, AND velocity all suppress
+        // (nil) rather than emitting zeros, and the verdict band renders `—`, not `0`.
+        let records = [
+            scopedNoStamp("s1", .nodeStarted(node: "impl")),
+            scopedNoStamp("s1", .nodeCompleted(node: "impl", producedArtifacts: []))
+        ]
+        let metrics = TemporalMetrics.metrics(from: records, now: now)
+        // The slice has neither a cycle time nor a WIP age ⇒ it contributes no timing entry at all.
+        #expect(metrics.slices["s1"] == nil)
+        #expect(metrics.velocity == nil)
+
+        let suppressed = section(records: records)
+        // Velocity suppressed ⇒ trajectory falls back to escalation/rework-only (here `on track`).
+        #expect(GraphRenderer.dashboardTrajectory(for: [suppressed], now: now) == .onTrack)
+        // The verdict band shows the em-dash placeholder, never a `0`.
+        let html = GraphRenderer.temporalMetricsHTML(sections: [suppressed], now: now)
+        #expect(html.contains("velocity —"))
+        #expect(!html.contains("velocity 0"))
+    }
+
+    @Test func deterministicInjectedNow() {
+        // Identical records + identical `now` ⇒ byte-identical metric struct (no wall-clock read).
+        let records = [
+            scoped("s1", .nodeStarted(node: "impl"), at: -7_200),
+            scoped("s1", .nodeCompleted(node: "impl", producedArtifacts: []), at: -1_800)
+        ]
+        #expect(TemporalMetrics.metrics(from: records, now: now)
+                == TemporalMetrics.metrics(from: records, now: now))
+    }
+
+    @Test func escalationStillDominatesVelocity() {
+        // Even with a positive velocity, an escalated row keeps the trajectory `stalled` — velocity
+        // refines only the otherwise-clean `on track` verdict (existing-behavior-preserved).
+        var rows = projectionRows()
+        rows[0].status = .escalated
+        let escalated = GraphRenderer.DashboardSection(
+            heading: "Feature · demo",
+            projection: DashboardProjectionResult(
+                rows: rows, summary: summary(rows)),
+            runEvents: [scoped("s1", .nodeCompleted(node: "a", producedArtifacts: []), at: -1 * 86_400)])
+        #expect(GraphRenderer.dashboardTrajectory(for: [escalated], now: now) == .stalled)
+    }
+
+    // MARK: - fixtures
+
+    /// A section with all-`runnable` rows (no escalation/rework) carrying the given run records, so a
+    /// trajectory test isolates the velocity signal.
+    private func section(records: [RunEventRecord]) -> GraphRenderer.DashboardSection {
+        let rows = projectionRows()
+        return GraphRenderer.DashboardSection(
+            heading: "Feature · demo",
+            projection: DashboardProjectionResult(rows: rows, summary: summary(rows)),
+            runEvents: records)
+    }
+
+    private func projectionRows() -> [DashboardProjectionRow] {
+        [DashboardProjectionRow(node: "s1", stack: nil, owner: "o", lane: nil, milestone: nil,
+                                dependencyCount: 0, status: .runnable, nextActionHint: .startWork)]
+    }
+
+    private func summary(_ rows: [DashboardProjectionRow]) -> DashboardProjectionSummary {
+        var totals = Dictionary(uniqueKeysWithValues: DashboardStatus.allCases.map { ($0, 0) })
+        for row in rows { totals[row.status, default: 0] += 1 }
+        return DashboardProjectionSummary(totalFeatureCount: 1, totalNodeCount: rows.count,
+                                          doneCount: totals[.done, default: 0], statusTotals: totals)
+    }
+}

@@ -1,0 +1,36 @@
+summary: >-
+  Implemented slice temporal-metrics-core (Part B, S5). Added a pure `TemporalMetrics` module in
+  AISDDEngine (sibling to DashboardCriticalPath) that folds a run's [RunEventRecord] plus an injected
+  `now: Date` into per-slice cycle time (nodeCompleted.at − nodeStarted.at), per-slice WIP age
+  (now − nodeStarted.at, flagged past a 3-day threshold constant), and a feature-level velocity
+  (timestamped completions within a 7-day trailing-window constant). Slices are identified by
+  unwrapping one level of RunEvent.scoped(slice:event:) and pairing the inner nodeStarted/nodeCompleted
+  with the enclosing record's `at`, parsed with the SAME zone-pinned ISO8601 formatter RunStore.utcZ
+  produces. Every metric self-suppresses (returns nil → renders `—`) when its timestamped inputs are
+  absent or unparseable — legacy `at == nil` events never zero-fill; velocity is present (and may be a
+  legitimate 0) only when at least one timestamped completion exists to count from. Threaded the
+  matched run's records onto each DashboardSection via a new defaulted `runEvents: [RunEventRecord]`
+  field (Equatable-/source-stable, mirroring staleRun/runnableRanking), populated from
+  RunStore.eventsWithMetadata in DashboardRunMatch.matchedState and both assemblers. Rendered
+  velocity / per-slice cycle time / WIP age in the verdict band — projectRollupHTML stays a pure
+  derivation over the threaded data with no wall-clock read. Extended dashboardTrajectory with a
+  velocity-aware overload taking `now`: a present velocity co-derives the verdict (>0 ⇒ on track,
+  0-in-window ⇒ slipping) replacing the S1 deferred placeholder, while escalation/rework keep strict
+  precedence and a suppressed velocity falls back to today's row-only result unchanged. Added a
+  TemporalMetricsTests suite with a fixed injected `now` (cycle time, WIP aging + threshold flag,
+  velocity window, velocity→trajectory, escalation-dominance, determinism, and the legacy/no-`at`
+  suppression case asserting `—` not 0). Files: DashboardProjection.swift, GraphRenderer.swift,
+  Tests/AISDDEngineTests/EngineTests.swift (main.swift needed no change — `now` and the run store
+  already flow through the assembler boundary). swift build, swift test (263 tests, 9 suites),
+  ai-sdd validate .ai-sdd/features/dashboard-instrument, the feature-plan schema check, and the
+  project dashboard render (live run shows velocity 13/7d, a real cycle time, and `wip —` suppression)
+  all pass.
+satisfies:
+  - cycle-time-from-at-events
+  - wip-aging-from-injected-now
+  - velocity-trailing-window
+  - velocity-feeds-verdict-trajectory
+  - self-suppress-on-thin-or-legacy-history
+  - deterministic-injected-now
+  - existing-behavior-preserved
+  - verification-commands

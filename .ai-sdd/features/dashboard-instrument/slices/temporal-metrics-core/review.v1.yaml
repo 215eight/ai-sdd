@@ -1,0 +1,119 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: temporal-metrics-core
+
+verdict: approve
+summary: >-
+  Review of slice temporal-metrics-core (dashboard-instrument, Part B, S5) against feature-plan.v1
+  (8 acceptance ids) and changeset.v1. The slice adds a pure TemporalMetrics module in AISDDEngine
+  (sibling of DashboardCriticalPath) folding a run's [RunEventRecord] + an INJECTED `now` into
+  per-slice cycle time (completed.at − started.at), per-slice WIP age (now − started.at, flagged past
+  a 3-day threshold), and feature-level velocity (timestamped completions in a 7-day trailing window),
+  then wires velocity into the verdict trajectory and renders the metrics in the verdict band. THE
+  CORE CORRECTNESS PROPERTIES HOLD. Self-suppression is honest: parse(nil/bad at) ⇒ nil; cycle time
+  needs BOTH timestamps, WIP age needs a timestamped start, velocity is gated on
+  sawTimestampedCompletion (a boolean, NOT the count) so a legacy/un-timestamped (`at == nil`) history
+  renders `—` and contributes NO signal — never a zero. A test proves legacy at==nil ⇒ no slice timing
+  entry, velocity nil, "velocity —" rendered (and asserts NOT "velocity 0"). Determinism holds: grep
+  for Date() finds it only at the GraphRenderer dashboardPage default-param boundary and main.swift's
+  single `let now = Date()`; every pure/render function takes injected now and reads no clock or locale;
+  parse() uses a zone-pinned ISO8601 formatter byte-identical to RunStore.utcZ (symmetric storage/read);
+  a test pins now and asserts byte-identical Metrics. Velocity co-derives the trajectory (>0 ⇒ on track,
+  present-0-in-window ⇒ slipping) only on the otherwise-clean `on track` verdict, with escalation→rework
+  keeping strict precedence and a suppressed velocity falling back to the row-only result unchanged.
+  No scope creep into burndown/ETA (S6) or whats-changed (S7). Independently ran swift build (clean),
+  swift test (263 tests, 9 suites, green), ai-sdd validate dashboard-instrument (valid), the project
+  dashboard render (live timestamped run shows velocity 13/7d, cycle 58m 15s, wip — suppression, on
+  track — all sane), and the feature-plan schema check (satisfies). APPROVE.
+
+items:
+  - id: cycle-time-from-at-events
+    verdict: pass
+    notes: >-
+      TemporalMetrics.metrics pairs a slice's scoped nodeStarted/nodeCompleted (one-level scoped
+      unwrap) with each record's parsed `at` and sets cycleTime = completeAt − startAt only when BOTH
+      timestamps are present. Test cycleTimeFromAtEvents pins now and asserts s1 (started −2h /
+      completed −30m) ⇒ exactly 5_400s, with wipAge nil on the completed slice. Deterministic and exact.
+  - id: wip-aging-from-injected-now
+    verdict: pass
+    notes: >-
+      For a started-but-not-completed slice with a timestamped start, wipAge = now − startAt and
+      `aging` is true only when it exceeds wipAgingThreshold (3 days, a named constant). Test
+      wipAgingFromInjectedNow proves s2 (started −4d) ⇒ wipAge 4d, aging true, cycleTime nil; s3
+      (started −1h) ⇒ wipAge 1h, aging false. Value is deterministic for the fixed injected now.
+  - id: velocity-trailing-window
+    verdict: pass
+    notes: >-
+      Velocity counts timestamped completions whose `at` falls in [now − velocityWindow(7d), now].
+      Test velocityTrailingWindow asserts 2 completions in-window + 1 ten-days-back (outside) ⇒ 2.
+      Window is a named constant; count is deterministic for the fixed now. No double-count: a record's
+      event is either top-level .nodeCompleted or .scoped(...), mutually exclusive recordCompletion
+      paths (the top-level pattern fails on a scoped record and vice versa).
+  - id: velocity-feeds-verdict-trajectory
+    verdict: pass
+    notes: >-
+      dashboardTrajectory(for:now:) refines the otherwise-clean `on track` verdict with a present
+      project velocity (>0 ⇒ on track, 0-in-window ⇒ slipping); projectRollupHTML now calls the
+      now-aware overload, replacing S1's deferred placeholder (the comment at GraphRenderer line ~417
+      is updated). Test velocityFeedsVerdictTrajectory proves a moving section ⇒ on track and a section
+      whose only completion is outside the window ⇒ slipping. Live render shows velocity 13/7d ⇒ on track.
+  - id: self-suppress-on-thin-or-legacy-history
+    verdict: pass
+    notes: >-
+      Suppression is correct and never zero-filled — the critical property holds. parse(nil/bad) ⇒ nil;
+      cycle time needs BOTH timestamps, WIP age needs a timestamped start, velocity is gated on a
+      sawTimestampedCompletion BOOLEAN (not the count). Test selfSuppressOnThinOrLegacyHistory uses
+      legacy at==nil records: slices["s1"] is absent (no timing entry), velocity is nil, and
+      temporalMetricsHTML renders "velocity —" with an explicit assert that NOT "velocity 0". Live
+      render shows real "wip —" suppression. The implementer's reading — velocity is PRESENT (may be a
+      legitimate 0) when ANY timestamped completion exists to count from, and only a fully
+      un-timestamped history suppresses — is the defensible, non-false-precision reading: "0
+      completions in the trailing 7d" off a run that demonstrably recorded prior timestamped
+      completions is an earned `slipping` signal, not a manufactured zero (the absent-timestamp case
+      still suppresses to `—`). This matches the brief/acceptance intent ("no false precision, no
+      guessing on legacy un-timestamped events"). NOTE a wording tension in the plan: scope.in line 15
+      says velocity suppresses "when there are zero timestamped completions to count from" (the shipped
+      behavior) while decision self-suppression-rule line 62 says velocity "needs at least one
+      timestamped completion in the window" (which would instead suppress the present-0 case). The
+      implementation follows line 15 + the brief + this acceptance id, the governing intent; this is a
+      non-blocking plan-wording inconsistency, not an implementation defect. Passing.
+  - id: deterministic-injected-now
+    verdict: pass
+    notes: >-
+      No wall-clock in any pure function. grep for Date() finds it only at the GraphRenderer
+      dashboardPage default-param boundary and main.swift's single `let now = Date()`. TemporalMetrics,
+      projectVelocity, dashboardTrajectory(for:now:), temporalMetricsHTML, and formatDuration all take
+      injected now and read no clock or locale (formatDuration uses integer arithmetic, no locale).
+      parse() uses a zone-pinned ISO8601 formatter byte-identical to RunStore.utcZ. Test
+      deterministicInjectedNow asserts identical records + now ⇒ equal Metrics.
+  - id: existing-behavior-preserved
+    verdict: pass
+    notes: >-
+      dashboardTrajectory(for:now:) returns the row-only base unless base == .onTrack, so escalation
+      (⇒ stalled) and rework (⇒ slipping) keep strict precedence; a suppressed velocity returns base
+      unchanged. Test escalationStillDominatesVelocity proves an escalated row stays stalled despite a
+      positive velocity. New fields (runEvents on DashboardSection; the trajectory overload; matchedState
+      tuple gains a records member) are defaulted/additive so existing call sites and Equatable stay
+      source-stable. swift build clean and all 263 tests in 9 suites green. No scope creep into burndown/
+      ETA (S6) or whats-changed (S7); no change to RunStore/RunEvent shapes or status precedence.
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran all five: swift build (clean), swift test (263 tests, 9 suites, pass),
+      ai-sdd validate .ai-sdd/features/dashboard-instrument (valid — 8 nodes/11 edges), ai-sdd graph
+      .ai-sdd --project --dashboard --out (wrote html; velocity 13/7d, cycle 58m 15s, wip —, on track —
+      render sane), and ai-sdd check feature-plan.schema.yaml feature-plan.v1.yaml (satisfies feature-plan.v1).
+
+conventions:
+  satisfied: true
+  notes: >-
+    Changes stay within the declared file scope — DashboardProjection.swift (the pure TemporalMetrics
+    enum + threading the matched run's records through DashboardRunMatch.matchedState and both
+    assemblers), GraphRenderer.swift (the runEvents DashboardSection field, the velocity-aware
+    trajectory overload + projectVelocity, the verdict-band temporal render + formatDuration), and
+    EngineTests.swift (the TemporalMetricsTests suite). main.swift needed no change since `now` and the
+    run store already flow through the assembler boundary (consistent with decision now-injected-from-
+    cli-boundary). New fields are defaulted and Equatable-preserving (source-stable, mirroring
+    staleRun/runnableRanking); all temporal computation is pure I/O-free per pure-temporal-module-in-
+    engine; HTML is escaped via escapeHTML. Swift Testing (@Test/#expect) is used per swift.md. No new
+    files. swift build + swift test green.
