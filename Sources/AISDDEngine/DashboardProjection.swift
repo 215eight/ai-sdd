@@ -213,6 +213,12 @@ public enum ProjectDashboardAssembler {
                 runEvents: match.records)
         }
 
+        // A feature that is a member node of some program is rendered under that program's section,
+        // NOT as a standalone top-level feature — otherwise a phase-0 feature shared by a program
+        // would be counted twice in the project rollup (once standalone, once inside the program).
+        let programMemberDirs = programMemberFeatureDirs(homeURL: homeURL, loader: loader,
+                                                         fileManager: fileManager)
+
         let featuresDir = homeURL.appendingPathComponent("features", isDirectory: true)
         let entries = ((try? fileManager.contentsOfDirectory(
             at: featuresDir, includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
@@ -221,6 +227,7 @@ public enum ProjectDashboardAssembler {
 
         for entry in entries {
             let name = entry.lastPathComponent
+            if programMemberDirs.contains(entry.standardizedFileURL.path) { continue }
             if let env = try? loader.loadPipeline(atDirectory: entry) {
                 let match = matchedState(for: entry, in: runStore)
                 let projection = DashboardProjection.project(
@@ -275,6 +282,28 @@ public enum ProjectDashboardAssembler {
     private static func matchedState(for pipelineDir: URL, in runStore: RunStore)
         -> (state: RunState?, stale: Bool, records: [RunEventRecord]) {
         DashboardRunMatch.matchedState(for: pipelineDir, in: runStore)
+    }
+
+    /// The standardized paths of every feature dir referenced as a `kind: pipeline` node by some
+    /// program under `programs/`. A feature in this set is rendered under its program (not as a
+    /// standalone top-level feature), so a program-member feature is never double-counted in the
+    /// project rollup. Resolution mirrors `ProgramDashboardAssembler.featurePipelineLoader`.
+    static func programMemberFeatureDirs(homeURL: URL, loader: SpecLoader,
+                                         fileManager: FileManager) -> Set<String> {
+        let programsDir = homeURL.appendingPathComponent(Layout.programsDir, isDirectory: true)
+        let programEntries = ((try? fileManager.contentsOfDirectory(
+            at: programsDir, includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        var members: Set<String> = []
+        for programDir in programEntries {
+            let dir = programDir.standardizedFileURL
+            guard let env = try? loader.loadPipeline(atDirectory: dir) else { continue }
+            for node in env.spec.nodes where node.kind == "pipeline" {
+                guard let relative = node.pipeline else { continue }
+                members.insert(dir.appendingPathComponent(relative).standardizedFileURL.path)
+            }
+        }
+        return members
     }
 
     private static func containsActiveWork(_ projection: DashboardProjectionResult) -> Bool {

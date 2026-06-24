@@ -1183,6 +1183,43 @@ struct EngineTests {
         #expect(brokenSection.projection.summary.totalNodeCount == 0)
     }
 
+    @Test func projectDashboardExcludesProgramMemberFeaturesFromStandaloneSections() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        // Two features: `solo` is standalone; `shared` is a member node of program `prog`.
+        let featuresDir = tmp.appendingPathComponent("features", isDirectory: true)
+        try writePipeline(at: featuresDir.appendingPathComponent("solo", isDirectory: true),
+                          name: "solo", nodes: ["a"], edges: [])
+        try writePipeline(at: featuresDir.appendingPathComponent("shared", isDirectory: true),
+                          name: "shared", nodes: ["a"], edges: [])
+
+        // A program that references ../../features/shared as a pipeline node.
+        let progDir = tmp.appendingPathComponent("programs", isDirectory: true)
+            .appendingPathComponent("prog", isDirectory: true)
+        try FileManager.default.createDirectory(at: progDir, withIntermediateDirectories: true)
+        try """
+        apiVersion: ai-sdd/v1
+        kind: Pipeline
+        metadata: { name: prog, version: 1 }
+        spec:
+          nodes:
+            - { id: shared, kind: pipeline, pipeline: ../../features/shared }
+          edges: []
+        """.write(to: progDir.appendingPathComponent("pipeline.yaml"), atomically: true, encoding: .utf8)
+
+        let store = RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true))
+        let dashboard = try ProjectDashboardAssembler.assemble(factoryDir: tmp, runStore: store)
+        let headings = dashboard.sections.map(\.heading)
+
+        // `shared` renders ONLY under its program — never as a standalone feature (no double-count);
+        // `solo`, in no program, still renders standalone.
+        #expect(headings.contains("Feature · solo"))
+        #expect(headings.contains("Program · prog"))
+        #expect(!headings.contains("Feature · shared"))
+    }
+
     @Test func projectDashboardAssemblerRendersBuildPatternWithoutFeatures() throws {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ai-sdd-dashboard-\(UUID().uuidString)", isDirectory: true)

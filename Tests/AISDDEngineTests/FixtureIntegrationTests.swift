@@ -81,29 +81,30 @@ struct FixtureIntegrationTests {
         #expect((try? SpecLoader().loadPipeline(atDirectory: buildDir)) != nil)
     }
 
-    @Test("Whole-repo dashboard has feature + program sections with committed statuses")
-    func wholeRepoDashboardHasFeaturesAndProgramWithCommittedStatuses() throws {
+    @Test("Whole-repo dashboard renders program-member features only under their program")
+    func wholeRepoDashboardDedupesProgramMemberFeatures() throws {
         let dashboard = try ProjectDashboardAssembler.assemble(
             factoryDir: factoryDir, runStore: storeFor(target: factoryDir))
 
         let headings = dashboard.sections.map(\.heading)
-        #expect(headings.contains("Feature · auth"))
-        #expect(headings.contains("Feature · billing"))
-        #expect(headings.contains("Feature · search"))
+        // auth/billing/search are member nodes of program `demo`, so they render ONLY under the
+        // program — never as standalone top-level features (no double-count in the project rollup).
+        #expect(!headings.contains("Feature · auth"))
+        #expect(!headings.contains("Feature · billing"))
+        #expect(!headings.contains("Feature · search"))
         #expect(headings.contains("Program · demo"))
 
         let program = try #require(dashboard.sections.first { $0.heading == "Program · demo" })
         let rows = program.projection.rows
         // The committed status MIX — proves the program run RESOLVED via the relative-pipelineDir
-        // match (auth done is the proof it's not an all-pending/static projection).
+        // match (auth done is the proof it's not an all-pending/static projection), and that the
+        // member sub-pipelines loaded into the rollup (non-empty rows) even though deduped from the
+        // standalone list.
+        #expect(!rows.isEmpty)
         #expect(status(rows, "auth") == .done)
         #expect(status(rows, "billing") == .inProgress)
         #expect(status(rows, "m1-core-integrated") == .pending)
         #expect(status(rows, "search") == .pending)
-
-        // At least one feature sub-pipeline loaded (non-empty rows).
-        let aFeature = try #require(dashboard.sections.first { $0.heading == "Feature · auth" })
-        #expect(!aFeature.projection.rows.isEmpty)
     }
 
     @Test("Program dashboard renders one master-graph section with committed statuses")
