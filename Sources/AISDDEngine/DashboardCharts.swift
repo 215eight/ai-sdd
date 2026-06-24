@@ -51,7 +51,15 @@ public enum DashboardCharts {
 
     public static func groupedBarChart(_ rows: [DashboardProjectionRow],
                                        colors: [DashboardStatus: String] = defaultColors) -> String {
-        let groups = grouped(rows)
+        groupedBarChart(ownerGroups(rows), title: "Status by owner", colors: colors)
+    }
+
+    /// One horizontal status-stacked bar per group, scaled to the largest group. `title` names the
+    /// dimension the bars answer — e.g. "Load by owner" or "Progress by feature" — and seeds the
+    /// aria-label, so each chart has one clear purpose. Pure: a function of the groups alone (no CDN,
+    /// escaped, aria-labelled).
+    public static func groupedBarChart(_ groups: [BarGroup], title: String,
+                                       colors: [DashboardStatus: String] = defaultColors) -> String {
         let maxTotal = max(groups.map(\.total).max() ?? 0, 1)
         let rowHeight = 36
         let top = 32
@@ -59,7 +67,7 @@ public enum DashboardCharts {
         let chartWidth = 420
         let totalX = chartX + chartWidth + 16
         let height = max(110, top + groups.count * rowHeight + 28)
-        let label = "Status by owner: " + groups
+        let label = "\(title): " + groups
             .map { "\($0.label) \($0.total)" }
             .joined(separator: ", ")
 
@@ -175,21 +183,25 @@ public enum DashboardCharts {
         return lines.joined(separator: "\n")
     }
 
-    private struct Group {
-        var label: String
-        var counts: [DashboardStatus: Int]
-        var total: Int
+    /// A labelled status breakdown for one bar. The caller decides the grouping dimension (owner,
+    /// feature, …) so a single renderer serves every purpose-specific chart.
+    public struct BarGroup: Sendable {
+        public let label: String
+        public let counts: [DashboardStatus: Int]
+        public init(label: String, counts: [DashboardStatus: Int]) {
+            self.label = label
+            self.counts = counts
+        }
+        var total: Int { DashboardStatus.allCases.reduce(0) { $0 + (counts[$1] ?? 0) } }
     }
 
-    private static func grouped(_ rows: [DashboardProjectionRow]) -> [Group] {
+    private static func ownerGroups(_ rows: [DashboardProjectionRow]) -> [BarGroup] {
         var countsByLabel: [String: [DashboardStatus: Int]] = [:]
         for row in rows {
             countsByLabel[row.owner, default: initializedCounts()][row.status, default: 0] += 1
         }
         return countsByLabel.keys.sorted().map { label in
-            let counts = countsByLabel[label, default: initializedCounts()]
-            let total = DashboardStatus.allCases.reduce(0) { $0 + counts[$1, default: 0] }
-            return Group(label: label, counts: counts, total: total)
+            BarGroup(label: label, counts: countsByLabel[label, default: initializedCounts()])
         }
     }
 

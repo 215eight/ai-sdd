@@ -1367,6 +1367,41 @@ struct EngineTests {
         #expect(DashboardCharts.groupedBarChart(stackFallback.rows).contains("data-group=\"swift\""))
     }
 
+    @Test func ownerLoadGroupsBucketUntaggedAsUnownedSortedLast() {
+        // `alpha` has one node owned by bob and one untagged (owner fallback degenerates to "alpha").
+        let alpha = DashboardProjection.project(
+            pipeline: PipelineSpec(nodes: [PipelineNode(id: "a", owner: ["bob"]),
+                                           PipelineNode(id: "b")], edges: []),
+            metadata: SpecMetadata(name: "alpha"))
+        let section = GraphRenderer.DashboardSection(heading: "Feature · alpha", projection: alpha)
+
+        let labels = GraphRenderer.ownerLoadGroups(for: [section]).map(\.label)
+        #expect(labels.contains("bob"))
+        #expect(labels.contains("unowned"))        // untagged work collapses into one honest bucket
+        #expect(!labels.contains("alpha"))         // the feature-name fallback is normalized away
+        #expect(labels.last == "unowned")          // unowned always sorts last
+    }
+
+    @Test func featureProgressGroupsAreOneStatusStackedBarPerSection() {
+        let alpha = DashboardProjection.project(
+            pipeline: PipelineSpec(nodes: [PipelineNode(id: "a", owner: ["bob"])], edges: []),
+            metadata: SpecMetadata(name: "alpha"))
+        let beta = DashboardProjection.project(
+            pipeline: PipelineSpec(nodes: [PipelineNode(id: "b")], edges: []),
+            metadata: SpecMetadata(name: "beta"))
+        let sections = [
+            GraphRenderer.DashboardSection(heading: "Feature · alpha", projection: alpha),
+            GraphRenderer.DashboardSection(heading: "Program · beta", projection: beta)]
+
+        // One bar per section, in assembled order, keyed by feature name (owner-independent).
+        #expect(GraphRenderer.featureProgressGroups(for: sections).map(\.label) == ["alpha", "beta"])
+        // And the chart titles make each section's single purpose explicit.
+        #expect(DashboardCharts.groupedBarChart(GraphRenderer.ownerLoadGroups(for: sections),
+                                                title: "Load by owner").contains("Load by owner"))
+        #expect(DashboardCharts.groupedBarChart(GraphRenderer.featureProgressGroups(for: sections),
+                                                title: "Progress by feature").contains("Progress by feature"))
+    }
+
     @Test func dashboardChartsEscapeSVGTextAndAttributes() {
         let label = "Team & <script>alert(\"x\")</script> 'lead'"
         let rows = [DashboardProjectionRow(

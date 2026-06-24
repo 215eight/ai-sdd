@@ -246,7 +246,6 @@ public enum GraphRenderer {
     public static func dashboardPage(title: String, sections: [DashboardSection],
                                      now: Date = Date()) -> String {
         let summary = dashboardSummary(for: sections)
-        let rows = sections.flatMap(\.projection.rows)
         let progress = progressPercent(done: summary.doneCount, total: summary.totalNodeCount)
         let progressWidth = String(format: "%.1f", progress)
 
@@ -278,7 +277,8 @@ public enum GraphRenderer {
             "    \(statusLegend())",
             "    <section class=\"dashboard-charts\" aria-label=\"Dashboard charts\">",
             "      \(DashboardCharts.statusDonut(summary))",
-            "      \(DashboardCharts.groupedBarChart(rows))",
+            "      \(DashboardCharts.groupedBarChart(ownerLoadGroups(for: sections), title: "Load by owner"))",
+            "      \(DashboardCharts.groupedBarChart(featureProgressGroups(for: sections), title: "Progress by feature"))",
             "    </section>",
             mermaidScript()
         ]
@@ -510,15 +510,54 @@ public enum GraphRenderer {
     /// declared (the fallback degenerated to the feature/section name or empty), the cell renders the
     /// literal `unowned` so the gap is honest.
     private static func portfolioOwner(for section: DashboardSection) -> String {
-        // The section heading is "Feature · <name>" / "Program · <name>" / "Build pattern · <name>";
-        // its trailing segment is the feature name the owner fallback degenerates to.
-        let featureName = section.heading.split(separator: "·").last.map {
-            $0.trimmingCharacters(in: .whitespaces)
-        } ?? section.heading
         let owners = section.projection.rows.map(\.owner)
-            .filter { !$0.isEmpty && $0 != featureName }
+            .filter { !$0.isEmpty && $0 != featureName(of: section) }
         guard let owner = owners.first else { return "unowned" }
         return owner
+    }
+
+    /// The trailing segment of a section heading ("Feature · <name>" / "Program · <name>" /
+    /// "Build pattern · <name>") — the feature name the owner fallback degenerates to.
+    static func featureName(of section: DashboardSection) -> String {
+        section.heading.split(separator: "·").last.map {
+            $0.trimmingCharacters(in: .whitespaces)
+        } ?? section.heading
+    }
+
+    private static func emptyStatusCounts() -> [DashboardStatus: Int] {
+        Dictionary(uniqueKeysWithValues: DashboardStatus.allCases.map { ($0, 0) })
+    }
+
+    /// Owner-load groups for the "Load by owner" chart (answers *who is carrying how much*): every
+    /// project slice bucketed by its owner, with untagged work — where the owner fallback degenerated
+    /// to the feature/section name, or is empty — collapsed into a single honest `unowned` bucket
+    /// (which shrinks as owners are assigned). `unowned` sorts last; real owners sort alphabetically.
+    static func ownerLoadGroups(for sections: [DashboardSection]) -> [DashboardCharts.BarGroup] {
+        var counts: [String: [DashboardStatus: Int]] = [:]
+        for section in sections {
+            let feature = featureName(of: section)
+            for row in section.projection.rows {
+                let owner = (row.owner.isEmpty || row.owner == feature) ? "unowned" : row.owner
+                counts[owner, default: emptyStatusCounts()][row.status, default: 0] += 1
+            }
+        }
+        let keys = counts.keys.sorted { a, b in
+            if a == "unowned" { return false }
+            if b == "unowned" { return true }
+            return a < b
+        }
+        return keys.map { DashboardCharts.BarGroup(label: $0, counts: counts[$0] ?? emptyStatusCounts()) }
+    }
+
+    /// Feature-progress groups for the "Progress by feature" chart (answers *how far along is each
+    /// feature/program*): one status-stacked bar per section, in assembled order. Distinct from the
+    /// owner-load chart so each section has a single, unambiguous purpose.
+    static func featureProgressGroups(for sections: [DashboardSection]) -> [DashboardCharts.BarGroup] {
+        sections.map { section in
+            var counts = emptyStatusCounts()
+            for row in section.projection.rows { counts[row.status, default: 0] += 1 }
+            return DashboardCharts.BarGroup(label: featureName(of: section), counts: counts)
+        }
     }
 
     /// The current blocker for a feature's portfolio row: the first escalated node, else the first
