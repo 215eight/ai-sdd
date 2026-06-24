@@ -1,0 +1,25 @@
+summary: >-
+  Reshaped the project/program dashboard into an inverted pyramid. GraphRenderer.dashboardPage now
+  emits a whole-project rollup — a VERDICT band (derived trajectory on-track/slipping/stalled from
+  blockers + escalations across all sections, a generation timestamp formatted purely from an
+  INJECTED `now`, and a freshness badge that reuses run-integrity's `⚠ stale run` marker as the
+  single trust mechanism) and a PORTFOLIO band (one health row per feature: status + slice-count %
+  labelled `slices` + owner via the existing owner fallback with `unowned` degeneration + current
+  blocker) — rendered after the header/charts and BEFORE the per-section detail loop, so the
+  project rollup precedes any per-feature detail. The existing per-feature graph/table stays as the
+  unchanged detail band (reuses the shipped sectionHTML, no fork). `now` is threaded as a defaulted
+  parameter on dashboardPage and injected once from the Graph command's dashboardDoc() (`Date()`
+  read at the single wall-clock boundary); no renderer/assembler/pure function reads the wall clock,
+  so the same sections + now render byte-identically. Added pure helpers (dashboardTrajectory,
+  portfolioRows, slicePercent, formatTimestamp) and Swift Testing coverage with a fixed injected
+  `now`: verdict-band render, project-first ordering, portfolio rows, stale-badge reuse, unowned
+  fallback, injected-now determinism, and existing-modes-preserved. DashboardProjection.swift was
+  not modified — the rollup derives from already-assembled sections, keeping the assemblers pure.
+satisfies:
+  - verdict-band-renders
+  - project-first-ordering
+  - portfolio-health-rows
+  - freshness-badge-reuses-stale-marker
+  - injected-now-deterministic
+  - owner-unowned-fallback
+  - existing-modes-preserved

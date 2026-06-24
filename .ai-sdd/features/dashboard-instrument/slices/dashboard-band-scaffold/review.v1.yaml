@@ -1,0 +1,108 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: dashboard-band-scaffold
+
+verdict: approve
+summary: >-
+  Independent review of slice dashboard-band-scaffold (dashboard-instrument, Part B, S1) against
+  feature-plan.v1 (7 acceptance ids) and changeset.v1. The slice reshapes
+  `ai-sdd graph --project --dashboard` into an inverted pyramid: `GraphRenderer.dashboardPage` now
+  emits a project rollup — a VERDICT band (derived trajectory on-track/slipping/stalled, generation
+  timestamp from an injected `now`, freshness badge reusing run-integrity's `⚠ stale run` marker) and
+  a PORTFOLIO band (one row per feature: status + slice-count % labelled "slices" + owner with
+  `unowned` fallback + blocker) — appended BEFORE the per-feature detail loop, with the detail band
+  reusing the shipped `sectionHTML` unchanged. `now` is a defaulted parameter on `dashboardPage`;
+  the only `Date()` in GraphRenderer.swift is that defaulted parameter value (the renderer body reads
+  no wall clock, grep-confirmed), and `main.swift` reads `Date()` once at the dashboard boundary and
+  injects it. I independently ran `swift build` (complete), `swift test` (235 tests / 8 suites green),
+  `ai-sdd validate .ai-sdd/features/dashboard-instrument` (valid), and
+  `ai-sdd graph .ai-sdd --project --dashboard --out /tmp/rev.html` — eyeballing the live render: band
+  order is verdict-band (line 297) → portfolio-band (305) → first dashboard-section (399), trajectory
+  reads "on track" (not a raw %), timestamp "generated 2026-06-24 20:51 UTC", "fresh" badge, and one
+  portfolio row per feature with "N/M (P%) slices" + `unowned` fallback. No scope creep: a diff grep
+  found no temporal metrics, critical-path, attention band, or slice-id-on-nodes. DashboardProjection,
+  status precedence, owner semantics, and the markdown/mermaid `--html` path are untouched. All 7 ids
+  pass.
+
+items:
+  - id: verdict-band-renders
+    verdict: pass
+    notes: >-
+      `projectRollupHTML` emits `<section class="verdict-band">` carrying one derived trajectory line
+      (`trajectory.rawValue` — on track / slipping / stalled, NOT a raw %), the generation timestamp
+      (`generated <formatTimestamp(now)>`), and the freshness badge, appended BEFORE the per-section
+      detail loop in `dashboardPage`. Confirmed in the live /tmp/rev.html render (verdict band at line
+      297; trajectory "on track"; "generated 2026-06-24 20:51 UTC"; "fresh") and by test
+      `verdictBandRendersTrajectoryTimestampAndFreshness`.
+  - id: project-first-ordering
+    verdict: pass
+    notes: >-
+      The rollup is appended to `parts` before the `for section in sections` detail loop, so the
+      whole-project bands precede every `dashboard-section`. Live render order: verdict-band (297) →
+      portfolio-band (305) → first dashboard-section (399). Test
+      `projectRollupRendersBeforeFirstDetailSection` asserts verdict < portfolio < first detail markup.
+  - id: portfolio-health-rows
+    verdict: pass
+    notes: >-
+      `portfolioRows` maps exactly one `PortfolioRow` per section; each rendered `<tr>` shows heading,
+      slice-count as `done/total (percent%) slices` (labelled "slices", not effort), owner, and blocker
+      (worst escalated/rework node, else `—`). Header row is `Feature | Slices | Owner | Blocker`.
+      Verified in live render (one row per feature, e.g. "2/2 (100%) slices") and tests
+      `portfolioBandRendersOneHealthRowPerFeature`.
+  - id: freshness-badge-reuses-stale-marker
+    verdict: pass
+    notes: >-
+      The badge is derived from `sections.contains { $0.staleRun }` and reuses the exact `⚠ stale run`
+      marker string the per-section header (`sectionHTML`) already uses — no second trust mechanism,
+      no new freshness field; DashboardProjection.swift is untouched (confirmed unmodified in diff). A
+      stale fixture lights `verdict-freshness stale` + `⚠ stale run`; a clean fixture renders `fresh`
+      and no marker. Test `verdictFreshnessReusesStaleMarker` covers both branches.
+  - id: injected-now-deterministic
+    verdict: pass
+    notes: >-
+      `now` is an injected parameter on `dashboardPage(...now: Date = Date())`; the ONLY `Date()` in
+      GraphRenderer.swift is that defaulted parameter value (line 192) — the body reads no wall clock
+      (grep-confirmed). `main.swift` reads `Date()` once at the dashboard boundary and injects it into
+      both the project and program calls. `formatTimestamp` derives a fixed-UTC string purely from
+      `now`. Tests `injectedNowYieldsByteIdenticalOutput` (same now ⇒ byte-identical; different now ⇒
+      only the timestamp differs) and `timestampFormatIsDeterministicUTC` pin determinism.
+  - id: owner-unowned-fallback
+    verdict: pass
+    notes: >-
+      `portfolioOwner` reuses the already-projected `row.owner` (DashboardProjection.ownerLabel),
+      filtering out the degenerate fallback equal to the feature name; when none remains it renders the
+      literal `unowned`, else the genuine owner. Live render shows `unowned` for ownerless features.
+      Test `portfolioOwnerFallsBackToUnowned` asserts both the unowned and the named-owner branches.
+  - id: existing-modes-preserved
+    verdict: pass
+    notes: >-
+      Independently verified green: `swift build` (complete), `swift test` (235 tests / 8 suites pass,
+      including project/program/plant dashboard assembler tests). `graph .ai-sdd --project` markdown
+      mode renders; `--project --dashboard` renders the full page (header, donut, grouped bars, legend,
+      detail sections) plus the rollup; the markdown/mermaid `--html` path is unchanged (verdict-band
+      correctly absent — that path does not go through `dashboardPage`). Program/plant dashboard
+      ordering is guaranteed because both assemblers feed the single `dashboardPage` entry point. Test
+      `existingModesPreservedDefaultNowStillRenders` exercises the defaulted-now call site.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. The change is confined to the three declared files (GraphRenderer.swift, main.swift,
+    EngineTests.swift); DashboardProjection.swift, RunState/RunStore/Scheduler/Reducer, status
+    precedence, owner-label semantics, chart geometry, and the `--html` markdown path are all
+    untouched (decision file-scope honored). Both bands are a pure render-time derivation over the
+    already-assembled `[DashboardSection]` with no new data source and no wall-clock read; `now` is
+    injected at the single CLI boundary, keeping the renderer and assemblers pure. New public helpers
+    (dashboardTrajectory, portfolioRows, slicePercent, formatTimestamp) and the rollup are unit-tested
+    with a fixed injected `now` and no I/O. All dynamic values pass through `escapeHTML`. No scope
+    creep: no temporal metrics, critical-path, attention band, or slice-id-on-nodes (diff grep clean).
+
+caveats: >-
+  None blocking. The `--html` flag (without `--dashboard`) is the legacy markdown/mermaid wrapper and
+  correctly carries no verdict band — that path does not route through `dashboardPage`. The
+  `portfolioOwner` fallback infers the feature name from the heading's trailing `·` segment to detect
+  the degenerate owner-fallback; this is the same heading shape the assemblers produce ("Feature ·
+  <name>") and is covered by tests, but it is a string-shape coupling worth keeping in mind if heading
+  formatting ever changes. Neither affects correctness of this slice.
+
+rework: []

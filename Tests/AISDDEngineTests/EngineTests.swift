@@ -1468,6 +1468,155 @@ struct EngineTests {
         #expect(empty.contains("<td colspan=\"8\">No slices</td>"))
     }
 
+    // MARK: - Project rollup: verdict + portfolio bands (dashboard-band-scaffold S1)
+
+    /// A fixed `now` so the verdict-band timestamp is deterministic across runs and machines.
+    private var fixedNow: Date {
+        // 2026-06-24 09:30:00 UTC.
+        Date(timeIntervalSince1970: 1_782_293_400)
+    }
+
+    private func portfolioSection(heading: String, statuses: [DashboardStatus],
+                                  owner: String, staleRun: Bool = false) -> GraphRenderer.DashboardSection {
+        let rows = statuses.enumerated().map { index, status in
+            DashboardProjectionRow(node: "n\(index)", stack: "swift", owner: owner, lane: "code",
+                                   milestone: "m1", dependencyCount: index, status: status,
+                                   nextActionHint: .none)
+        }
+        let totals = Dictionary(DashboardStatus.allCases.map { s in (s, statuses.filter { $0 == s }.count) },
+                                uniquingKeysWith: +)
+        let summary = DashboardProjectionSummary(
+            totalFeatureCount: 1, totalNodeCount: statuses.count,
+            doneCount: statuses.filter { $0 == .done }.count, statusTotals: totals)
+        return .init(heading: heading, projection: .init(rows: rows, summary: summary), staleRun: staleRun)
+    }
+
+    @Test func verdictBandDerivesTrajectoryFromBlockersAndEscalations() {
+        let escalated = [portfolioSection(heading: "Feature · a", statuses: [.done, .escalated], owner: "alice")]
+        #expect(GraphRenderer.dashboardTrajectory(for: escalated) == .stalled)
+
+        let rework = [portfolioSection(heading: "Feature · a", statuses: [.done, .rework], owner: "alice")]
+        #expect(GraphRenderer.dashboardTrajectory(for: rework) == .slipping)
+
+        let clean = [portfolioSection(heading: "Feature · a", statuses: [.done, .runnable], owner: "alice")]
+        #expect(GraphRenderer.dashboardTrajectory(for: clean) == .onTrack)
+
+        // Escalation dominates rework.
+        let both = [portfolioSection(heading: "Feature · a", statuses: [.rework, .escalated], owner: "alice")]
+        #expect(GraphRenderer.dashboardTrajectory(for: both) == .stalled)
+    }
+
+    @Test func verdictBandRendersTrajectoryTimestampAndFreshness() {
+        let page = GraphRenderer.dashboardPage(
+            title: "Project", sections: [
+                portfolioSection(heading: "Feature · a", statuses: [.done, .rework], owner: "alice")
+            ], now: fixedNow)
+        #expect(page.contains("<section class=\"verdict-band\""))
+        #expect(page.contains("verdict-trajectory trajectory-slipping"))
+        #expect(page.contains(">slipping</p>"))
+        #expect(page.contains("generated 2026-06-24 09:30 UTC"))
+        // A clean section ⇒ no stale badge text, the `fresh` badge instead.
+        #expect(!page.contains("⚠ stale run"))
+        #expect(page.contains("verdict-freshness fresh"))
+    }
+
+    @Test func projectRollupRendersBeforeFirstDetailSection() {
+        let page = GraphRenderer.dashboardPage(
+            title: "Project", sections: [
+                portfolioSection(heading: "Feature · a", statuses: [.done], owner: "alice"),
+                portfolioSection(heading: "Feature · b", statuses: [.runnable], owner: "bob")
+            ], now: fixedNow)
+        let verdictAt = try! #require(page.range(of: "class=\"verdict-band\"")).lowerBound
+        let portfolioAt = try! #require(page.range(of: "class=\"portfolio-band\"")).lowerBound
+        let firstDetailAt = try! #require(page.range(of: "class=\"dashboard-section\"")).lowerBound
+        #expect(verdictAt < portfolioAt)
+        #expect(portfolioAt < firstDetailAt)
+    }
+
+    @Test func portfolioBandRendersOneHealthRowPerFeature() {
+        let sections = [
+            portfolioSection(heading: "Feature · a", statuses: [.done, .done, .rework], owner: "alice"),
+            portfolioSection(heading: "Feature · b", statuses: [.done, .runnable], owner: "bob")
+        ]
+        let rows = GraphRenderer.portfolioRows(for: sections)
+        #expect(rows.count == 2)
+        #expect(rows[0].heading == "Feature · a")
+        #expect(rows[0].doneCount == 2)
+        #expect(rows[0].totalCount == 3)
+        #expect(rows[0].owner == "alice")
+        #expect(rows[0].blocker == "n2")   // the rework node
+        #expect(rows[1].blocker == "—")
+
+        let page = GraphRenderer.dashboardPage(title: "Project", sections: sections, now: fixedNow)
+        // Headline is labelled `slices`, not effort; one row per feature.
+        #expect(page.contains("2/3 (67%) slices"))
+        #expect(page.contains("1/2 (50%) slices"))
+        #expect(page.contains("<th>Feature</th><th>Slices</th><th>Owner</th><th>Blocker</th>"))
+    }
+
+    @Test func portfolioOwnerFallsBackToUnowned() {
+        // When the section's only owner degenerates to the feature name, the cell renders `unowned`.
+        let unowned = [portfolioSection(heading: "Feature · alpha", statuses: [.runnable], owner: "alpha")]
+        #expect(GraphRenderer.portfolioRows(for: unowned)[0].owner == "unowned")
+
+        let owned = [portfolioSection(heading: "Feature · alpha", statuses: [.runnable], owner: "carol")]
+        #expect(GraphRenderer.portfolioRows(for: owned)[0].owner == "carol")
+
+        let page = GraphRenderer.dashboardPage(title: "P", sections: unowned, now: fixedNow)
+        #expect(page.contains("<td>unowned</td>"))
+    }
+
+    @Test func verdictFreshnessReusesStaleMarker() {
+        let staleSections = [
+            portfolioSection(heading: "Feature · a", statuses: [.done], owner: "alice", staleRun: true)
+        ]
+        let stale = GraphRenderer.dashboardPage(title: "P", sections: staleSections, now: fixedNow)
+        // The freshness badge reuses the exact `⚠ stale run` marker (also still in the section header).
+        #expect(stale.contains("verdict-freshness stale"))
+        #expect(stale.contains("⚠ stale run"))
+
+        let cleanSections = [portfolioSection(heading: "Feature · a", statuses: [.done], owner: "alice")]
+        let clean = GraphRenderer.dashboardPage(title: "P", sections: cleanSections, now: fixedNow)
+        #expect(!clean.contains("⚠ stale run"))
+    }
+
+    @Test func injectedNowYieldsByteIdenticalOutput() {
+        let sections = [portfolioSection(heading: "Feature · a", statuses: [.done, .runnable], owner: "alice")]
+        let first = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        let second = GraphRenderer.dashboardPage(title: "P", sections: sections, now: fixedNow)
+        #expect(first == second)
+        // A different `now` changes only the timestamp, proving it is the injected value rendered.
+        let later = GraphRenderer.dashboardPage(
+            title: "P", sections: sections,
+            now: Date(timeIntervalSince1970: 1_782_379_800))   // 2026-06-25 09:30 UTC
+        #expect(first != later)
+        #expect(later.contains("generated 2026-06-25 09:30 UTC"))
+    }
+
+    @Test func timestampFormatIsDeterministicUTC() {
+        #expect(GraphRenderer.formatTimestamp(fixedNow) == "2026-06-24 09:30 UTC")
+        #expect(GraphRenderer.formatTimestamp(Date(timeIntervalSince1970: 0)) == "1970-01-01 00:00 UTC")
+    }
+
+    @Test func existingModesPreservedDefaultNowStillRenders() {
+        // The defaulted `now` keeps existing call sites source-stable; the page still renders the
+        // header, charts, legend, and per-section detail alongside the new rollup.
+        let summary = DashboardProjectionSummary(
+            totalFeatureCount: 1, totalNodeCount: 1, doneCount: 1,
+            statusTotals: [.done: 1, .inProgress: 0, .rework: 0, .escalated: 0, .runnable: 0, .pending: 0])
+        let page = GraphRenderer.dashboardPage(title: "Legacy", sections: [
+            .init(heading: "Feature · legacy",
+                  projection: .init(rows: [DashboardProjectionRow(
+                    node: "plan", stack: "swift", owner: "alice", lane: "code", milestone: "m1",
+                    dependencyCount: 0, status: .done, nextActionHint: .none)], summary: summary))
+        ])
+        #expect(page.hasPrefix("<!doctype html>"))
+        #expect(page.contains("class=\"dashboard-chart dashboard-status-donut\""))
+        #expect(page.contains("<h2>Feature · legacy</h2>"))
+        #expect(page.contains("class=\"verdict-band\""))
+        #expect(page.contains("class=\"portfolio-band\""))
+    }
+
     // MARK: - Run store
 
     // The store is append-only; state is always a pure projection of the replayed event log.

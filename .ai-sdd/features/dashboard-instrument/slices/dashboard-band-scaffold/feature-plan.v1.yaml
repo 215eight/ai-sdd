@@ -1,0 +1,167 @@
+summary: >-
+  Reshape `ai-sdd graph --project --dashboard` from a flat scroll of equal-weight feature
+  blocks into an inverted pyramid that renders project-first. Add two project-rollup bands
+  above the existing per-feature detail: a VERDICT band (one derived trajectory line —
+  on-track / slipping / stalled, derived from blockers + escalations across all sections,
+  with velocity wired later in temporal slices — plus a generation timestamp from an injected
+  `now` and a freshness/trust badge that REUSES run-integrity's `staleRun` / `⚠ stale run`
+  marker), and a PORTFOLIO band (one health row per feature: status + slice-count % + owner
+  with `unowned` fallback + current blocker). The existing per-feature graph/table becomes the
+  DETAIL band beneath. `now` is threaded as an INJECTED parameter from the Graph command into
+  `dashboardPage` — no wall-clock read inside any renderer/assembler/pure function — so tests
+  can pin it. Existing modes (`--project`, `--plant`, `--html`, program dashboard) keep working.
+scope:
+  in:
+    - Inverted-pyramid restructure of GraphRenderer.dashboardPage so the whole-project rollup
+      (verdict band + portfolio band) renders BEFORE any per-feature detail section.
+    - VERDICT band derives one trajectory line (on-track / slipping / stalled) from blockers
+      (rework status) + escalations aggregated across all DashboardSections; velocity is wired
+      later in temporal slices and is NOT computed here.
+    - VERDICT band shows the generation timestamp formatted deterministically from an INJECTED
+      `now` parameter.
+    - VERDICT band shows a freshness/trust badge that REUSES the existing per-section
+      `DashboardSection.staleRun` / `⚠ stale run` marker (the project badge lights when any
+      attached run is stale) — no second trust mechanism is invented.
+    - PORTFOLIO band renders one health row per feature section, each with status, slice-count %
+      (labelled `slices`, not effort), owner (with `unowned` fallback when no owner surfaces),
+      and current blocker.
+    - DETAIL band — the existing per-feature graph + table — renders beneath the rollup,
+      unchanged in content, reusing the shipped section renderer (no fork).
+    - Thread an injected `now` (a Date) from the Graph command (the single wall-clock boundary)
+      through GraphRenderer.dashboardPage, defaulted/optional so existing call sites are
+      source-stable; the assemblers stay pure (no wall clock) and the Graph command injects Date().
+    - Pure project-rollup band helpers (verdict derivation, portfolio-row derivation, owner
+      fallback, timestamp formatting) are unit-tested with a fixed injected `now` and no I/O.
+    - Preserve existing modes — single graph, `--project` (markdown), `--plant`, `--html`, and
+      the program dashboard — verified green.
+  out:
+    - Temporal metrics — cycle time, WIP aging, velocity, burndown, ETA-as-a-band,
+      "what changed since T-7d" — belong to phase-2 temporal slices (S5/S6/S7), NOT this slice.
+      The verdict trajectory here derives from blockers + escalations only; velocity is wired
+      later.
+    - Critical-path highlighting (longest dependency chain) and runnable-ranked-by-downstream-
+      unblock — slice S2 `critical-path-and-ranking`.
+    - The attention band (escalations / rework loops / top unblockers triage panel) —
+      slice S3 `attention-band`.
+    - Detail-graph context — pairing each feature graph with its master-requirements definition
+      and showing the slice id on every node — slice S4 `detail-graph-context`.
+    - Any wall-clock read inside a gate, check, assembler, or pure renderer; effort / story-point
+      weighting; a false-precision ETA date; server / auto-refresh / live multi-machine; remote
+      fragments; timestamp backfill.
+    - Any change to DashboardProjection status precedence, owner-label semantics, RunState,
+      RunStore, Scheduler, Reducer, the stale-run reconciliation in DashboardRunMatch, chart
+      geometry, status colors, or the `--html` Markdown/Mermaid path.
+acceptance:
+  - id: verdict-band-renders
+    description: >-
+      `ai-sdd graph .ai-sdd --project --dashboard` renders a verdict band carrying one derived
+      trajectory line (on-track / slipping / stalled), the generation timestamp, and the
+      freshness badge — above all per-feature detail.
+  - id: project-first-ordering
+    description: >-
+      The whole-project rollup (verdict band + portfolio band) renders BEFORE any per-feature
+      detail section in the generated HTML; a fixture asserts the rollup markup precedes the
+      first `dashboard-section`.
+  - id: portfolio-health-rows
+    description: >-
+      The portfolio band renders exactly one health row per feature section, each showing status,
+      slice-count % (headline labelled `slices`, not effort), owner, and current blocker.
+  - id: freshness-badge-reuses-stale-marker
+    description: >-
+      The verdict-band freshness badge is derived from the existing `DashboardSection.staleRun`
+      flag and reuses the `⚠ stale run` marker text — no second trust mechanism is introduced;
+      a fixture with a stale section lights the badge and a clean fixture leaves it off.
+  - id: injected-now-deterministic
+    description: >-
+      The generation timestamp is produced from an INJECTED `now` parameter; rendering the same
+      sections with the same `now` yields byte-identical output, and no renderer/assembler/pure
+      function reads the wall clock.
+  - id: owner-unowned-fallback
+    description: >-
+      A feature with no owner surfacing through the existing owner-fallback logic renders the
+      literal `unowned` in its portfolio row, while a feature with an owner shows that owner.
+  - id: existing-modes-preserved
+    description: >-
+      Existing modes still render: single graph, `ai-sdd graph <dir> --project`,
+      `ai-sdd graph --plant <plant.yaml>`, `--html`, and the program dashboard
+      (`ai-sdd graph <programDir> --dashboard`); `swift build` + `swift test` stay green.
+decisions:
+  - id: now-injection-path
+    status: closed
+    decision: >-
+      Thread an injected `now` (a Date) from the Graph command into
+      GraphRenderer.dashboardPage(title:sections:now:) as the single injection point. The Graph
+      command's `dashboardDoc()` reads `Date()` once (the only wall-clock boundary) and passes it
+      to `dashboardPage`; the parameter is defaulted so existing `dashboardPage` call sites and
+      tests stay source-stable. The assemblers (`ProjectDashboardAssembler` /
+      `ProgramDashboardAssembler`) are NOT changed to read time — they stay pure — because `now`
+      is only consumed by the render-time verdict band.
+    rationale: >-
+      The brief's critical determinism rule requires no wall-clock read inside the
+      renderer/assembler/pure functions; injecting at the CLI boundary keeps the renderer pure and
+      pinnable, and the verdict band is the only consumer of `now` so the renderer is the natural
+      injection sink.
+  - id: bands-render-in-dashboardPage
+    status: closed
+    decision: >-
+      Render the verdict band and portfolio band as a project-rollup block emitted inside
+      `dashboardPage` immediately after the header/summary and BEFORE the per-section detail loop,
+      reusing the shipped `sectionHTML` for the detail band unchanged. The rollup is derived from
+      the already-assembled `[DashboardSection]` (no new data source).
+    rationale: >-
+      `dashboardPage` is the single render entry point both assemblers feed; adding the rollup
+      there reuses the one renderer (no second dashboard path) and guarantees project-first
+      ordering for both the `--project` factory dashboard and the program dashboard.
+  - id: verdict-trajectory-derivation
+    status: closed
+    decision: >-
+      Derive the trajectory in a pure helper from the aggregated section data only: `stalled` when
+      any section has an escalated node, `slipping` when any section has a rework/blocked node (but
+      no escalation), else `on track`. Velocity is explicitly deferred to the temporal slices and
+      not read here. The badge is `on track` / `slipping` / `stalled` text, not a raw percentage.
+    rationale: >-
+      Matches feature decision D4 (derived trajectory, not the raw %); blockers + escalations are
+      the only signals available in the no-new-data band, and escalation is the stronger signal so
+      it dominates.
+  - id: freshness-badge-reuse
+    status: closed
+    decision: >-
+      The freshness badge reuses `DashboardSection.staleRun` (added in run-integrity S4) and the
+      exact `⚠ stale run` marker string. The project badge is `true` when ANY section's `staleRun`
+      is true; no new freshness field, reconciliation, or marker is introduced.
+    rationale: >-
+      The brief mandates a single trust mechanism; `staleRun` already carries the best-effort-match
+      freshness signal per section, so the project verdict band aggregates it rather than forking a
+      second mechanism.
+  - id: portfolio-owner-unowned-fallback
+    status: closed
+    decision: >-
+      The portfolio owner cell reuses the owner that surfaces through
+      `DashboardProjection.ownerLabel` (node owner → feature owner → feature name). For the
+      portfolio health row, when no genuine owner is declared the cell renders the literal
+      `unowned`; the slice-count % comes from the section summary (`doneCount / totalNodeCount`)
+      and is labelled `slices`.
+    rationale: >-
+      The brief requires honest gaps (`unowned`) and a `slices`-labelled headline, and says to
+      reuse the existing owner fallback logic rather than invent a new owner source.
+  - id: file-scope
+    status: closed
+    decision: >-
+      Touch `Sources/AISDDEngine/GraphRenderer.swift` (add the `now` parameter + verdict/portfolio
+      band rendering), `Sources/AISDDCLI/main.swift` (inject `Date()` at the dashboard boundary),
+      and `Tests/AISDDEngineTests/EngineTests.swift` (pure band + determinism + ordering tests).
+      `DashboardProjection.swift` is NOT modified — the rollup derives from already-assembled
+      sections — keeping the assemblers pure.
+    rationale: >-
+      Minimal, exact files; the verdict/portfolio bands are a pure render-time derivation over the
+      existing `[DashboardSection]`, so only the renderer, the CLI injection point, and tests change.
+files:
+  - Sources/AISDDEngine/GraphRenderer.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/dashboard-instrument
+  - swift run ai-sdd graph .ai-sdd --project --dashboard --out /tmp/db.html
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

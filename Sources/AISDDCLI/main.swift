@@ -530,18 +530,21 @@ struct Graph: ParsableCommand {
             throw ValidationError("pass a program dir, or --project <factoryDir>, with --dashboard")
         }
 
+        // The single wall-clock boundary: read `Date()` once here and inject it into the renderer so
+        // the verdict-band timestamp is the only consumer of `now` and the renderer stays pure.
+        let now = Date()
         if project {
             let factoryDir = URL(fileURLWithPath: dir, isDirectory: true)
             let dashboard = try ProjectDashboardAssembler.assemble(
                 factoryDir: factoryDir,
                 runStore: RunStore.local(under: RunStore.base(forTarget: factoryDir)))
-            return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
+            return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections, now: now)
         } else {
             let programDir = URL(fileURLWithPath: dir, isDirectory: true)
             let dashboard = try ProgramDashboardAssembler.assemble(
                 programDir: programDir,
                 runStore: RunStore.local(under: RunStore.base(forTarget: programDir)))
-            return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections)
+            return GraphRenderer.dashboardPage(title: dashboard.title, sections: dashboard.sections, now: now)
         }
     }
 

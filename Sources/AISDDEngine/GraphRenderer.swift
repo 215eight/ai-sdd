@@ -183,7 +183,13 @@ public enum GraphRenderer {
     }
 
     /// Render a self-contained dashboard page from prepared dashboard sections.
-    public static func dashboardPage(title: String, sections: [DashboardSection]) -> String {
+    ///
+    /// `now` is INJECTED (defaulted at the call site, so existing callers stay source-stable). The
+    /// function body reads no wall clock — given the same `sections` and `now` the output is
+    /// byte-identical — which is why the verdict band's generation timestamp is pinnable in tests.
+    /// The single wall-clock boundary is the Graph command, which reads `Date()` once and passes it.
+    public static func dashboardPage(title: String, sections: [DashboardSection],
+                                     now: Date = Date()) -> String {
         let summary = dashboardSummary(for: sections)
         let rows = sections.flatMap(\.projection.rows)
         let progress = progressPercent(done: summary.doneCount, total: summary.totalNodeCount)
@@ -221,6 +227,11 @@ public enum GraphRenderer {
             "    </section>",
             mermaidScript()
         ]
+        // The whole-project rollup (verdict + portfolio bands) renders BEFORE any per-feature
+        // detail, turning the flat scroll into an inverted pyramid (project first; features as
+        // progressive disclosure). Both bands are a pure derivation over the already-assembled
+        // sections — no new data source.
+        parts.append(projectRollupHTML(sections: sections, now: now))
         for section in sections {
             parts.append(sectionHTML(section))
         }
@@ -346,6 +357,156 @@ public enum GraphRenderer {
             "      </ul>",
             "    </nav>"
         ].joined(separator: "\n")
+    }
+
+    // MARK: - Project rollup (verdict + portfolio bands)
+
+    /// The one derived project trajectory. Escalation is the strongest signal and dominates rework
+    /// (feature decision D4); velocity is explicitly deferred to the temporal slices and not read.
+    public enum DashboardTrajectory: String, Equatable, Sendable {
+        case onTrack = "on track"
+        case slipping
+        case stalled
+    }
+
+    /// Derive the project trajectory from the aggregated section rows ONLY (no new data source, no
+    /// wall clock): `stalled` when any node is escalated, else `slipping` when any node is in rework,
+    /// else `on track`. Pure and total over the section list.
+    public static func dashboardTrajectory(for sections: [DashboardSection]) -> DashboardTrajectory {
+        let statuses = sections.flatMap(\.projection.rows).map(\.status)
+        if statuses.contains(.escalated) { return .stalled }
+        if statuses.contains(.rework) { return .slipping }
+        return .onTrack
+    }
+
+    /// One portfolio health row, derived purely from a section: status headline, slice-count %
+    /// (labelled `slices`, not effort), owner (with `unowned` fallback), and the current blocker.
+    public struct PortfolioRow: Equatable, Sendable {
+        public var heading: String
+        public var doneCount: Int
+        public var totalCount: Int
+        public var owner: String
+        public var blocker: String
+        public init(heading: String, doneCount: Int, totalCount: Int, owner: String, blocker: String) {
+            self.heading = heading
+            self.doneCount = doneCount
+            self.totalCount = totalCount
+            self.owner = owner
+            self.blocker = blocker
+        }
+    }
+
+    /// Derive one portfolio health row per section (pure, no I/O): the section summary supplies the
+    /// `slices` count, the section's representative owner surfaces through the already-projected
+    /// `row.owner` (falling back to the literal `unowned` when none is genuinely declared), and the
+    /// current blocker is the worst escalated/rework node (or `—` when clear).
+    public static func portfolioRows(for sections: [DashboardSection]) -> [PortfolioRow] {
+        sections.map { section in
+            PortfolioRow(
+                heading: section.heading,
+                doneCount: section.projection.summary.doneCount,
+                totalCount: section.projection.summary.totalNodeCount,
+                owner: portfolioOwner(for: section),
+                blocker: portfolioBlocker(for: section))
+        }
+    }
+
+    /// The integer slice-completion percent for a portfolio row (0 when a feature has no slices).
+    static func slicePercent(done: Int, total: Int) -> Int {
+        Int(progressPercent(done: done, total: total).rounded())
+    }
+
+    /// The representative owner for a feature's portfolio row. Reuses the owner already surfaced
+    /// through `DashboardProjection.ownerLabel` on the section's rows; when no genuine owner is
+    /// declared (the fallback degenerated to the feature/section name or empty), the cell renders the
+    /// literal `unowned` so the gap is honest.
+    private static func portfolioOwner(for section: DashboardSection) -> String {
+        // The section heading is "Feature · <name>" / "Program · <name>" / "Build pattern · <name>";
+        // its trailing segment is the feature name the owner fallback degenerates to.
+        let featureName = section.heading.split(separator: "·").last.map {
+            $0.trimmingCharacters(in: .whitespaces)
+        } ?? section.heading
+        let owners = section.projection.rows.map(\.owner)
+            .filter { !$0.isEmpty && $0 != featureName }
+        guard let owner = owners.first else { return "unowned" }
+        return owner
+    }
+
+    /// The current blocker for a feature's portfolio row: the first escalated node, else the first
+    /// rework node, else `—`. Mirrors the trajectory precedence (escalation dominates).
+    private static func portfolioBlocker(for section: DashboardSection) -> String {
+        let rows = section.projection.rows
+        if let escalated = rows.first(where: { $0.status == .escalated }) { return escalated.node }
+        if let rework = rows.first(where: { $0.status == .rework }) { return rework.node }
+        return "—"
+    }
+
+    /// The whole-project rollup: a verdict band (trajectory + generation timestamp + freshness badge)
+    /// and a portfolio band (one health row per feature), rendered before any per-feature detail.
+    private static func projectRollupHTML(sections: [DashboardSection], now: Date) -> String {
+        let trajectory = dashboardTrajectory(for: sections)
+        let stale = sections.contains { $0.staleRun }
+        // The freshness badge REUSES run-integrity's `⚠ stale run` marker — the single trust
+        // mechanism — lit when any attached run is stale, and otherwise omitted.
+        let freshnessBadge = stale
+            ? "<span class=\"verdict-freshness stale\">\(escapeHTML("⚠ stale run"))</span>"
+            : "<span class=\"verdict-freshness fresh\">fresh</span>"
+        let verdict = [
+            "    <section class=\"verdict-band\" aria-label=\"Project verdict\">",
+            "      <span class=\"verdict-kicker\">verdict</span>",
+            "      <p class=\"verdict-trajectory trajectory-\(trajectoryClass(trajectory))\">\(escapeHTML(trajectory.rawValue))</p>",
+            "      <p class=\"verdict-meta\">",
+            "        <span class=\"verdict-generated\">generated \(escapeHTML(formatTimestamp(now)))</span>",
+            "        \(freshnessBadge)",
+            "      </p>",
+            "    </section>"
+        ].joined(separator: "\n")
+
+        let rows = portfolioRows(for: sections).map { row in
+            let percent = slicePercent(done: row.doneCount, total: row.totalCount)
+            return [
+                "          <tr>",
+                "            <td>\(escapeHTML(row.heading))</td>",
+                "            <td>\(row.doneCount)/\(row.totalCount) (\(percent)%) slices</td>",
+                "            <td>\(escapeHTML(row.owner))</td>",
+                "            <td>\(escapeHTML(row.blocker))</td>",
+                "          </tr>"
+            ].joined(separator: "\n")
+        }.joined(separator: "\n")
+        let portfolioBody = rows.isEmpty ? "          <tr><td colspan=\"4\">No features</td></tr>" : rows
+        let portfolio = [
+            "    <section class=\"portfolio-band\" aria-label=\"Portfolio health\">",
+            "      <h2>Portfolio</h2>",
+            "      <table class=\"portfolio-table\">",
+            "        <thead>",
+            "          <tr><th>Feature</th><th>Slices</th><th>Owner</th><th>Blocker</th></tr>",
+            "        </thead>",
+            "        <tbody>",
+            portfolioBody,
+            "        </tbody>",
+            "      </table>",
+            "    </section>"
+        ].joined(separator: "\n")
+
+        return [verdict, portfolio].joined(separator: "\n")
+    }
+
+    private static func trajectoryClass(_ trajectory: DashboardTrajectory) -> String {
+        switch trajectory {
+        case .onTrack: return "on-track"
+        case .slipping: return "slipping"
+        case .stalled: return "stalled"
+        }
+    }
+
+    /// A deterministic UTC timestamp for the verdict band, formatted purely from the injected `now`
+    /// (no locale/time-zone wall-clock reads), so the same `now` always renders byte-identically.
+    static func formatTimestamp(_ now: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        let c = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: now)
+        return String(format: "%04d-%02d-%02d %02d:%02d UTC",
+                      c.year ?? 0, c.month ?? 0, c.day ?? 0, c.hour ?? 0, c.minute ?? 0)
     }
 
     private static func sectionHTML(_ section: DashboardSection) -> String {
@@ -486,6 +647,21 @@ public enum GraphRenderer {
         .dashboard-section > header { align-items: baseline; display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
         .dashboard-section > header p { color: var(--muted); margin: 0; }
         .stale-run-marker { color: var(--status-rework); font-size: 0.8rem; font-weight: 700; margin-left: 10px; white-space: nowrap; }
+        .verdict-band { border: 1px solid var(--line); border-radius: 8px; margin: 24px 0 18px; padding: 18px 20px; }
+        .verdict-kicker { color: var(--muted); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+        .verdict-trajectory { font-size: 1.5rem; font-weight: 700; margin: 6px 0 10px; }
+        .trajectory-on-track { color: var(--status-done); }
+        .trajectory-slipping { color: var(--status-rework); }
+        .trajectory-stalled { color: var(--status-escalated); }
+        .verdict-meta { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; gap: 12px; margin: 0; }
+        .verdict-freshness { font-size: 0.82rem; font-weight: 700; }
+        .verdict-freshness.stale { color: var(--status-rework); }
+        .verdict-freshness.fresh { color: var(--status-done); }
+        .portfolio-band { margin: 0 0 28px; }
+        .portfolio-band h2 { margin-bottom: 12px; }
+        .portfolio-table { border-collapse: collapse; font-size: 0.92rem; width: 100%; }
+        .portfolio-table th, .portfolio-table td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; vertical-align: top; }
+        .portfolio-table th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; }
         .dashboard-mermaid-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 18px; overflow-x: auto; padding: 16px; }
         .dashboard-mermaid { margin: 0; min-width: 640px; text-align: center; }
         .dashboard-graph { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr); margin-bottom: 18px; }
