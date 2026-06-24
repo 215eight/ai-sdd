@@ -1,0 +1,119 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: precommit-tripwire
+
+verdict: approve
+summary: >-
+  Independent review of slice precommit-tripwire (run-integrity, S6) against feature-plan.v1 (8
+  acceptance ids) and changeset.v1. The slice ships a committed POSIX-shell pre-commit hook at
+  `.ai-sdd/hooks/pre-commit` (executable, no bashisms), an install/chain section ("6a") in
+  `skills/ai-sdd-bootstrap/SKILL.md`, and a hermetic shell test harness at
+  `Tests/PrecommitTripwireTests/run-precommit-hook-tests.sh`. The hook parses a `[<feature>] <slice>:`
+  subject and scans `.ai-sdd/runs/<feature>/events/*.json` for a per-file AND of `"slice" :
+  "<slice>"` and `nodeCompleted`; on no match it refuses with the byte-exact line `slice "<slice>" of
+  feature "<feature>" was not submitted — run `ai-sdd submit <feature>` first` (em dash U+2014) and
+  exits non-zero. I confirmed the byte-exact error by running the hook in a temp dir against a
+  fabricated `[foo] bar:` unsubmitted message — exit 1 and a shell `=` equality check against the
+  exact expected string matched verbatim, em dash included (hook line 137 source bytes e2 80 94
+  confirmed via hexdump). I confirmed the event-matching is robust to the REAL on-disk JSON shape:
+  `.ai-sdd/runs/run-integrity-and-dashboard/events/000005.json` carries the slice name in the NESTED
+  `scoped.event.scoped.slice` field (the top-level `slice` is the feature, "run-integrity"), and the
+  hook's whole-file grep for `"slice" : "event-timestamps-and-owner"` + `nodeCompleted` matches it —
+  the harness's case 2b exercises exactly this nested shape. I independently ran the harness: 13
+  passed, 0 failed. `--no-verify` bypass (git semantics), the one-line stderr warning on every reached
+  matched subject (success exit code unchanged), the missing-`ai-sdd` message, foreign-hook chaining
+  (rename → `.pre-commit.local`, delegate preserving exit code, refusal short-circuits before
+  delegating), and re-bootstrap idempotence via the `ai-sdd:managed-hook` second-line marker are all
+  correctly designed in the hook + bootstrap 6a. No Swift changed: `swift build` complete, `swift
+  test` 226 tests / 8 suites green, `ai-sdd validate .ai-sdd/features/run-integrity` passes, the
+  feature-plan artifact satisfies its schema. The real repo `.git/hooks/` holds only `.sample` files
+  (implementer did not install). Committed files use only declarable prefixes (`.ai-sdd/`, `skills/`,
+  `Tests/`); no `scripts/`. All 8 ids pass.
+
+items:
+  - id: hook-installed-by-bootstrap
+    verdict: pass
+    notes: >-
+      Committed hook `.ai-sdd/hooks/pre-commit` exists, is `#!/bin/sh` POSIX (verified `case` +
+      parameter-expansion parsing, `command -v`; no `[[ ]]`/arrays/other bashisms), and is executable
+      (-rwxr-xr-x, mode confirmed via `ls -la`). `skills/ai-sdd-bootstrap/SKILL.md` adds section "6a"
+      instructing the bootstrap to `cp .ai-sdd/hooks/pre-commit .git/hooks/pre-commit` + `chmod +x` at
+      runtime, correctly framed as a manual post-gate runtime step because `.git/` is undeclarable.
+  - id: refuses-unsubmitted-slice-commit-with-exact-error
+    verdict: pass
+    notes: >-
+      Ran the hook in a temp dir against a fabricated `[foo] bar:` message with an empty events dir:
+      exit 1, and a byte-exact shell `=` comparison against
+      `slice "bar" of feature "foo" was not submitted — run `ai-sdd submit foo` first` matched
+      verbatim, including the em dash (U+2014, bytes e2 80 94 confirmed in hook source line 137). A
+      non-matching subject (`chore: ...`) passes through (harness case 3). Error is on stderr.
+  - id: succeeds-after-submit
+    verdict: pass
+    notes: >-
+      Hook exits 0 when an events file carries `"slice" : "<slice>"` AND `nodeCompleted`. Verified
+      against the REAL on-disk shape:
+      `.ai-sdd/runs/run-integrity-and-dashboard/events/000005.json` has the slice name in the nested
+      `scoped.event.scoped.slice == "event-timestamps-and-owner"` plus `nodeCompleted`, and the hook's
+      two whole-file greps both match it. Harness case 2 (flat) and 2b (nested) both pass.
+  - id: no-verify-bypass-with-warning
+    verdict: pass
+    notes: >-
+      `--no-verify` skip is git semantics (documented in the hook header and bootstrap 6a; not testable
+      in isolation). The one-line stderr warning `ai-sdd: integrity hook reached for [<f>] <s>:` is
+      emitted on every matched subject before the check, and the success exit code is unchanged —
+      confirmed by harness case 4 (warning lands on stderr; rc=0 on the success path) and observed
+      directly in my `[foo] bar:` run. A non-matched subject emits no warning (case 3).
+  - id: missing-ai-sdd-message
+    verdict: pass
+    notes: >-
+      When `command -v ai-sdd` fails, the hook prints `ai-sdd: install ai-sdd or use --no-verify` to
+      stderr and exits 1. Harness case 5 (stub PATH without ai-sdd) passes both the message and the
+      non-zero-exit assertions.
+  - id: existing-hook-chained
+    verdict: pass
+    notes: >-
+      `delegate_then_exit` execs a sibling `.pre-commit.local` and preserves its exit code on every
+      pass path; the refusal path exits before delegating. Bootstrap 6a renames a pre-existing
+      `.git/hooks/pre-commit` to `.pre-commit.local` (only when one is not already present) and installs
+      the managed hook on top. Harness case 6 confirms delegation preserves rc=7, the local hook ran,
+      and refusal does NOT reach the chained hook.
+  - id: re-bootstrap-idempotent
+    verdict: pass
+    notes: >-
+      The managed hook carries the `ai-sdd:managed-hook` marker on its SECOND line. Bootstrap 6a keys
+      off that marker: an already-managed `pre-commit` is refreshed in place via `cp` (no re-rename into
+      `.pre-commit.local`, no self-chain/stack); an existing `.pre-commit.local` is preserved across any
+      number of re-bootstraps. Logic is deterministic and correct.
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran: `swift build` (Build complete), `swift test` (226 tests / 8 suites passed —
+      changeset touches only the hook, the bootstrap skill, and the shell test), `ai-sdd validate
+      .ai-sdd/features/run-integrity` (✓ valid — 6 nodes, 3 edges), `ai-sdd check
+      feature-plan.schema.yaml feature-plan.v1.yaml` (satisfies feature-plan.v1), and
+      `sh Tests/PrecommitTripwireTests/run-precommit-hook-tests.sh` (13 passed, 0 failed). Real repo
+      `.git/hooks/` holds only `.sample` files — implementer did not install. `git status --porcelain`
+      shows exactly the 3 planned paths.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. No Swift was changed (build + 226-test suite green confirm zero regression), so language
+    conventions are not exercised; the slice is a POSIX-shell hook + skill docs + shell test. Committed
+    files use only declarable prefixes (`.ai-sdd/`, `skills/`, `Tests/`) — no `scripts/` path, matching
+    decisions committed-hook-lives-under-ai-sdd-hooks and files-minimal-and-declarable. The hook is
+    POSIX sh with no new runtime deps and calls `ai-sdd` only via `$PATH`. The `.git/hooks/` install is
+    correctly a manual post-gate runtime step (decision runtime-install-is-manual-post-gate), so no
+    `.git/` file is committed and the real repo's `.git/hooks/` was left untouched.
+
+caveats: >-
+  None blocking. The `.git/hooks/pre-commit` install is a manual bootstrap-runtime step (like
+  `ai-sdd surface`) — by design the slice ships only the committed source + the 6a instructions, so no
+  end-to-end install into a live `.git/hooks/` is exercised here; the hermetic harness emulates the
+  installed layout (case 6) instead, which is the right hermetic substitute. The hook's "submitted"
+  signal is a whole-file AND of `"slice" : "<slice>"` and `nodeCompleted` rather than structural JSON
+  parsing; this is robust against the real nested event shape (verified) and intentional (no jq/runtime
+  dep), with the documented edge that an unrelated `nodeCompleted` co-resident with the slice token in
+  the same file would count — acceptable given each event is its own file. Neither affects correctness.
+
+rework: []

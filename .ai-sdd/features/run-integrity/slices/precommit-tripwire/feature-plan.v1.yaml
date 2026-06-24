@@ -1,0 +1,192 @@
+summary: >-
+  Add a bootstrap-installed pre-commit tripwire that catches the git-boundary bypass case: a commit
+  whose subject matches `[<feature>] <slice>:` but has no recorded `nodeCompleted` event for `<slice>`
+  is refused. The deliverable is a committed POSIX-shell hook script at `.ai-sdd/hooks/pre-commit`
+  (declarable under the `.ai-sdd/` prefix) plus install/chain instructions added to the
+  `ai-sdd-bootstrap` skill. The hook reads the commit message (its `$1` is the commit-msg file),
+  parses the `[<feature>] <slice>:` subject, and scans `.ai-sdd/runs/<feature>/events/*.json` for an
+  event whose `scoped.slice` equals `<slice>` and whose `scoped.event` carries `nodeCompleted`. No
+  match → refuse with the single-line copy-pasteable error
+  `slice "<slice>" of feature "<feature>" was not submitted — run ` + the backticked
+  `ai-sdd submit <feature>` + ` first` on a non-zero exit. `git commit --no-verify` skips the hook
+  entirely (git semantics) and
+  the hook also emits a one-line stderr warning whenever it is reached so a bypass is visible in logs.
+  If `ai-sdd` is not on `$PATH` the hook prints a clear "install ai-sdd or use --no-verify" message
+  and exits non-zero. The actual copy into `.git/hooks/pre-commit` happens at bootstrap RUNTIME (not a
+  committed file the factory manifest can declare): the skill renames any existing `pre-commit` to
+  `.pre-commit.local`, installs the integrity hook, and the new hook runs the integrity check then
+  delegates to `.pre-commit.local` if present. Re-running bootstrap is idempotent — it does not
+  duplicate the hook and preserves a chained `.pre-commit.local`.
+scope:
+  in:
+    - Add a committed POSIX-shell hook script at `.ai-sdd/hooks/pre-commit` (declarable under
+      `.ai-sdd/`) that parses a `[<feature>] <slice>:` commit subject, scans
+      `.ai-sdd/runs/<feature>/events/*.json` for an event with `scoped.slice` equal to `<slice>` and a
+      `scoped.event.nodeCompleted`, and refuses the commit when none is found.
+    - Emit the exact single-line, copy-pasteable error on refusal — the text
+      `slice "<slice>" of feature "<feature>" was not submitted — run` then the backticked
+      `ai-sdd submit <feature>` then `first` — and exit non-zero; a subject that does not match
+      `[<feature>] <slice>:` passes the hook unchanged.
+    - On a matched subject, emit a one-line stderr warning whenever the integrity hook runs so a
+      reached commit is visible in logs, and document that `git commit --no-verify` bypasses the hook
+      (git skips all hooks) — the warning path covers the verified case, `--no-verify` the skipped case.
+    - Detect a missing `ai-sdd` on `$PATH` and print a clear "install ai-sdd or use --no-verify"
+      message, exiting non-zero, rather than silently passing.
+    - Add install/chain instructions to `skills/ai-sdd-bootstrap/SKILL.md` so that, at bootstrap
+      runtime, any existing `.git/hooks/pre-commit` is renamed to `.git/hooks/.pre-commit.local`,
+      `.ai-sdd/hooks/pre-commit` is copied into `.git/hooks/pre-commit` (executable), and the installed
+      hook runs the integrity check then delegates to `.pre-commit.local` when present.
+    - Make the install idempotent — re-running bootstrap does not duplicate the hook and preserves an
+      already-chained `.pre-commit.local` (detect the ai-sdd-managed hook by a marker; do not re-rename
+      an already-installed integrity hook into `.pre-commit.local`).
+    - Add a shell test harness under `Tests/` that runs `.ai-sdd/hooks/pre-commit` against fabricated
+      commit-message files and fixture event dirs in a temp dir, asserting exit codes and the exact
+      error/warning text for each acceptance case.
+  out:
+    - No Swift engine/CLI/model changes — no edits to `Sources/AISDDEngine`, `Sources/AISDDCLI`,
+      `Sources/AISDDModels`, or any `swift run ai-sdd` subcommand; the hook is POSIX shell and calls
+      `ai-sdd` only via `$PATH`.
+    - No committed `.git/hooks/pre-commit` file — the runtime install into `.git/hooks/` is a manual
+      bootstrap step (mirrors S5's manual-surface caveat, feature decision D4); the factory manifest
+      cannot and does not declare `.git/`.
+    - No use of the `scripts/` prefix for any committed file — the feature-plan `files` regex excludes
+      `scripts/`, so the committed hook lives under `.ai-sdd/hooks/` instead.
+    - No `ai-sdd surface` / per-agent symlink changes, no AGENTS.md or docs/ changes, and no plan
+      amendment or new slice; out-of-scope observations, if any, are flagged for ai-sdd-plan, not acted
+      on here.
+    - No new runtime dependency and no backfill of historical events; the hook reads the existing
+      event JSON shape (`scoped.slice`, `scoped.event.nodeCompleted`) shipped by the engine.
+acceptance:
+  - id: hook-installed-by-bootstrap
+    description: >-
+      `skills/ai-sdd-bootstrap/SKILL.md` instructs the bootstrap to install `.ai-sdd/hooks/pre-commit`
+      into `.git/hooks/pre-commit` (executable) at runtime, and the committed hook script
+      `.ai-sdd/hooks/pre-commit` exists and is a POSIX-shell pre-commit hook.
+  - id: refuses-unsubmitted-slice-commit-with-exact-error
+    description: >-
+      Running the hook against a commit message whose subject is `[<feature>] <slice>: msg` with no
+      `nodeCompleted` event for `<slice>` in `.ai-sdd/runs/<feature>/events/` exits non-zero and prints
+      exactly the line `slice "<slice>" of feature "<feature>" was not submitted — run` followed by the
+      backticked `ai-sdd submit <feature>` and `first`.
+  - id: succeeds-after-submit
+    description: >-
+      With a fixture event file under `.ai-sdd/runs/<feature>/events/` whose `scoped.slice` equals
+      `<slice>` and whose `scoped.event` carries `nodeCompleted`, the hook exits 0 for the same
+      `[<feature>] <slice>:` commit message.
+  - id: no-verify-bypass-with-warning
+    description: >-
+      `git commit --no-verify` skips the hook entirely (documented, git semantics), and whenever the
+      integrity hook is reached on a matched subject it emits a one-line stderr warning so a bypass /
+      run is visible in logs; the warning does not change the exit code on the success path.
+  - id: missing-ai-sdd-message
+    description: >-
+      When `ai-sdd` is not on `$PATH`, the hook prints a clear "install ai-sdd or use --no-verify"
+      message and exits non-zero rather than passing silently.
+  - id: existing-hook-chained
+    description: >-
+      The bootstrap instructions rename a pre-existing `.git/hooks/pre-commit` to
+      `.git/hooks/.pre-commit.local`, and the installed integrity hook runs the integrity check then
+      delegates to `.pre-commit.local` (preserving its exit code) when that file is present.
+  - id: re-bootstrap-idempotent
+    description: >-
+      Re-running bootstrap does not duplicate the hook and does not re-rename an already-installed
+      integrity hook; a previously chained `.pre-commit.local` is preserved (the managed hook carries a
+      marker the install step detects).
+  - id: verification-commands
+    description: >-
+      `swift build` and `swift test` stay green (no Swift change), `swift run ai-sdd validate
+      .ai-sdd/features/run-integrity` passes, the feature-plan artifact checks against its schema, and
+      the shell test of the hook logic passes for every exit-code / message case above.
+decisions:
+  - id: committed-hook-lives-under-ai-sdd-hooks
+    status: closed
+    decision: >-
+      Put the committed POSIX-shell hook script at `.ai-sdd/hooks/pre-commit`.
+    rationale: >-
+      The committed hook must live under a prefix the feature-plan `files` regex allows. `.ai-sdd/` is
+      allowed and `scripts/` is explicitly excluded, so `scripts/hooks/` is not declarable.
+      `.ai-sdd/hooks/` keeps the hook beside the factory home it belongs to and is the cleanest
+      declarable location; `skills/ai-sdd-bootstrap/pre-commit.sh` was the alternative, but
+      co-locating an executable hook with the factory `.ai-sdd/` tree reads better than burying it
+      inside a skill folder.
+  - id: hook-is-posix-shell-no-swift
+    status: closed
+    decision: >-
+      Implement the tripwire as a POSIX-shell script that calls `ai-sdd` only via `$PATH`, with no
+      Swift engine/CLI changes.
+    rationale: >-
+      The slice and feature requirements scope this as a bootstrap-installed POSIX hook with no new
+      runtime deps; the hook reads the already-shipped event JSON shape and shells out to `ai-sdd`, so
+      no engine code is needed and the change stays at the git boundary.
+  - id: event-lookup-by-scoped-slice-and-nodecompleted
+    status: closed
+    decision: >-
+      Determine "submitted" by scanning `.ai-sdd/runs/<feature>/events/*.json` for an event whose
+      `scoped.slice` equals `<slice>` and whose `scoped.event` contains `nodeCompleted`; absence of any
+      such event means not-submitted.
+    rationale: >-
+      Inspection of committed events (e.g. `.ai-sdd/runs/project-status-dashboard/events/000016.json`)
+      shows the on-disk shape is a JSON object with `scoped.slice` set to the slice name and
+      `scoped.event.nodeCompleted` present on completion; matching `scoped.slice` plus the presence of
+      `scoped.event.nodeCompleted` is the deterministic, replay-safe completion signal at the file
+      layer.
+  - id: chaining-rename-to-pre-commit-local
+    status: closed
+    decision: >-
+      Chain an existing hook by renaming `.git/hooks/pre-commit` to `.git/hooks/.pre-commit.local`; the
+      installed integrity hook runs the integrity check first, then execs `.pre-commit.local`
+      (preserving its exit code) when present.
+    rationale: >-
+      Renaming rather than overwriting preserves a repo's pre-existing hook behavior, and running the
+      integrity check before delegating makes the tripwire authoritative while keeping the prior hook's
+      checks intact; `.pre-commit.local` is the documented chained name in the slice brief.
+  - id: runtime-install-is-manual-post-gate
+    status: closed
+    decision: >-
+      The copy of `.ai-sdd/hooks/pre-commit` into `.git/hooks/pre-commit` (and the rename-to-chain)
+      happens at bootstrap RUNTIME as a manual/skill step, not as a committed file in this slice's
+      manifest.
+    rationale: >-
+      `.git/hooks/` is outside the factory file manifest's declarable prefixes (the regex has no `.git`
+      entry) and is per-clone runtime state, mirroring feature decision D4 and S5's manual-surface
+      caveat; the slice ships the committed source plus the bootstrap instructions, and the install is
+      recorded here as a closed, manual step.
+  - id: idempotence-via-managed-marker
+    status: closed
+    decision: >-
+      Make re-install idempotent by having the installed integrity hook carry a marker line the
+      bootstrap step detects, so a re-run neither duplicates the hook nor re-renames an
+      already-installed integrity hook into `.pre-commit.local`, preserving any existing chain.
+    rationale: >-
+      Without a marker a naive re-run would rename the ai-sdd hook itself to `.pre-commit.local` and
+      stack hooks; a managed marker mirrors the `ai-sdd:begin/end` upsert pattern used elsewhere in
+      bootstrap and gives a deterministic "already installed" check.
+  - id: shell-test-harness-under-tests
+    status: closed
+    decision: >-
+      Add a shell test harness under `Tests/` that drives `.ai-sdd/hooks/pre-commit` against
+      fabricated commit-message files and fixture event dirs in a temp dir, asserting exit codes and
+      exact message text per acceptance case.
+    rationale: >-
+      The hook is POSIX shell, so a shell test exercises it directly without a Swift wrapper; `Tests/`
+      is a declarable prefix, and a temp-dir harness keeps the test hermetic (no real `.git/hooks`
+      install, no real run state touched).
+  - id: files-minimal-and-declarable
+    status: closed
+    decision: >-
+      Keep `files` to the committed hook script, the bootstrap skill, and the shell test harness — all
+      under declarable prefixes (`.ai-sdd/`, `skills/`, `Tests/`); use no `scripts/` path.
+    rationale: >-
+      These three files are the full footprint of a bootstrap-installed hook (source + install
+      instructions + test); each matches the feature-plan `files` regex, and excluding `scripts/`
+      respects the known manifest scope-gate limit.
+files:
+  - .ai-sdd/hooks/pre-commit
+  - skills/ai-sdd-bootstrap/SKILL.md
+  - Tests/PrecommitTripwireTests/run-precommit-hook-tests.sh
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/run-integrity
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml
+  - sh Tests/PrecommitTripwireTests/run-precommit-hook-tests.sh

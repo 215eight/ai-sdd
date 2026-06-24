@@ -1,0 +1,39 @@
+summary: >-
+  Shipped the run-integrity git-boundary tripwire (slice precommit-tripwire, S6). Added a committed
+  POSIX-shell pre-commit hook at `.ai-sdd/hooks/pre-commit` (executable, no bashisms) that parses a
+  `[<feature>] <slice>:` commit subject and scans `.ai-sdd/runs/<feature>/events/*.json` for an event
+  whose `"slice"` field equals `<slice>` AND that carries a `nodeCompleted` event (per-file AND of the
+  two signals; tolerant of both pretty-printed and compact JSON, robust to the engine's nested
+  `scoped.event/scoped.slice` shapes). No completion event → the hook refuses with the EXACT
+  single-line copy-pasteable error `slice "<slice>" of feature "<feature>" was not submitted — run
+  ` + backticked `ai-sdd submit <feature>` + ` first` (em dash U+2014, byte-matched to the plan) and
+  exits non-zero. A subject not matching `[f] s:` passes through. On every matched subject the hook
+  emits a one-line stderr warning (so a reached/bypassed commit is visible in logs) before checking,
+  without changing the success exit code; `git commit --no-verify` skips it entirely (git semantics).
+  If `ai-sdd` is not on `$PATH` the hook prints `install ai-sdd or use --no-verify` and exits
+  non-zero. The hook delegates to a sibling `.pre-commit.local` (preserving its exit code) on every
+  pass path, implementing the chaining contract. Added an idempotent install + chain procedure to
+  `skills/ai-sdd-bootstrap/SKILL.md` (new section "6a"): rename a pre-existing `.git/hooks/pre-commit`
+  to `.pre-commit.local`, copy the managed hook on top, detect an already-installed hook by its
+  second-line `ai-sdd:managed-hook` marker so a re-bootstrap never duplicates or self-chains, and
+  preserve an existing `.pre-commit.local`. Added a hermetic shell test harness
+  `Tests/PrecommitTripwireTests/run-precommit-hook-tests.sh` (13 assertions, all green) exercising
+  refusal/exact-error, success after a fixture event (flat + nested shapes), passthrough, the stderr
+  warning + unchanged success exit code, the missing-`ai-sdd` message, and chaining (delegation
+  preserves the local hook's exit code; refusal short-circuits before delegating). No Swift/CLI/model
+  changes. swift build + swift test stay green (226 tests), `ai-sdd validate
+  .ai-sdd/features/run-integrity` passes, the feature-plan artifact satisfies its schema, and the
+  shell test passes. The real `.git/hooks/` in this repo was NOT touched.
+satisfies:
+  - hook-installed-by-bootstrap
+  - refuses-unsubmitted-slice-commit-with-exact-error
+  - succeeds-after-submit
+  - no-verify-bypass-with-warning
+  - missing-ai-sdd-message
+  - existing-hook-chained
+  - re-bootstrap-idempotent
+  - verification-commands
+files:
+  - .ai-sdd/hooks/pre-commit
+  - skills/ai-sdd-bootstrap/SKILL.md
+  - Tests/PrecommitTripwireTests/run-precommit-hook-tests.sh

@@ -138,6 +138,72 @@ can't drift.
 
 The engine itself is already neutral: `ai-sdd` is a CLI any agent calls over a shell.
 
+## 6a. Install the git-boundary integrity tripwire (`.git/hooks/pre-commit`)
+
+The committed factory ships a POSIX-shell pre-commit hook at `.ai-sdd/hooks/pre-commit`. It is the
+one mechanism that catches work reaching git *outside* the `ai-sdd-run` loop: a commit whose subject
+matches `[<feature>] <slice>:` but has no recorded `nodeCompleted` event for `<slice>` is refused, so
+"forgot to submit" fails loudly instead of silently diverging the ledger from main.
+
+`.git/hooks/` is **per-clone runtime state outside the factory file manifest** (the `.gitignore`
+managed block declares the committed set; `.git/` is never committed), so the copy into
+`.git/hooks/pre-commit` is a **bootstrap-runtime install step**, not a committed file — mirroring the
+`ai-sdd surface` manual-runtime pattern. Install it idempotently and chain (never clobber) any
+pre-existing hook:
+
+```sh
+# Install / refresh the ai-sdd integrity pre-commit hook. Idempotent: safe to
+# re-run on every bootstrap. Detects an already-installed managed hook by its
+# marker so it never duplicates or self-chains.
+SRC=.ai-sdd/hooks/pre-commit
+DST=.git/hooks/pre-commit
+MARKER='ai-sdd:managed-hook'
+
+mkdir -p .git/hooks
+if [ -f "$DST" ] && grep -q "$MARKER" "$DST"; then
+  # An ai-sdd-managed hook is already installed — just refresh it in place.
+  # Do NOT re-rename it into .pre-commit.local (that would self-chain / stack).
+  cp "$SRC" "$DST"
+elif [ -f "$DST" ]; then
+  # A foreign (non-managed) pre-commit hook exists — preserve it by chaining:
+  # rename it to .pre-commit.local, then install the managed hook on top.
+  # Don't overwrite an existing .pre-commit.local (a prior chain stays intact).
+  if [ ! -e .git/hooks/.pre-commit.local ]; then
+    mv "$DST" .git/hooks/.pre-commit.local
+  fi
+  cp "$SRC" "$DST"
+else
+  # Fresh install.
+  cp "$SRC" "$DST"
+fi
+chmod +x "$DST"
+[ -e .git/hooks/.pre-commit.local ] && chmod +x .git/hooks/.pre-commit.local
+```
+
+**Chaining contract.** The installed integrity hook runs the integrity check **first** (so the
+tripwire is authoritative), then delegates to `.git/hooks/.pre-commit.local` when that file is
+present, **preserving its exit code** — the commit is rejected if either the integrity check or the
+chained hook fails. If you maintain the managed hook's tail, the delegation block is:
+
+```sh
+# (appended to the managed hook, after the integrity check passes)
+if [ -x "$(dirname "$0")/.pre-commit.local" ]; then
+  "$(dirname "$0")/.pre-commit.local" "$@"
+  exit $?
+fi
+```
+
+**Idempotence marker.** The committed hook carries `# ai-sdd:managed-hook …` on its **second line**.
+The install step keys off that marker: a re-bootstrap sees the managed hook already in place, refreshes
+it with `cp`, and **does not** re-rename it into `.pre-commit.local`. A previously chained foreign hook
+in `.pre-commit.local` is therefore preserved across any number of re-bootstraps. **`git commit
+--no-verify` bypasses the hook entirely** (git skips all hooks) — that path is intentional; whenever the
+hook *is* reached on a matched subject it logs a one-line stderr warning so the bypass/run is visible.
+
+> The `.git/hooks/pre-commit` install is a **manual runtime step** (like `ai-sdd surface`): the slice
+> ships the committed source (`.ai-sdd/hooks/pre-commit`) plus these instructions; the factory file
+> manifest cannot and does not declare `.git/`.
+
 ## 7. Ignore runtime + per-agent surfacing, then validate
 
 The `.gitignore` is the **one place** that declares what stays out of git — so a commit never has to
