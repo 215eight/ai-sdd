@@ -1,0 +1,29 @@
+summary: >-
+  Added optional append-time metadata to the run event ledger without touching the pure RunEvent
+  enum or the Reducer. New RunEventOwner enum (identified/unowned) and RunEventRecord wrapper (a
+  RunEvent plus optional Z-suffixed UTC `at` and optional `owner`) live only at the persistence
+  layer (Run.swift). RunStore.append now stamps `at` from an INJECTED `now: Date` (defaulted only at
+  the CLI call boundary) normalized to RFC 3339 UTC `…Z` via a zone-pinned ISO-8601 formatter, and
+  captures `owner` from an injectable @Sendable git-identity closure (RunStore.gitIdentity, mirroring
+  ArtifactDiff.git / CheckRunner.shell) that resolves to `unowned` when no git name/email is present.
+  Decoding is tolerant: each event file is read as a RunEventRecord first, falling back to a bare
+  legacy RunEvent so old runs load without error and degrade (at/owner = nil ⇒ unknown). events()/
+  state() stay a pure, metadata-free fold; a new eventsWithMetadata() accessor surfaces at/owner for
+  Part B. No wall clock or git spawn on the pure/gate/Reducer path. The six CLI append sites in
+  main.swift required no source edits — they all funnel through store.append, so the boundary
+  defaults stamp every newly appended event at the single seam. Added five Swift Testing cases:
+  deterministic fixed-clock at, two-source-zone UTC ordering, legacy-bare-event decode + append-only
+  replay, owner from injected identity, and unowned with no identity.
+satisfies:
+  - at-on-new-events
+  - two-zone-ordering
+  - legacy-degrades
+  - owner-from-git
+  - unowned-when-no-identity
+  - append-only-replayable
+  - no-wallclock-on-pure-path
+  - build-and-test-green
+files:
+  - Sources/AISDDEngine/Run.swift
+  - Sources/AISDDEngine/RunStore.swift
+  - Tests/AISDDEngineTests/EngineTests.swift

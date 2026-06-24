@@ -42,6 +42,31 @@ public indirect enum RunEvent: Codable, Equatable, Sendable {
     case scoped(slice: String, event: RunEvent)                    // an event inside a slice's sub-pipeline
 }
 
+/// Who an event is attributed to — the git identity captured at append time, or `unowned` when no
+/// git identity is resolvable (no guess). Persisted only on the `RunEventRecord` wrapper, never on
+/// the pure `RunEvent`, so the Reducer fold is unaffected.
+public enum RunEventOwner: Codable, Equatable, Sendable {
+    case identified(name: String, email: String)
+    case unowned
+}
+
+/// The persisted shape of a single appended event: the pure `RunEvent` plus optional metadata
+/// stamped at the `RunStore.append` boundary — an RFC 3339 UTC (`…Z`) `at` timestamp and an
+/// `owner`. Metadata is optional so legacy bare-`RunEvent` files keep decoding (decision
+/// `optional-fields-for-backcompat`); the recursive `scoped` event carries no per-level metadata
+/// (decision `metadata-via-wrapper-record`).
+public struct RunEventRecord: Codable, Equatable, Sendable {
+    public var event: RunEvent
+    public var at: String?          // RFC 3339 UTC, `Z`-suffixed; nil ⇒ unknown (legacy)
+    public var owner: RunEventOwner?
+
+    public init(event: RunEvent, at: String? = nil, owner: RunEventOwner? = nil) {
+        self.event = event
+        self.at = at
+        self.owner = owner
+    }
+}
+
 /// The pure event→state fold (architecture.md §6). Replayable: same events ⇒ same state.
 public enum Reducer {
     public static func reduce(_ state: RunState, _ event: RunEvent) -> RunState {

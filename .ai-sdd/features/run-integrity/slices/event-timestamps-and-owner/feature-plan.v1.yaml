@@ -1,0 +1,78 @@
+summary: >-
+  Give the run event ledger a time axis and a git-derived owner without touching the
+  pure RunEvent enum or the Reducer. Persisted events are wrapped in an optional-metadata
+  record (the RunEvent plus an optional Z-suffixed UTC `at` and an optional `owner`),
+  stamped at the single RunStore.append boundary from an injected clock and an injectable
+  git-identity capture. Legacy bare-event files keep decoding (at/owner absent → unknown),
+  the log stays append-only and replayable, and no gate, schema check, pure renderer, or
+  Reducer reads the wall clock.
+scope:
+  in:
+    - Introduce a persisted event record (RunEventRecord) wrapping the existing RunEvent with optional `at` (RFC 3339 UTC, `Z`-suffixed) and optional `owner` (git name + email, or `unowned`).
+    - Keep the RunEvent enum and Reducer.reduce signatures and fold behavior unchanged; metadata lives only on the persisted wrapper, not inside the recursive `scoped` event.
+    - Stamp `at` at append time from an injected `now` (a Date/clock parameter on RunStore.append, defaulted only at the call boundary) so RunStore.events/state and the Reducer remain pure and I/O-free.
+    - Capture `owner` from git identity (`git config user.name` + `git config user.email`) via an injectable `@Sendable` closure that mirrors the existing ArtifactDiff.git / CheckRunner.shell pattern; resolve to `unowned` when neither name nor email is available.
+    - Encode `at` as a UTC instant normalized to a `Z` suffix using a deterministic ISO-8601 formatter so events stamped in different source zones are totally ordered and directly comparable when read back.
+    - Make RunStore decoding tolerant - decode the record shape when present and fall back to decoding a bare legacy RunEvent (no `at`/`owner`) - so old runs load without error and degrade rather than crashing or zero-substituting.
+    - Expose the read-back timestamp/owner per event from RunStore (an events-with-metadata accessor) so downstream Part B temporal metrics can later consume `at`; treat a missing `at` as unknown.
+    - Thread the injected `now` and captured `owner` through the CLI append sites in Sources/AISDDCLI/main.swift (nodeStarted, nodeCompleted, reworkRouted, escalated, checkFailed, runStarted) so every newly appended event carries metadata.
+    - Add Swift Testing coverage - deterministic `at` with a fixed injected clock, two-source-zone ordering fixture, legacy bare-event round-trip, owner-from-identity and `unowned` fixtures - asserting exact typed errors where relevant.
+  out:
+    - No backfilling of `at` or `owner` onto historical/un-timestamped events.
+    - No assign-work-ahead / planning-time owner assignment; commit-author owner fallback beyond live git config is also deferred (interim owner is live git identity, `unowned` otherwise).
+    - No dashboard rendering, temporal-metric computation (velocity, cycle time, burndown, ETA), or local-zone display formatting - those are Part B (dashboard-instrument).
+    - No changes to RunMeta, pipelineDir handling, the name resolver, stale-run surfacing, the skill, or the pre-commit hook (other run-integrity slices).
+    - No change to the one-file-per-event on-disk filename scheme, the Scheduler, or the Reducer fold semantics.
+    - No new runtime dependencies and no new ADR; this is additive optional metadata on the existing append-only log (ADR-0019/0020).
+acceptance:
+  - id: at-on-new-events
+    description: A newly appended nodeStarted, nodeCompleted, reworkRouted, or escalated event is persisted with an `at` field in RFC 3339 UTC `…Z` form, stamped from the injected clock at append time.
+  - id: two-zone-ordering
+    description: A fixture whose source instants are expressed in two different time zones is stored as UTC and, when read back, orders correctly by `at`.
+  - id: legacy-degrades
+    description: Legacy events with no `at` (bare-RunEvent files) load without error and are treated by consumers as `at` unknown - no crash and no zero/epoch substitution.
+  - id: owner-from-git
+    description: An appended slice event captures `owner` from git identity (user.name + user.email) via the injectable identity closure.
+  - id: unowned-when-no-identity
+    description: With a no-git-identity fixture (identity closure yields nothing), the captured `owner` is `unowned` rather than a guessed value.
+  - id: append-only-replayable
+    description: Read → mutate (append) → write preserves all prior events (both old un-timestamped and new timestamped) in order and the Reducer still folds them to the same RunState; the log remains append-only.
+  - id: no-wallclock-on-pure-path
+    description: No engine code on the gate/check/pure-render/Reducer path reads the wall clock; "now" and git identity are injected at the append boundary, and unit tests assert determinism with a fixed injected clock.
+  - id: build-and-test-green
+    description: swift build and swift test pass after implementation.
+decisions:
+  - id: metadata-via-wrapper-record
+    status: closed
+    decision: Carry `at` and `owner` on a new persisted RunEventRecord that wraps the existing RunEvent, rather than adding associated values to the RunEvent enum.
+    rationale: RunEvent is a recursive Codable enum with a `scoped(slice:event:)` case folded by the Reducer; wrapping at the persistence layer keeps the enum, the Reducer signature, and the fold semantics unchanged and avoids polluting the recursive case with per-level timestamps.
+  - id: optional-fields-for-backcompat
+    status: closed
+    decision: Make `at` and `owner` optional on the record and decode legacy files by trying the record shape first, then falling back to decoding a bare RunEvent.
+    rationale: Existing runs store one bare RunEvent JSON per file; optional fields plus a tolerant decode let those load without error and degrade (at/owner absent) instead of breaking, satisfying the backward-compatibility bar with no migration format (the swift conventions Migration row is an explicit open gap, so a plan decision rather than an invented format is the right call).
+  - id: inject-now-at-append-boundary
+    status: closed
+    decision: Stamp `at` from a `now` (Date/clock) parameter passed into RunStore.append, defaulted only at the CLI call boundary, and leave RunStore.events/state and Reducer.reduce free of any wall-clock read.
+    rationale: The determinism boundary requires that gates, schema checks, pure renderers, and the Reducer stay reproducible and unit-testable without I/O; RunStore.append is the single boundary every appended event flows through, so injecting the instant there satisfies the no-wall-clock constraint with one seam.
+  - id: owner-via-injectable-git-closure
+    status: closed
+    decision: Capture owner from `git config user.name`/`user.email` through an injectable `@Sendable` closure defaulting to a real git invocation, mirroring ArtifactDiff.git and CheckRunner.shell, resolving to `unowned` when identity is absent.
+    rationale: The repo already standardizes on injectable shell/git closures for testability; reusing that pattern keeps owner capture unit-testable without spawning git and yields an honest `unowned` gap instead of a guess. Commit-author fallback is deferred (interim source is live git identity).
+  - id: utc-z-canonical-storage
+    status: closed
+    decision: Normalize `at` to a UTC instant rendered with a `Z` suffix via a deterministic ISO-8601 formatter; do not store local offsets and do not localize at this layer.
+    rationale: UTC-with-Z makes events stamped on different machines/zones totally ordered and directly comparable; local-zone rendering is a Part B display concern and explicitly out of scope here.
+  - id: surface-metadata-for-partb
+    status: closed
+    decision: Expose read-back `at`/`owner` per event from RunStore via an events-with-metadata accessor, without changing the existing events()/state() pure projection.
+    rationale: Part B temporal metrics depend on `at` being readable, but state() must stay a pure fold of RunEvent; a separate metadata accessor keeps the keystone self-contained while unblocking the milestone without prematurely building Part B.
+files:
+  - Sources/AISDDEngine/Run.swift
+  - Sources/AISDDEngine/RunStore.swift
+  - Sources/AISDDCLI/main.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/run-integrity
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

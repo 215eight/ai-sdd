@@ -1,0 +1,105 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: event-timestamps-and-owner
+
+verdict: approve
+summary: >-
+  Independent review of slice event-timestamps-and-owner (Part A, S1 keystone) against
+  feature-plan.v1 (8 acceptance ids). The changeset adds optional append-time metadata to the run
+  event ledger without touching the pure RunEvent enum or the Reducer: a RunEventOwner enum
+  (identified/unowned) and a RunEventRecord wrapper (RunEvent + optional Z-suffixed UTC `at` +
+  optional owner) live only at the persistence layer in Run.swift. RunStore.append stamps `at` from
+  an INJECTED `now: Date` (defaulted only at the call boundary) via a zone-pinned ISO-8601 formatter
+  (utcZ) and captures owner from an injectable @Sendable closure (captureOwner, defaulting to
+  gitIdentity, mirroring ArtifactDiff.git). Decoding is tolerant (decodeRecord: record shape first,
+  bare legacy RunEvent fallback). events()/state() stay a pure, metadata-free fold; a new
+  eventsWithMetadata() accessor surfaces at/owner for Part B. The six CLI append sites all funnel
+  through store.append, so the boundary defaults stamp every newly appended event with no main.swift
+  edits required. I independently ran swift build (Build complete) and swift test (207 tests in 7
+  suites passed, including the five new cases). All 8 ids pass; conventions satisfied.
+
+items:
+  - id: at-on-new-events
+    verdict: pass
+    notes: >-
+      RunStore.append wraps every appended RunEvent in a RunEventRecord whose `at` is
+      RunStore.utcZ(now) — a zone-pinned ISO8601DateFormatter (secondsFromGMT 0, .withInternetDateTime)
+      rendering the RFC 3339 `…Z` form. The instant is the injected `now`, defaulted only at the
+      append call boundary. Test appendStampsDeterministicUTCZFromInjectedClock asserts the exact
+      "2023-11-14T22:13:20Z" for nodeStarted; the CLI nodeStarted/nodeCompleted/reworkRouted/escalated
+      append sites all funnel through store.append so newly appended events carry it.
+  - id: two-zone-ordering
+    verdict: pass
+    notes: >-
+      Storage normalizes to UTC `…Z` regardless of source zone, so read-back values are directly
+      string-comparable and totally ordered. Test twoSourceZonesOrderByUTCWhenReadBack stamps a +09:00
+      and a -05:00 instant, asserts the stored UTC strings, and confirms sorting by `at` correctly
+      places the Tokyo (+09:00) instant earlier than the New York one.
+  - id: legacy-degrades
+    verdict: pass
+    notes: >-
+      RunStore.decodeRecord tries the RunEventRecord shape first and falls back to decoding a bare
+      legacy RunEvent, wrapping it with nil metadata. Test legacyBareEventDecodesWithUnknownMetadata
+      writes a pre-metadata bare-event file directly, then asserts it loads with at == nil and
+      owner == nil (unknown, no epoch/zero substitution) and no crash. The pre-existing
+      runStorePersistsAndReplays test also stays green through the tolerant decode.
+  - id: owner-from-git
+    verdict: pass
+    notes: >-
+      Owner is captured via the injectable @Sendable captureOwner closure on RunStore (defaulting to
+      RunStore.gitIdentity, which reads `git config user.name`/`user.email` via the same /usr/bin/env
+      git Process pattern as ArtifactDiff.git). Test ownerCapturedFromGitIdentity injects an
+      identified(name,email) and asserts the appended record carries it, exercising the seam without
+      spawning git.
+  - id: unowned-when-no-identity
+    verdict: pass
+    notes: >-
+      gitIdentity resolves to .unowned when both name and email are empty — an honest gap, not a guess.
+      Test ownerIsUnownedWithoutGitIdentity injects a closure yielding .unowned and asserts the
+      appended record's owner is .unowned. No fabricated/placeholder value is substituted.
+  - id: append-only-replayable
+    verdict: pass
+    notes: >-
+      append computes the next sequential filename and writes a new file atomically, never rewriting an
+      existing one. events()/state() remain a pure, metadata-free fold of RunEvent via the unchanged
+      Reducer (the recursive enum and Reducer signature/fold are untouched). Test
+      legacyBareEventDecodesWithUnknownMetadata mixes one old bare event and one new timestamped event,
+      asserts both are preserved in order, and confirms the Reducer folds them to the same RunState
+      (completedNodes/inProgressNodes/readyArtifacts).
+  - id: no-wallclock-on-pure-path
+    verdict: pass
+    notes: >-
+      The only wall-clock read is the `now: Date = Date()` default on RunStore.append, evaluated at the
+      call boundary. events(), eventsWithMetadata(), state(), the RunEvent enum, and Reducer.reduce read
+      no clock; metadata rides the RunEventRecord wrapper (decision metadata-via-wrapper-record). utcZ
+      is deterministic and gitIdentity is injectable, so unit tests assert determinism with a fixed
+      injected clock.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      Independently confirmed: `swift build` reports Build complete, and `swift test` reports "Test run
+      with 207 tests in 7 suites passed", including all five new event-timestamp/owner cases. No
+      warnings or failures observed.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Swift Testing throughout (@Test / #expect, exact typed events RunEvent/RunEventRecord,
+    no `any Error`). Engine behavior lives in Sources/AISDDEngine (Run.swift, RunStore.swift) and tests
+    in Tests/AISDDEngineTests/EngineTests.swift, matching the Module/feature and Test convention rows.
+    The owner closure mirrors the established injectable @Sendable shell/git pattern (ArtifactDiff.git /
+    CheckRunner.shell); paths use URL; no new runtime dependency, no migration format invented (the
+    Migration row is an open gap and the plan closed a decision instead). Baseline gates swift build and
+    swift test are green. Note: the plan listed Sources/AISDDCLI/main.swift in scope, but no edit was
+    required there — the six append sites already funnel through store.append, so the boundary defaults
+    stamp every newly appended event. The acceptance contract only requires newly appended events to
+    carry metadata, which holds, so this is not a defect.
+
+caveats: >-
+  Two observations, neither blocking: (1) RunStore.append's `now` and `owner` parameters default at
+  the boundary rather than being explicitly threaded from the CLI; this satisfies every acceptance id
+  but means the CLI does not yet pass an explicit clock/identity — acceptable for this slice and a
+  natural seam for Part B. (2) The default gitIdentity runs two synchronous git subprocesses per
+  append when owner is not injected; fine for the local single-user MVP and out of scope here.
+
+rework: null

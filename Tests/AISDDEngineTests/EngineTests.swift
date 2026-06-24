@@ -3507,4 +3507,115 @@ struct ConventionCitationDriftTests {
         #expect(findings.first?.subject == convention.path)
         #expect(findings.first?.detail.contains("Tests/Gone.swift") == true)
     }
+
+    // MARK: - Event timestamps & owner (run-integrity S1)
+
+    /// A store rooted in a throwaway temp dir with an injected owner closure, so these tests need
+    /// no real git config and leave nothing behind.
+    private func eventStore(owner: @escaping @Sendable () -> RunEventOwner) -> (RunStore, () -> Void) {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ai-sdd-events-\(UUID().uuidString)", isDirectory: true)
+        let store = RunStore(root: tmp.appendingPathComponent("runs", isDirectory: true),
+                             captureOwner: owner)
+        return (store, { try? FileManager.default.removeItem(at: tmp) })
+    }
+
+    /// A fixed-injected clock makes the stamped `at` deterministic and `…Z`-formed (acceptance
+    /// `at-on-new-events`, `no-wallclock-on-pure-path`).
+    @Test func appendStampsDeterministicUTCZFromInjectedClock() throws {
+        let (store, cleanup) = eventStore(owner: { .unowned })
+        defer { cleanup() }
+        try store.create(runId: "r", pipelineDir: "/x")
+        let fixed = Date(timeIntervalSince1970: 1_700_000_000)  // 2023-11-14T22:13:20Z
+        try store.append(.nodeStarted(node: "build"), to: "r", now: fixed)
+
+        let records = try store.eventsWithMetadata(of: "r")
+        let stamped = records.filter { $0.event == .nodeStarted(node: "build") }
+        #expect(stamped.count == 1)
+        #expect(stamped.first?.at == "2023-11-14T22:13:20Z")
+        // Re-stamping the same instant is byte-identical: no wall clock involved.
+        #expect(RunStore.utcZ(fixed) == "2023-11-14T22:13:20Z")
+    }
+
+    /// Source instants expressed in two different zones store as UTC and order correctly by `at`
+    /// when read back (acceptance `two-zone-ordering`).
+    @Test func twoSourceZonesOrderByUTCWhenReadBack() throws {
+        let (store, cleanup) = eventStore(owner: { .unowned })
+        defer { cleanup() }
+        try store.create(runId: "r", pipelineDir: "/x")
+
+        // Same wall-clock-looking moment, two zones — the +09:00 instant is actually EARLIER in UTC.
+        let tokyo = ISO8601DateFormatter().date(from: "2024-01-01T10:00:00+09:00")!
+        let newYork = ISO8601DateFormatter().date(from: "2024-01-01T10:00:00-05:00")!
+        try store.append(.nodeStarted(node: "later"), to: "r", now: newYork)
+        try store.append(.nodeStarted(node: "earlier"), to: "r", now: tokyo)
+
+        // Stored as UTC `…Z` in append order (the +09:00 instant was appended second).
+        let records = try store.eventsWithMetadata(of: "r")
+        #expect(records.map(\.at) == ["2024-01-01T15:00:00Z", "2024-01-01T01:00:00Z"])
+        // Read back, both are directly string-comparable; sorting by `at` totally orders them, and
+        // the tokyo (+09:00) instant is correctly the earlier of the two.
+        let byTime = records.sorted { ($0.at ?? "") < ($1.at ?? "") }
+        #expect(byTime.compactMap(\.at) == ["2024-01-01T01:00:00Z", "2024-01-01T15:00:00Z"])
+        #expect(byTime.first?.event == .nodeStarted(node: "earlier"))
+    }
+
+    /// A legacy bare-`RunEvent` file (no `at`/`owner`) decodes without error and surfaces unknown
+    /// metadata — no crash, no epoch substitution (acceptance `legacy-degrades`).
+    @Test func legacyBareEventDecodesWithUnknownMetadata() throws {
+        let (store, cleanup) = eventStore(owner: { .unowned })
+        defer { cleanup() }
+        try store.create(runId: "r", pipelineDir: "/x")
+
+        // Write a bare legacy event file directly (the pre-metadata on-disk shape).
+        let layout = RunLayout(root: store.root, runId: "r")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(RunEvent.nodeCompleted(node: "legacy", producedArtifacts: ["a.v1"]))
+            .write(to: layout.eventFile(1), options: .atomic)
+        // Then append a new metadata-bearing event after it.
+        try store.append(.nodeStarted(node: "fresh"), to: "r", now: Date(timeIntervalSince1970: 0))
+
+        let records = try store.eventsWithMetadata(of: "r")
+        #expect(records.count == 2)
+        #expect(records[0].event == .nodeCompleted(node: "legacy", producedArtifacts: ["a.v1"]))
+        #expect(records[0].at == nil)       // unknown, not zero/epoch
+        #expect(records[0].owner == nil)
+        #expect(records[1].at == "1970-01-01T00:00:00Z")
+
+        // The pure projection still yields all events in order, and the Reducer folds them the same
+        // as if no metadata existed (acceptance `append-only-replayable`).
+        let events = try store.events(of: "r")
+        #expect(events == [.nodeCompleted(node: "legacy", producedArtifacts: ["a.v1"]),
+                           .nodeStarted(node: "fresh")])
+        let state = try store.state(of: "r")
+        #expect(state.completedNodes == ["legacy"])
+        #expect(state.inProgressNodes == ["fresh"])
+        #expect(state.readyArtifacts == ["a.v1"])
+    }
+
+    /// Owner is captured from the injected git identity (acceptance `owner-from-git`).
+    @Test func ownerCapturedFromGitIdentity() throws {
+        let identity = RunEventOwner.identified(name: "Ada Lovelace", email: "ada@example.com")
+        let (store, cleanup) = eventStore(owner: { identity })
+        defer { cleanup() }
+        try store.create(runId: "r", pipelineDir: "/x")
+        try store.append(.nodeStarted(node: "build"), to: "r", now: Date(timeIntervalSince1970: 0))
+
+        let records = try store.eventsWithMetadata(of: "r")
+        #expect(records.first?.owner == identity)
+    }
+
+    /// With no git identity, owner resolves to `.unowned` — no guessed value (acceptance
+    /// `unowned-when-no-identity`).
+    @Test func ownerIsUnownedWithoutGitIdentity() throws {
+        let (store, cleanup) = eventStore(owner: { .unowned })
+        defer { cleanup() }
+        try store.create(runId: "r", pipelineDir: "/x")
+        try store.append(.escalated(node: "gate", checks: ["c"]), to: "r",
+                         now: Date(timeIntervalSince1970: 0))
+
+        let records = try store.eventsWithMetadata(of: "r")
+        #expect(records.first?.owner == .unowned)
+    }
 }
