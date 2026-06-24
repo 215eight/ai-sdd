@@ -2475,6 +2475,140 @@ struct EngineTests {
         #expect(!mermaid.contains("\"gate<x>"))
         #expect(!mermaid.contains("m&w<br/>"))
     }
+
+    // MARK: - DashboardCriticalPath (critical-path-and-ranking slice)
+
+    /// A diamond-plus-tail DAG whose longest dependency chain is known: edges point `from → to`
+    /// (depends_on), so the longest chain by node count is a → b → d → e (4 nodes); the a → c → d → e
+    /// branch is the same length but loses the tie at the diamond's right side by ascending id (b < c).
+    private func diamondPipeline() -> PipelineSpec {
+        PipelineSpec(
+            nodes: ["a", "b", "c", "d", "e"].map { PipelineNode(id: $0) },
+            edges: [
+                PipelineEdge(from: OneOrMany(["a"]), to: "b"),
+                PipelineEdge(from: OneOrMany(["a"]), to: "c"),
+                PipelineEdge(from: OneOrMany(["b"]), to: "d"),
+                PipelineEdge(from: OneOrMany(["c"]), to: "d"),
+                PipelineEdge(from: OneOrMany(["d"]), to: "e")
+            ])
+    }
+
+    @Test func criticalPathReturnsKnownLongestChain() {
+        let chain = DashboardCriticalPath.criticalPath(diamondPipeline())
+        #expect(chain == ["a", "b", "d", "e"])
+    }
+
+    /// An ASYMMETRIC-length DAG where the two branches out of `a` differ in length, so shortest ≠
+    /// longest: the short branch a → b is 2 nodes; the long branch a → c → d is 3 nodes. The critical
+    /// path must be the LONGER chain (a, c, d). Unlike `diamondPipeline` (every a→e path is length 4),
+    /// this fixture has teeth: a regression to shortest-path (a → b) or a naive first-successor walk
+    /// (a → b, since b < c) would return the wrong chain and fail this assertion.
+    private func asymmetricLengthPipeline() -> PipelineSpec {
+        PipelineSpec(
+            nodes: ["a", "b", "c", "d"].map { PipelineNode(id: $0) },
+            edges: [
+                PipelineEdge(from: OneOrMany(["a"]), to: "b"),
+                PipelineEdge(from: OneOrMany(["a"]), to: "c"),
+                PipelineEdge(from: OneOrMany(["c"]), to: "d")
+            ])
+    }
+
+    @Test func criticalPathPicksLongestNotShortestBranch() {
+        // Short branch a→b = length 2; long branch a→c→d = length 3. The critical path is the longest
+        // chain, so a regression from longest-path to shortest-path (or a first-successor walk that
+        // would pick b since b < c) fails here.
+        let chain = DashboardCriticalPath.criticalPath(asymmetricLengthPipeline())
+        #expect(chain == ["a", "c", "d"])
+    }
+
+    @Test func criticalPathIsEmptyForEmptyPipeline() {
+        let empty = PipelineSpec(nodes: [], edges: [])
+        #expect(DashboardCriticalPath.criticalPath(empty).isEmpty)
+        // A single isolated node is its own one-node chain.
+        let single = PipelineSpec(nodes: [PipelineNode(id: "solo")], edges: [])
+        #expect(DashboardCriticalPath.criticalPath(single) == ["solo"])
+    }
+
+    @Test func runnableRankingByDownstreamUnblockCount() {
+        // root unblocks {hub, leaf1, leaf2, far} = 4; side unblocks {hub, leaf1, leaf2, far} too via
+        // hub; both root and side are runnable (no incoming edges). hub/leaf*/far are not runnable.
+        let pipeline = PipelineSpec(
+            nodes: ["root", "side", "hub", "leaf1", "leaf2", "far"].map { PipelineNode(id: $0) },
+            edges: [
+                PipelineEdge(from: OneOrMany(["root"]), to: "hub"),
+                PipelineEdge(from: OneOrMany(["side"]), to: "hub"),
+                PipelineEdge(from: OneOrMany(["hub"]), to: "leaf1"),
+                PipelineEdge(from: OneOrMany(["hub"]), to: "leaf2"),
+                PipelineEdge(from: OneOrMany(["leaf1"]), to: "far")
+            ])
+        let ranking = DashboardCriticalPath.runnableRanking(pipeline)
+        // Only root and side are runnable; each transitively reaches {hub, leaf1, leaf2, far} = 4.
+        #expect(ranking == [
+            RankedRunnable(node: "root", unblockCount: 4),
+            RankedRunnable(node: "side", unblockCount: 4)
+        ])
+    }
+
+    @Test func runnableRankingOrdersByCountThenIdAndIsDeterministic() {
+        // Three independent runnable roots with distinct unblock counts: big→2, mid→1, zzz→0.
+        let pipeline = PipelineSpec(
+            nodes: ["big", "mid", "zzz", "b1", "b2", "m1"].map { PipelineNode(id: $0) },
+            edges: [
+                PipelineEdge(from: OneOrMany(["big"]), to: "b1"),
+                PipelineEdge(from: OneOrMany(["b1"]), to: "b2"),
+                PipelineEdge(from: OneOrMany(["mid"]), to: "m1")
+            ])
+        let ranking = DashboardCriticalPath.runnableRanking(pipeline)
+        // b1/b2/m1 are not runnable (they have prerequisites); runnable roots ranked by count desc.
+        #expect(ranking.map { $0.node } == ["big", "mid", "zzz"])
+        #expect(ranking.map { $0.unblockCount } == [2, 1, 0])
+
+        // Tie-break by ascending id: two roots with equal unblock count (0) sort alpha; repeated
+        // calls return byte-identical results (no wall-clock, no run-order dependence).
+        let tiePipeline = PipelineSpec(
+            nodes: ["zeta", "alpha", "mu"].map { PipelineNode(id: $0) }, edges: [])
+        let first = DashboardCriticalPath.runnableRanking(tiePipeline)
+        let second = DashboardCriticalPath.runnableRanking(tiePipeline)
+        #expect(first.map { $0.node } == ["alpha", "mu", "zeta"])
+        #expect(first == second)
+    }
+
+    @Test func criticalPathTieBreakIsByAscendingIdAndRepeatable() {
+        // Two equal-length chains from a: a→m→z and a→n→z (both 3 nodes through z). The branch tie at
+        // a resolves to the smaller successor id (m < n), giving a→m→z deterministically.
+        let pipeline = PipelineSpec(
+            nodes: ["a", "m", "n", "z"].map { PipelineNode(id: $0) },
+            edges: [
+                PipelineEdge(from: OneOrMany(["a"]), to: "m"),
+                PipelineEdge(from: OneOrMany(["a"]), to: "n"),
+                PipelineEdge(from: OneOrMany(["m"]), to: "z"),
+                PipelineEdge(from: OneOrMany(["n"]), to: "z")
+            ])
+        let first = DashboardCriticalPath.criticalPath(pipeline)
+        let second = DashboardCriticalPath.criticalPath(pipeline)
+        #expect(first == ["a", "m", "z"])
+        #expect(first == second)
+    }
+
+    @Test func analysisIsPureAcrossRunStates() {
+        // The functions are pure transforms of (pipeline, state): completing the root shrinks the
+        // runnable set but the same inputs always yield the same output — no I/O, no wall-clock.
+        let pipeline = diamondPipeline()
+        // Empty state: only `a` (no deps) is runnable; it unblocks {b, c, d, e} = 4.
+        let fresh = DashboardCriticalPath.runnableRanking(pipeline, state: RunState())
+        #expect(fresh == [RankedRunnable(node: "a", unblockCount: 4)])
+
+        // After `a` completes, b and c become runnable; each unblocks {d, e} = 2.
+        let advanced = DashboardCriticalPath.runnableRanking(
+            pipeline, state: RunState(completedNodes: ["a"]))
+        #expect(advanced == [
+            RankedRunnable(node: "b", unblockCount: 2),
+            RankedRunnable(node: "c", unblockCount: 2)
+        ])
+        // Critical path is state-independent (pure over topology): identical regardless of run state.
+        #expect(DashboardCriticalPath.criticalPath(pipeline)
+            == DashboardCriticalPath.criticalPath(pipeline))
+    }
 }
 
 private extension SpecLoadError {

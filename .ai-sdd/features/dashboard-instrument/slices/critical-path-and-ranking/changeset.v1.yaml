@@ -1,0 +1,41 @@
+summary: >-
+  Added pure DAG analysis for the dashboard-instrument feature (Part B, S2) as a new public
+  DashboardCriticalPath enum in DashboardProjection.swift, alongside DashboardProjection. Two pure
+  static entry points: criticalPath(_ pipeline) returns the longest dependency chain over the slice
+  DAG as an ordered node-id list, and runnableRanking(_ pipeline, state:) returns the runnable
+  slices ranked by their transitive downstream-unblock count (the size of each runnable node's
+  forward reachable / descendant set). Forward adjacency is built from pipeline.edges treating each
+  edge as `from → to` (depends_on), the same direction Scheduler.runnable and
+  DashboardProjection.dependencyCount already use; a multi-source edge contributes one source→to arc
+  per source. The runnable set comes from Scheduler.runnable(state ?? RunState(), pipeline) — the
+  same source of truth project() uses — so the ranking never drifts from the dashboard's runnable
+  count. Both functions are pure / I/O-free / wall-clock-free, with memoized DFS over the DAG.
+  Ranking is sorted by descending unblockCount then ascending node id; critical-path branch ties
+  resolve to the smallest successor id and overall ties to the smallest start id, so identical
+  inputs yield byte-identical results. Results are exposed via the public RankedRunnable struct and
+  the public enum so sibling slices S3 (attention band → top unblockers) and S4 (detail → mark
+  critical path) can consume them without re-deriving the DAG. This slice computes a projection
+  only — it renders and marks nothing.
+
+  REWORK (test quality): the original critical-path tests used length-SYMMETRIC graphs (the
+  diamond fixture's every a→e path is length 4; the tie-break fixture's two chains are equal
+  length), so a regression from longest-path to shortest-path or a naive first-successor walk would
+  still pass. Addressed the reviewer's gap by adding an ASYMMETRIC-length critical-path fixture
+  (asymmetricLengthPipeline: nodes [a,b,c,d], edges a→b, a→c, c→d) and a test
+  (criticalPathPicksLongestNotShortestBranch) asserting criticalPath(...) == ["a","c","d"] — the
+  short branch a→b is length 2 vs the longer a→c→d length 3, so the assertion fails if longest-path
+  ever regresses to shortest-path or a first-successor walk (which would pick b since b < c). This
+  is a tests-only change; the (correct) implementation was untouched.
+
+  Full Swift Testing coverage in EngineTests.swift: the known longest-chain diamond fixture, the new
+  asymmetric-length longest-vs-shortest fixture, a downstream-unblock ranking fixture, deterministic
+  tie-break (ranking and critical path) with repeated-call stability, and purity across run states.
+  swift build, swift test (242 tests, 8 suites), and ai-sdd validate
+  .ai-sdd/features/dashboard-instrument all pass.
+satisfies:
+  - longest-chain-per-feature-correct
+  - runnable-ranked-by-downstream-unblock
+  - deterministic-tie-break
+  - pure-no-IO
+  - exposed-for-sibling-consumption
+  - verification-commands

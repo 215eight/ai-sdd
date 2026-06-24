@@ -482,3 +482,115 @@ public enum DashboardProjection {
         return totals
     }
 }
+
+/// A runnable node ranked by how many slices it would transitively unblock — its forward reachable
+/// (descendant) set over the `from → to` (depends_on) edge model. S3 (attention band, top
+/// unblockers) consumes this; the higher the `unblockCount`, the longer the pole that node clears.
+public struct RankedRunnable: Equatable, Sendable {
+    /// The runnable node's id.
+    public var node: String
+    /// The number of distinct slices reachable forward from `node` along depends_on edges — i.e. how
+    /// many downstream slices completing this node would (transitively) help unblock.
+    public var unblockCount: Int
+
+    public init(node: String, unblockCount: Int) {
+        self.node = node
+        self.unblockCount = unblockCount
+    }
+}
+
+/// Pure DAG analysis over a feature's slice graph: the per-feature **critical path** (longest
+/// dependency chain) and a **ranking of runnable slices by transitive downstream-unblock count**.
+///
+/// Both functions are pure transforms of their inputs — no file, network, or wall-clock I/O — so
+/// identical inputs always yield byte-identical results. They COMPUTE a projection only and render
+/// nothing; sibling slices S3 (attention band → top unblockers) and S4 (detail band → critical-path
+/// marking) consume the output. The edge model matches the rest of the engine: an edge
+/// `from → to` is a dependency (`to` depends_on `from`), so forward adjacency (`from → to`) is the
+/// "this unblocks that" direction `DashboardProjection.dependencyCount` and `Scheduler` already use.
+public enum DashboardCriticalPath {
+    /// The longest dependency chain (critical path) over the pipeline's slice DAG, as an ordered list
+    /// of node ids from chain start to chain end. Length is measured in node count; ties at every
+    /// branch (and across equal-length chains overall) are broken by ascending node id, so the result
+    /// is a single stable chain. Returns `[]` for an empty pipeline. Pure / I/O-free / deterministic.
+    public static func criticalPath(_ pipeline: PipelineSpec) -> [String] {
+        let adjacency = forwardAdjacency(pipeline)
+        let nodeIds = pipeline.nodes.map { $0.id }
+        guard !nodeIds.isEmpty else { return [] }
+
+        // Memoized longest forward chain starting at each node. The DAG guarantees termination; the
+        // per-node memo keeps this linear. Tie-break: among equally long successor chains pick the one
+        // whose successor id is smallest, so the whole path is determined by id order alone.
+        var memo: [String: [String]] = [:]
+        func longestFrom(_ node: String) -> [String] {
+            if let cached = memo[node] { return cached }
+            let successors = (adjacency[node] ?? []).sorted()
+            var best: [String] = []
+            for successor in successors {
+                let candidate = longestFrom(successor)
+                if candidate.count > best.count {
+                    best = candidate
+                }
+                // Equal length keeps the first (smallest-id) successor, since `successors` is sorted
+                // and we only replace on a strictly longer chain.
+            }
+            let chain = [node] + best
+            memo[node] = chain
+            return chain
+        }
+
+        // Consider every node as a potential chain start so a longest path that does not begin at a
+        // source is still found; pick the longest, breaking overall ties by ascending start id.
+        var result: [String] = []
+        for node in nodeIds.sorted() {
+            let chain = longestFrom(node)
+            if chain.count > result.count {
+                result = chain
+            }
+        }
+        return result
+    }
+
+    /// The currently runnable slices ranked by their transitive downstream-unblock count — the size of
+    /// each runnable node's forward reachable (descendant) set over the depends_on edges. The runnable
+    /// set is taken from `Scheduler.runnable(state ?? RunState(), pipeline)`, the same source of truth
+    /// `DashboardProjection.project` uses, so the ranking never drifts from the dashboard's runnable
+    /// count. Sorted by descending `unblockCount`, then ascending node id. Pure / I/O-free /
+    /// deterministic — `state` defaults to an empty `RunState` (everything with no deps is runnable).
+    public static func runnableRanking(_ pipeline: PipelineSpec, state: RunState? = nil) -> [RankedRunnable] {
+        let adjacency = forwardAdjacency(pipeline)
+        let runnable = Scheduler.runnable(state ?? RunState(), pipeline)
+
+        var memo: [String: Set<String>] = [:]
+        func descendants(_ node: String) -> Set<String> {
+            if let cached = memo[node] { return cached }
+            var reached: Set<String> = []
+            for successor in adjacency[node] ?? [] {
+                reached.insert(successor)
+                reached.formUnion(descendants(successor))
+            }
+            memo[node] = reached
+            return reached
+        }
+
+        return runnable
+            .map { RankedRunnable(node: $0, unblockCount: descendants($0).count) }
+            .sorted { lhs, rhs in
+                if lhs.unblockCount != rhs.unblockCount { return lhs.unblockCount > rhs.unblockCount }
+                return lhs.node < rhs.node
+            }
+    }
+
+    /// Forward adjacency `from → to` (each dependency edge points from a prerequisite to the node that
+    /// depends on it). A `join`-style edge with several `from` sources contributes one `source → to`
+    /// arc per source, matching the edge semantics `Scheduler.runnable` and `dependencyCount` use.
+    private static func forwardAdjacency(_ pipeline: PipelineSpec) -> [String: [String]] {
+        var adjacency: [String: [String]] = [:]
+        for edge in pipeline.edges {
+            for source in edge.from.values {
+                adjacency[source, default: []].append(edge.to)
+            }
+        }
+        return adjacency
+    }
+}

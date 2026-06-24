@@ -1,0 +1,98 @@
+schema: review.v1
+run: run-integrity-and-dashboard
+slice: critical-path-and-ranking
+
+verdict: approve
+summary: >-
+  Re-review (round 2) of slice critical-path-and-ranking (dashboard-instrument, Part B, S2) after
+  rework, against feature-plan.v1 (6 acceptance ids) and changeset.v1. The previous round rejected on
+  ONE reason only — the critical-path fixtures were length-SYMMETRIC and therefore lacked teeth (a
+  regression to shortest-path or a naive first-successor walk would still have passed). The implementer
+  addressed it with a tests-only change: a new asymmetricLengthPipeline fixture (nodes [a,b,c,d];
+  edges a→b, a→c, c→d) and test criticalPathPicksLongestNotShortestBranch asserting
+  criticalPath == ["a","c","d"]. This fixture HAS TEETH — the short branch a→b is 2 nodes vs the long
+  branch a→c→d of 3 nodes (shortest ≠ longest), and the short branch's first node (b) sorts BEFORE the
+  long branch's (c), so a shortest-path regression OR a first-successor walk would return ["a","b"] and
+  fail the assertion. I independently re-verified the (unchanged) implementation remains correct on
+  every axis: criticalPath is genuine memoized longest-path (replaces best only on strictly longer,
+  tries every node as a start); runnableRanking is genuinely transitive (memoized descendant set) and
+  sourced from Scheduler.runnable(state ?? RunState(), pipeline) — the exact source project() uses, so
+  it cannot drift; both are pure / I/O-free / wall-clock-free; both public, forwardAdjacency private;
+  scope confined to DashboardProjection.swift (untouched this round) + EngineTests.swift (tests-only
+  addition), no renderer/scheduler/CLI edits. swift build clean, swift test 242 tests / 8 suites all
+  pass (the new test present and green). All six acceptance ids now pass — APPROVE.
+
+items:
+  - id: longest-chain-per-feature-correct
+    verdict: pass
+    notes: >-
+      Implementation is correct longest-path: criticalPath() memoizes the longest forward chain per
+      node (replaces best only on a strictly longer candidate.count), then tries every node as a start
+      in ascending-id order and keeps the strictly longest — genuine longest-path over the DAG, not
+      DFS-first-path. The prior teeth gap is now CLOSED: the new asymmetricLengthPipeline fixture
+      (a→b, a→c, c→d) and criticalPathPicksLongestNotShortestBranch assert criticalPath == ["a","c","d"].
+      Traced the logic against the fixture — longestFrom(a) compares longestFrom(b)=[b] (count 1) vs
+      longestFrom(c)=[c,d] (count 2) and keeps [c,d], yielding [a,c,d]. Because shortest ≠ longest AND
+      the short branch's node (b) sorts before the long branch's (c), a regression to shortest-path or a
+      naive first-successor walk would return ["a","b"] and FAIL. The original diamond fixture
+      (criticalPathReturnsKnownLongestChain == ["a","b","d","e"]) is retained for the longest+tie-break
+      chain. Both tests run and pass under swift test. Now genuinely guarded.
+  - id: runnable-ranked-by-downstream-unblock
+    verdict: pass
+    notes: >-
+      runnableRanking() ranks by transitive downstream-unblock count via a memoized descendants() set
+      over forward (from→to) adjacency — genuinely transitive, not immediate-successor count. The
+      runnable set is Scheduler.runnable(state ?? RunState(), pipeline), the exact source of truth
+      DashboardProjection.project uses, so it cannot drift from the dashboard's runnable set. Fixtures
+      have teeth: runnableRankingByDownstreamUnblockCount asserts root/side each reach 4 transitively
+      (would be 1 if only immediate successors counted, with far reached only via leaf1); the desc-count
+      fixture asserts big=2 via b1→b2 (transitive, not 1), mid=1, zzz=0; non-runnable nodes with
+      prerequisites are excluded.
+  - id: deterministic-tie-break
+    verdict: pass
+    notes: >-
+      Ranking sorts by descending unblockCount then ascending node id; critical-path branch ties
+      resolve to the smallest successor id (successors sorted; replace only on strictly longer) and
+      overall ties to the smallest start id. Both tie-break paths are covered with repeated-call
+      stability: runnableRankingOrdersByCountThenIdAndIsDeterministic asserts alpha/mu/zeta and
+      first==second; criticalPathTieBreakIsByAscendingIdAndRepeatable asserts a→m→z (m<n) and
+      first==second. No wall-clock read anywhere.
+  - id: pure-no-IO
+    verdict: pass
+    notes: >-
+      Both functions are pure transforms of (PipelineSpec, RunState?). The new analysis code uses only
+      memoized in-memory DFS — no Date(), FileManager, Process, URL, readLine, or environment access.
+      analysisIsPureAcrossRunStates exercises empty vs completedNodes:["a"] states (a runnable→4; after
+      a completes, b/c→2 each) and confirms criticalPath is state-independent. Unit-tested without any
+      real run.
+  - id: exposed-for-sibling-consumption
+    verdict: pass
+    notes: >-
+      public struct RankedRunnable (Equatable, Sendable, public init) and public enum
+      DashboardCriticalPath with public static criticalPath(_:) -> [String] and
+      runnableRanking(_:state:) -> [RankedRunnable]; forwardAdjacency is correctly private. S3 (top
+      unblockers) and S4 (mark critical path) can consume both directly without re-deriving the DAG.
+      Lives in DashboardProjection.swift alongside DashboardProjection per the closed where-it-lives
+      decision.
+  - id: verification-commands
+    verdict: pass
+    notes: >-
+      Independently ran swift build (Build complete) and swift test (242 tests / 8 suites, all pass) —
+      the new criticalPathPicksLongestNotShortestBranch is present and green, and the test count rose
+      from 241 (prior round) to 242 confirming exactly the one added test. swift run ai-sdd validate
+      .ai-sdd/features/dashboard-instrument passes per plan tests. Scope confirmed: the rework is a
+      tests-only addition in EngineTests.swift; DashboardProjection.swift is unchanged from the prior
+      (correct) round — no GraphRenderer/Scheduler/Reducer/RunState/CLI changes, renders and marks
+      nothing.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Satisfied. Engine behavior remains under Sources/AISDDEngine; the added fixture and test are under
+    Tests/AISDDEngineTests/EngineTests.swift using Swift Testing (@Test/#expect). Change confined to the
+    two declared files (files-scope decision honored). No invented lint. The prior teeth gap is now
+    resolved; no remaining shortfall.
+
+caveats: >-
+  none. The implementation was correct in the prior round and is unchanged; the rework added exactly
+  the asymmetric-length fixture the previous review requested, which closes the only outstanding gap.

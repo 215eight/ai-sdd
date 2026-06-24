@@ -1,0 +1,131 @@
+summary: >-
+  Add pure DAG analysis to DashboardProjection for the dashboard-instrument feature: per-feature
+  critical path (the longest dependency chain over a pipeline's slice graph) and a ranking of
+  runnable slices by transitive downstream-unblock count (how many slices each one would unblock).
+  This slice COMPUTES a projection only — it exposes the results for sibling slices S3 (attention
+  band, top unblockers) and S4 (detail band, critical-path marking) to consume; it renders nothing.
+  Functions are I/O-free, deterministic (no wall-clock), with ties broken by stable node-id order,
+  and fully unit-tested.
+scope:
+  in:
+    - Add a pure critical-path analysis to DashboardProjection.swift that, given a PipelineSpec,
+      computes the longest dependency chain (critical path) over its slice DAG as an ordered list of
+      node ids.
+    - Add a pure runnable-ranking analysis that, given a PipelineSpec and an optional RunState, ranks
+      the currently runnable slices by their transitive downstream-unblock count (the number of slices
+      reachable forward from each runnable node along depends_on edges).
+    - Reuse the existing edge model (PipelineEdge.from OneOrMany<String> → to) to build the forward
+      adjacency, and reuse Scheduler.runnable(state, pipeline) to determine the runnable set — the same
+      source of truth DashboardProjection.project already uses.
+    - Break all ordering ties deterministically by ascending node id (lexicographic); no wall-clock,
+      no run-order dependence, so identical inputs always yield byte-identical results.
+    - Expose the analysis through public types/functions (a public result type plus public static
+      entry points) so S3 and S4 can call them without re-deriving the DAG.
+    - Add focused Swift Testing coverage in EngineTests.swift with fixtures whose longest path and
+      downstream-unblock ranking are known, asserting both the critical-path chain and the ranking
+      order (including a tie-break case).
+  out:
+    - No rendering, no HTML/Mermaid emission, no marking of nodes, no attention-band assembly — those
+      are S3 (attention-band) and S4 (detail-graph-context), which consume this projection.
+    - No change to DashboardProjection.project, DashboardProjectionRow/Result/Summary, status
+      precedence, owner fallback, or existing dashboard assemblers/renderers.
+    - No change to Scheduler, Reducer, RunState, RunStore, GraphRenderer, DashboardCharts, or the CLI.
+    - No wall-clock read, no temporal/velocity/ETA logic (that is phase 2), and no new architecture
+      decision or ADR edit.
+acceptance:
+  - id: longest-chain-per-feature-correct
+    description: >-
+      A pure function computes the longest dependency chain (critical path) over a feature's slice DAG
+      as an ordered list of node ids; a fixture with a known longest path asserts the exact chain.
+  - id: runnable-ranked-by-downstream-unblock
+    description: >-
+      A pure function ranks the runnable slices by transitive downstream-unblock count (the number of
+      slices reachable forward along depends_on edges); a fixture asserts the ranked order matches the
+      known unblock counts.
+  - id: deterministic-tie-break
+    description: >-
+      Ties in both the critical path and the runnable ranking are broken deterministically by ascending
+      node id with no wall-clock read; a fixture with equal-weight candidates asserts a single stable
+      order, and repeated calls on the same input return identical results.
+  - id: pure-no-IO
+    description: >-
+      The analysis functions perform no file, network, or wall-clock I/O — they are pure transforms of
+      PipelineSpec (and an optional RunState) and are unit-tested without a real run.
+  - id: exposed-for-sibling-consumption
+    description: >-
+      The critical-path node set and the runnable ranking are exposed via public types and entry points
+      in AISDDEngine so the attention band (S3) and detail band (S4) can consume them directly.
+  - id: verification-commands
+    description: >-
+      swift build, swift test, and swift run ai-sdd validate .ai-sdd/features/dashboard-instrument all
+      pass after implementation.
+decisions:
+  - id: where-it-lives
+    status: closed
+    decision: >-
+      Add the analysis as a new public DashboardCriticalPath enum (namespacing pure static functions)
+      in Sources/AISDDEngine/DashboardProjection.swift, alongside DashboardProjection.
+    rationale: >-
+      The slice brief states the analysis "Lives in DashboardProjection". Keeping it in that file next
+      to the existing pure projection keeps DAG analysis in one place without bloating
+      DashboardProjection.project, and matches the convention that engine behavior lives in
+      AISDDEngine.
+  - id: function-shape
+    status: closed
+    decision: >-
+      Expose two pure static entry points: criticalPath(_ pipeline: PipelineSpec) -> [String] returning
+      the longest dependency chain as an ordered node-id list, and runnableRanking(_ pipeline:
+      PipelineSpec, state: RunState?) -> [RankedRunnable] returning runnable nodes with their
+      downstream-unblock count, sorted. RankedRunnable is a public Equatable/Sendable struct carrying
+      the node id and the unblock count.
+    rationale: >-
+      Separating the two outputs keeps each function single-purpose and lets S4 consume the
+      critical-path set while S3 consumes the ranking, without forcing either to depend on the other.
+      Returning plain ordered ids / a small public struct keeps the contract minimal and testable.
+  - id: edge-direction-and-reachability
+    status: closed
+    decision: >-
+      Build forward adjacency from pipeline.edges by treating each edge as a dependency from
+      OneOrMany<String> sources to its `to` node (the same direction DashboardProjection.dependencyCount
+      and Scheduler use). The critical path is the longest simple path by node count over this DAG;
+      downstream-unblock count is the size of each runnable node's transitive forward reachable set
+      (descendants), computed by memoized depth-first traversal.
+    rationale: >-
+      This reuses the exact edge semantics already in the codebase (from → to = depends_on), so the
+      analysis agrees with existing runnable/dependency logic. Memoized DFS over a DAG is linear and
+      pure; "downstream-unblock" is naturally the transitive descendant count.
+  - id: runnable-source
+    status: closed
+    decision: >-
+      Determine the runnable set with Scheduler.runnable(state ?? RunState(), pipeline), the same call
+      DashboardProjection.project uses, rather than re-deriving readiness.
+    rationale: >-
+      Reusing the scheduler keeps the ranking consistent with what the dashboard already reports as
+      runnable and avoids a second, drifting definition of readiness.
+  - id: tie-break-and-determinism
+    status: closed
+    decision: >-
+      Order the runnable ranking by descending unblock count, then ascending node id; order
+      critical-path candidates of equal length by ascending node id at each branch. Read no wall clock
+      anywhere.
+    rationale: >-
+      A total, input-only ordering makes the output byte-identical across runs and machines, which the
+      slice requires ("ties broken deterministically", "no wall-clock"), and keeps fixtures stable.
+  - id: files-scope
+    status: closed
+    decision: >-
+      Limit the change to Sources/AISDDEngine/DashboardProjection.swift (the analysis) and
+      Tests/AISDDEngineTests/EngineTests.swift (the fixtures). No renderer, scheduler, model, or CLI
+      edits.
+    rationale: >-
+      The slice computes a projection only; rendering and marking are S3/S4. The existing projection
+      file and engine test file are the precise, minimal touch points, matching the swift conventions
+      for engine behavior and tests.
+files:
+  - Sources/AISDDEngine/DashboardProjection.swift
+  - Tests/AISDDEngineTests/EngineTests.swift
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd/features/dashboard-instrument
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml
