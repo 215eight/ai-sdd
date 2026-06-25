@@ -70,29 +70,34 @@ ai-sdd cheatsheet       # print the diagram-driven workflow cheatsheet — trave
 
 `ai-sdd-bootstrap` is itself a **skill**, so it can't install itself — something must make it (and the
 other framework skills) discoverable first, and put the integrity pre-commit hook in place. That's this
-one-time, **idempotent** seed. From your **ai-sdd clone**, point the seeder at the repo you want to adopt:
+one-time, **idempotent** seed. It's built into the `ai-sdd` binary — **no ai-sdd clone needed**. Point it
+at the repo you want to adopt (`[TARGET]` defaults to the current directory):
 
 ```sh
-scripts/bootstrap.sh /path/to/your-repo     # run with no arg and it prompts (default: cwd)
+ai-sdd seed /path/to/your-repo     # or just `ai-sdd seed` from inside the repo (default: cwd)
 ```
 
-It vendors the framework skills (`ai-sdd-bootstrap`, `ai-sdd-plan`, `ai-sdd-plan-program`,
-`ai-sdd-compile-schema`, `ai-sdd-run`, `ai-sdd-cheatsheet`) into `<repo>/.ai-sdd/skills/`, points each
-agent's skill dir (`.agents/skills`, `.claude/skills`) at that in-repo copy with relative symlinks, and
-installs the pre-commit integrity hook into `<repo>/.git/hooks/` (chaining any existing hook). The ai-sdd
-home is auto-derived from the script's own location — only the target repo is needed.
+It materializes the framework skills (`ai-sdd-bootstrap`, `ai-sdd-plan`, `ai-sdd-plan-program`,
+`ai-sdd-compile-schema`, `ai-sdd-run`, `ai-sdd-cheatsheet`) into `<repo>/.ai-sdd/skills/` from the
+framework embedded in the binary, points each agent's skill dir (`.agents/skills`, `.claude/skills`) at
+that in-repo copy with relative symlinks, and installs the pre-commit integrity hook into
+`<repo>/.git/hooks/` (chaining any existing hook exactly once). It also installs a `SessionStart` hook
+that runs `ai-sdd update --check` into `.claude/settings.json` (Claude) and `.codex/hooks.json` (Codex),
+and stamps the binary's version into `<repo>/.ai-sdd/VERSION`. Everything reads from the embedded
+framework — only the target repo path is needed.
 
 This makes the repo **self-contained**: commit `.ai-sdd/` and `.agents/skills/` and anyone who clones it
 has the toolkit with **no ai-sdd clone of their own** — they only install the `ai-sdd` binary on PATH (a
-tool, like git). Re-running `scripts/bootstrap.sh` later refreshes the vendored skills + hook
-idempotently (it only adds what's missing and never clobbers). `ai-sdd-bootstrap` (Step 3) then authors
-the generated factory (schemas, workers, checks) from your codebase and validates.
+tool, like git). Re-running `ai-sdd seed` later refreshes the materialized skills + hook idempotently (it
+only adds what's missing, chains a foreign hook just once, never duplicates the agent session hooks, and
+never clobbers unrelated config keys). `ai-sdd-bootstrap` (Step 3) then authors the generated factory
+(schemas, workers, checks) from your codebase and validates.
 
-- **Self-hosting** (the ai-sdd repo itself)? `scripts/bootstrap.sh .` — or skip, since `./skills` and the
+- **Self-hosting** (the ai-sdd repo itself)? `ai-sdd seed .` — or skip, since `./skills` and the
   committed `.agents/skills` symlinks already exist.
 - **Machine-wide instead** (across many repos)? Symlink the framework skills into your user skill dirs
   `~/.agents/skills/` (Codex) and `~/.claude/skills/` (Claude Code) by hand; the per-repo hook still
-  comes from `scripts/bootstrap.sh`.
+  comes from `ai-sdd seed`.
 
 ---
 

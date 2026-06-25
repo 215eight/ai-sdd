@@ -1,0 +1,30 @@
+summary: >-
+  Added `ai-sdd seed [TARGET]` — the binary-native, no-clone successor to scripts/bootstrap.sh. A new
+  `public enum Seeder` in AISDDEngine reconciles a target repo entirely from the embedded framework
+  (EmbeddedFramework + Bundle.module), with all filesystem effects scoped to the resolved TARGET and the
+  version string injected by the CLI so the engine never references AISDDVersion. It (1) materializes the
+  embedded skills into <target>/.ai-sdd/skills and reconciles the .agents/.claude symlinks via the
+  existing SkillSurface.reconcile; (2) writes the embedded pre-commit hook source under
+  <target>/.ai-sdd/hooks/pre-commit and installs/refreshes <target>/.git/hooks/pre-commit, chaining a
+  foreign hook exactly once via the `ai-sdd:managed-hook` marker (skipped when .git is absent); (3)
+  idempotently merges a SessionStart hook running `ai-sdd update --check` into .claude/settings.json and
+  .codex/hooks.json (Codex matcher "startup|resume") via a JSON merge that preserves unrelated keys and
+  never duplicates; (4) stamps <target>/.ai-sdd/VERSION with the injected version. A `Seed` ArgumentParser
+  subcommand in AISDDCLI/CLI.swift (mirroring Surface), registered in the subcommands list, injects
+  AISDDVersion.current and prints a per-step summary. All new target-side path literals live in
+  Layout.swift. QUICKSTART.md's seeding instructions were converted from scripts/bootstrap.sh to
+  `ai-sdd seed`. Swift Testing tests over UUID-named temp dirs cover all four artifact groups, second-seed
+  idempotency, foreign-hook single-chaining, unrelated-key preservation, the VERSION stamp, and the typed
+  non-directory error. README.md needed no edit — it documents seeding only by pointing at QUICKSTART (no
+  scripts/bootstrap.sh command), per decision D7.
+
+satisfies:
+  - AC1-skills-materialized-and-surfaced
+  - AC2-hook-source-and-install
+  - AC3-foreign-hook-chained-once
+  - AC4-session-hooks-merged
+  - AC5-session-hooks-idempotent-merge
+  - AC6-version-stamp
+  - AC7-second-seed-no-duplication
+  - AC8-docs-repointed
+  - AC9-green-build-test-validate

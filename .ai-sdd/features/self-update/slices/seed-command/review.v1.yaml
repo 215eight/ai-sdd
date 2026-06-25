@@ -1,0 +1,113 @@
+schema: review.v1
+run: self-update
+slice: seed-command
+
+verdict: approve
+
+summary: >-
+  `ai-sdd seed [TARGET]` faithfully and idempotently replaces scripts/bootstrap.sh, reading
+  exclusively from the embedded framework (no clone). Functionally verified against a fresh
+  mktemp + git init repo (never the working repo): skills materialized + relative agent symlinks,
+  managed pre-commit hook with marker, foreign hook chained exactly once to .pre-commit.local and
+  refreshed-not-rechained on reseed, idempotent non-clobbering JSON merge into .claude/settings.json
+  (no matcher) and .codex/hooks.json (matcher "startup|resume", command "ai-sdd update --check"),
+  and a verbatim .ai-sdd/VERSION stamp. swift build, swift test (296 tests incl. SeederTests), and
+  swift run ai-sdd validate .ai-sdd all green. Engine/CLI layering holds (engine never references
+  AISDDVersion; version injected by the CLI) and all target-side path/command/marker literals live in
+  Layout.swift. README needs no edit per D7 (it references seeding only via the QUICKSTART pointer,
+  no scripts/bootstrap.sh command). APPROVE.
+
+items:
+  - id: AC1-skills-materialized-and-surfaced
+    verdict: pass
+    notes: >-
+      Verified on a fresh temp TARGET: all 6 embedded skills written under .ai-sdd/skills/<id>/SKILL.md;
+      .agents/skills/<id> and .claude/skills/<id> are relative symlinks resolving to
+      ../../.ai-sdd/skills/<id> (readlink + SKILL.md resolution confirmed). The materialized set equals
+      EmbeddedFramework.skillIds() (SeederTests.skillSetEqualsEmbedded + the freshSeed test assert this).
+      Reuses EmbeddedFramework.materialize + SkillSurface.reconcile (no reimplemented symlinking) per D3.
+  - id: AC2-hook-source-and-install
+    verdict: pass
+    notes: >-
+      Embedded hook source written to .ai-sdd/hooks/pre-commit (carries `ai-sdd:managed-hook` marker);
+      with .git present an executable .git/hooks/pre-commit equal to that source is installed (test asserts
+      byte equality vs EmbeddedFramework.hookSource() and chmod 0o755). With .git absent the install step
+      is skipped without error while the home hook source, VERSION, and both agent configs are still
+      written — verified functionally.
+  - id: AC3-foreign-hook-chained-once
+    verdict: pass
+    notes: >-
+      Planted a foreign (non-managed) .git/hooks/pre-commit; first seed moved it verbatim to
+      .git/hooks/.pre-commit.local and installed the managed hook in its place; second seed reported
+      "refreshed the managed hook" and left .pre-commit.local byte-identical (no re-chain, no overwrite).
+      Logic mirrors bootstrap.sh exactly (marker present -> refresh; foreign + no .pre-commit.local ->
+      chain once; else copy). Covered by SeederTests.foreignHookChainedOnce.
+  - id: AC4-session-hooks-merged
+    verdict: pass
+    notes: >-
+      .claude/settings.json holds {hooks.SessionStart:[{hooks:[{type:command,command:"ai-sdd update
+      --check"}]}]} with no matcher key; .codex/hooks.json holds the same with matcher "startup|resume".
+      Both are valid JSON in the documented shape (JSONSerialization, sortedKeys/prettyPrinted). Matches D5.
+  - id: AC5-session-hooks-idempotent-merge
+    verdict: pass
+    notes: >-
+      Pre-planted unrelated keys (model/theme in Claude, unrelatedCodexKey in Codex) are preserved through
+      two seeds; the SessionStart `ai-sdd update --check` entry appears exactly once after the second seed
+      (parsed count == 1 for both). Merge navigates hooks.SessionStart without disturbing siblings and
+      appends only when no existing entry carries the command. Covered by SeederTests.unrelatedKeysPreserved.
+  - id: AC6-version-stamp
+    verdict: pass
+    notes: >-
+      .ai-sdd/VERSION contains the injected version string verbatim (no framing) via Data(version.utf8).
+      The CLI injects AISDDVersion.current; the engine never references it. Verified on disk and by
+      SeederTests (VERSION == "1.2.3" for the injected value).
+  - id: AC7-second-seed-no-duplication
+    verdict: pass
+    notes: >-
+      Second seed is a no-op-shaped refresh: skills refreshed, 6 symlinks per agent dir with no
+      duplication (SkillSurface.reconcile(check:true) reports reconciled), managed hook refreshed without
+      re-chaining, both agent configs gain no duplicate SessionStart entries, VERSION rewritten to the same
+      value. Verified functionally and by SeederTests.secondSeedNoDuplication.
+  - id: AC8-docs-repointed
+    verdict: pass
+    notes: >-
+      QUICKSTART.md's seeding block converted from `scripts/bootstrap.sh /path` to
+      `ai-sdd seed /path/to/your-repo` (binary-native no-clone flow), including the self-hosting line and
+      the machine-wide note, and now documents the added SessionStart-hook + VERSION outputs. README.md has
+      no scripts/bootstrap.sh command (it points at QUICKSTART for seeding) so it is correctly left
+      untouched per D7. scripts/bootstrap.sh is intentionally not deleted (manual checklist).
+  - id: AC9-green-build-test-validate
+    verdict: pass
+    notes: >-
+      `./scripts/gen-version.sh && swift build` succeeds; `swift test` passes all 296 tests across 12
+      suites including SeederTests; `swift run ai-sdd validate .ai-sdd` succeeds. New tests run over
+      UUID-named temp dirs (removed in defer) and never mutate the real repo; all functional verification
+      done against mktemp + git init temp repos.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Swift Testing (@Test/#expect/#require) with exact typed errors (Seeder.SeedError.targetNotADirectory,
+    EmbeddedFramework.EmbeddedError) — no `any Error`. Engine behavior under Sources/AISDDEngine, CLI
+    surface under Sources/AISDDCLI; engine does not import the CLI version product (version injected as a
+    String parameter). All target-side path/command/marker literals centralized in Layout.swift; Seeder
+    carries no inline path strings (the only non-Layout literals are the JSON value-shape keys
+    type/command). swift build / swift test / ai-sdd validate .ai-sdd run clean.
+
+decisions:
+  - id: bootstrap-parity-verified
+    notes: >-
+      The managed-hook chaining (marker -> refresh; foreign + no .pre-commit.local -> chain once; else
+      copy) and idempotent skill+symlink reconcile match scripts/bootstrap.sh behavior, verified
+      side-by-side on a temp repo with a planted foreign hook and unrelated agent-config keys.
+  - id: json-merge-non-clobbering
+    notes: >-
+      Planted unrelated keys in both agent configs and re-seeded; keys preserved and the SessionStart
+      entry never duplicated. Codex matcher is "startup|resume" with command "ai-sdd update --check";
+      Claude omits the matcher per D5.
+  - id: readme-untouched-justified
+    notes: >-
+      README.md's only seeding mention is a QUICKSTART pointer with no scripts/bootstrap.sh command, so
+      leaving it untouched satisfies AC8 / D7 rather than missing a required edit.
+
+rework: []

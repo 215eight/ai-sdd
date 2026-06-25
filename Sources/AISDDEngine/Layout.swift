@@ -191,6 +191,59 @@ public enum Layout {
     public static func conventionSourcePath(stack: String) -> String {
         "\(conventionsDirPath)/\(stack).\(conventionExtension)"
     }
+
+    // MARK: - Seed target-side path literals (Seeder)
+    //
+    // The concrete files `ai-sdd seed [TARGET]` reconciles in an adopting repo. Centralized here (one
+    // place per literal, per the conventions) so `Seeder` never inlines a path string. All are
+    // resolved under the seed TARGET (default: cwd) — never the running binary's own repo.
+
+    /// The version stamp inside a target's factory home (`.ai-sdd/VERSION`). Seed writes the running
+    /// binary's version string here verbatim; downstream update-check slices read it.
+    public static let versionStampFile = "VERSION"
+
+    /// The repo-relative VERSION stamp path: `.ai-sdd/VERSION`.
+    public static let versionStampPath = "\(homeDir)/\(versionStampFile)"
+
+    /// The materialized integrity-hook source under a target's home (`.ai-sdd/hooks/pre-commit`) —
+    /// `EmbeddedFramework.materialize(to:)` writes it; seed installs the `.git` hook from it.
+    public static let homeHookPath = "\(homeDir)/\(embeddedHookResourceDir)/\(embeddedHookFile)"
+
+    /// The git hooks directory inside a target (`.git/hooks`).
+    public static let gitHooksDir = ".git/hooks"
+
+    /// The git dir whose presence gates the hook-install step (`.git`).
+    public static let gitDir = ".git"
+
+    /// The installed pre-commit hook path inside a target (`.git/hooks/pre-commit`).
+    public static let gitPreCommitHook = "\(gitHooksDir)/\(embeddedHookFile)"
+
+    /// The chained-foreign-hook path (`.git/hooks/.pre-commit.local`) — a non-managed pre-commit hook
+    /// is moved here exactly once so the managed hook can take its place without losing it.
+    public static let gitChainedHook = "\(gitHooksDir)/.\(embeddedHookFile).local"
+
+    /// The marker every managed hook carries; its presence in an installed `.git/hooks/pre-commit`
+    /// means "refresh in place" (vs. a foreign hook, which is chained once). Matches `bootstrap.sh`.
+    public static let managedHookMarker = "ai-sdd:managed-hook"
+
+    /// The Claude agent session-hook config a seed merges into (`.claude/settings.json`).
+    public static let claudeSettingsPath = ".claude/settings.json"
+
+    /// The Codex agent session-hook config a seed merges into (`.codex/hooks.json`).
+    public static let codexHooksPath = ".codex/hooks.json"
+
+    /// The hooks-object key under which SessionStart entries live in both agent configs.
+    public static let sessionStartKey = "SessionStart"
+
+    /// The top-level `hooks` object key in both agent configs.
+    public static let hooksKey = "hooks"
+
+    /// The Codex SessionStart matcher (Claude's entry needs none).
+    public static let codexSessionMatcher = "startup|resume"
+
+    /// The literal command string a seeded SessionStart hook runs — seed installs only the STRING;
+    /// the `ai-sdd update --check` command itself is a later slice.
+    public static let updateCheckCommand = "ai-sdd update --check"
 }
 
 /// Type-safe paths for one Run inside a store root: `<root>/<runId>/…`

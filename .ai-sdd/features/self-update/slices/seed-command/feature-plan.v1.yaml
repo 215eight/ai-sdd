@@ -1,0 +1,183 @@
+summary: >-
+  Add `ai-sdd seed [TARGET]` — the binary-native, no-clone successor to scripts/bootstrap.sh. It
+  idempotently reconciles a target repo entirely from the embedded framework: (1) materializes the
+  framework skills into <target>/.ai-sdd/skills and links every coding agent's native skill dir at the
+  in-repo copy via the existing surface reconcile; (2) writes the embedded pre-commit hook source to
+  <target>/.ai-sdd/hooks/pre-commit and installs/refreshes <target>/.git/hooks/pre-commit, chaining a
+  foreign hook exactly once via the managed-hook marker; (3) merges idempotent SessionStart hooks into
+  <target>/.claude/settings.json (Claude) and <target>/.codex/hooks.json (Codex, matcher
+  "startup|resume"), each running `ai-sdd update --check`; (4) stamps <target>/.ai-sdd/VERSION with the
+  running binary's version; and (5) repoints the onboarding docs (QUICKSTART.md, README.md) from
+  scripts/bootstrap.sh to `ai-sdd seed`. The seeding logic lives in a pure-where-possible `Seeder` type
+  in AISDDEngine (filesystem effects scoped to TARGET); the version value is injected by the CLI
+  (AISDDVersion.current) so the engine stays free of the CLI build product. A new `Seed` ArgumentParser
+  subcommand in AISDDCLI invokes it. Reads exclusively through EmbeddedFramework + Bundle.module — no
+  source clone. Tested over a temp-dir fixture (Swift Testing), never the real repo.
+
+scope:
+  in:
+    - "`ai-sdd seed [TARGET]` ArgumentParser subcommand in AISDDCLI (TARGET defaults to the current directory)."
+    - "A `Seeder` type in AISDDEngine that reconciles a target repo from the embedded framework, with filesystem effects scoped to the resolved TARGET."
+    - "Step 1: materialize framework skills into <target>/.ai-sdd/skills via EmbeddedFramework, then reconcile .agents/skills and .claude/skills symlinks via the existing SkillSurface.reconcile (clean refresh; drop removed files; never clobber non-managed entries)."
+    - "Step 2: write the embedded pre-commit hook source to <target>/.ai-sdd/hooks/pre-commit and install/refresh <target>/.git/hooks/pre-commit, chaining a foreign hook exactly once via the `ai-sdd:managed-hook` marker (skipped when <target>/.git is absent)."
+    - "Step 3: idempotent JSON merge of a SessionStart hook running `ai-sdd update --check` into <target>/.claude/settings.json (Claude) and <target>/.codex/hooks.json (Codex, matcher \"startup|resume\"); don't duplicate, don't clobber unrelated keys."
+    - "Step 4: write <target>/.ai-sdd/VERSION = the running binary's version string (injected from the CLI's AISDDVersion.current)."
+    - "Step 5: rewrite the onboarding docs (QUICKSTART.md, README.md) that reference scripts/bootstrap.sh to use `ai-sdd seed`."
+    - "Path literals for the new target-side files centralized in Layout.swift (.ai-sdd/VERSION, hooks dir, .git/hooks/pre-commit + the chained `.pre-commit.local`, .claude/settings.json, .codex/hooks.json, the update-check command string, the managed-hook marker)."
+    - "Swift Testing tests in Tests/AISDDEngineTests over a temp-dir fixture covering all four artifact groups, second-seed idempotency, and foreign-hook chaining."
+  out:
+    - "Deletion of scripts/bootstrap.sh — on the manual checklist; scripts/ is outside the factory's declarable file scope."
+    - "`ai-sdd update --check` / `ai-sdd update` commands themselves — later m2 slices; seed only installs the literal command STRING `ai-sdd update --check` into the agent hooks."
+    - "Tag-derived versioning / git describe / scripts/gen-version.sh — owned by the tag-derived-version slice and the manual-infra checklist."
+    - "Any network access, binary self-replacement, or release download (m2 update-apply)."
+    - ".github/ workflows, install.sh, and other manual-infra companions."
+    - "Re-authoring the integrity hook content — seed materializes the embedded source verbatim; the hook's behavior is owned upstream."
+
+acceptance:
+  - id: AC1-skills-materialized-and-surfaced
+    description: >-
+      On a fresh temp-dir TARGET with no ai-sdd source clone, `ai-sdd seed` writes every embedded
+      framework skill under <target>/.ai-sdd/skills/<id>/ (each with its SKILL.md and any nested files,
+      matching the EmbeddedFramework accessor contents) and creates the per-agent symlinks
+      .agents/skills/<id> and .claude/skills/<id>, each resolving (relatively) into
+      .ai-sdd/skills/<id>. The skill set equals EmbeddedFramework.skillIds().
+  - id: AC2-hook-source-and-install
+    description: >-
+      Seed writes the embedded pre-commit hook source verbatim to <target>/.ai-sdd/hooks/pre-commit
+      (executable, carrying the `ai-sdd:managed-hook` marker) and, when <target>/.git exists, installs an
+      executable <target>/.git/hooks/pre-commit equal to that source. When <target>/.git is absent the
+      .git/hooks install step is skipped without error.
+  - id: AC3-foreign-hook-chained-once
+    description: >-
+      When <target>/.git/hooks/pre-commit already exists and is a foreign hook (no managed-hook marker),
+      the first seed moves it to <target>/.git/hooks/.pre-commit.local exactly once and installs the
+      managed hook in its place. A second seed neither re-chains nor overwrites .pre-commit.local — the
+      foreign hook is preserved exactly once and the managed hook is refreshed in place.
+  - id: AC4-session-hooks-merged
+    description: >-
+      Seed writes <target>/.claude/settings.json containing a SessionStart hook whose command is
+      `ai-sdd update --check`, and <target>/.codex/hooks.json containing a SessionStart hook with matcher
+      "startup|resume" whose command is `ai-sdd update --check`. Both files are valid JSON in each tool's
+      documented shape.
+  - id: AC5-session-hooks-idempotent-merge
+    description: >-
+      Seeding into a target whose .claude/settings.json (or .codex/hooks.json) already holds an unrelated
+      key preserves that key and does not duplicate the SessionStart `ai-sdd update --check` hook entry on
+      a second seed (the hook appears exactly once).
+  - id: AC6-version-stamp
+    description: >-
+      Seed writes <target>/.ai-sdd/VERSION whose contents equal the version string the CLI injected (the
+      running binary's AISDDVersion.current), with no extra framing.
+  - id: AC7-second-seed-no-duplication
+    description: >-
+      Running seed twice on the same TARGET is a no-op-shaped refresh: skills are refreshed, the per-agent
+      symlinks are not duplicated, the .git/hooks managed hook is refreshed (not re-chained), the two
+      agent session-hook configs gain no duplicate entries, and VERSION is rewritten to the same value.
+  - id: AC8-docs-repointed
+    description: >-
+      QUICKSTART.md and README.md no longer instruct adopters to run scripts/bootstrap.sh for seeding;
+      they reference `ai-sdd seed` instead. (README.md gains the reference only if it currently has none;
+      QUICKSTART.md's existing scripts/bootstrap.sh seeding instructions are converted.)
+  - id: AC9-green-build-test-validate
+    description: >-
+      `swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` all succeed; the new tests run
+      against a temp-dir fixture and never mutate the real repo.
+
+decisions:
+  - id: D1-seed-command-shape
+    status: closed
+    choice: >-
+      Add `struct Seed: ParsableCommand` in AISDDCLI/CLI.swift, registered in the AISDD subcommands list.
+      One optional positional `@Argument var target: String = "."` (default current directory),
+      mirroring the Surface command's `dir` argument. `run()` resolves TARGET to an absolute URL,
+      constructs the engine `Seeder`, and calls its reconcile entry point, passing AISDDVersion.current as
+      the version string. It prints a short per-step summary like the bootstrap.sh `step/info` output.
+  - id: D2-seeder-lives-in-engine-version-injected
+    status: closed
+    choice: >-
+      The seeding logic is a `public enum Seeder` of statics in Sources/AISDDEngine/Seeder.swift (shaped
+      like SkillSurface / EmbeddedFramework — no stored state). Its entry point takes the resolved target
+      URL and the version string as parameters (e.g. `reconcile(target: URL, version: String) throws`),
+      so the engine never references AISDDVersion (the gitignored CLI build product) and stays a clean
+      layer below the CLI. Filesystem effects are confined to paths under `target`; the embedded framework
+      is read through EmbeddedFramework / Bundle.module only (no clone). Sub-steps are factored into small
+      internal helpers (materialize skills, install hook, merge agent hook config, write VERSION) so each
+      is independently testable.
+  - id: D3-reuse-embedded-and-surface
+    status: closed
+    choice: >-
+      Step 1 reuses EmbeddedFramework.materialize(to:) to write skills+hook source into
+      <target>/.ai-sdd, then SkillSurface.reconcile(repoRoot: target, check: false) to create/refresh the
+      .agents/skills and .claude/skills symlinks (it already does clean create/fix/prune and never
+      clobbers non-managed entries). Seed does NOT reimplement symlinking. Note: materialize writes the
+      hook source under <target>/.ai-sdd/hooks/pre-commit (Layout.embeddedHookResourceDir /
+      embeddedHookFile), which doubles as step 2's committed source — seed installs the .git hook from
+      that materialized file.
+  - id: D4-hook-chaining-mirrors-bootstrap
+    status: closed
+    choice: >-
+      Replicate bootstrap.sh's managed-hook logic exactly. With HOOK_DST = <target>/.git/hooks/pre-commit
+      and the marker `ai-sdd:managed-hook`: if HOOK_DST exists AND contains the marker, refresh it in
+      place from the materialized source. Else if HOOK_DST exists (a foreign hook) AND
+      <target>/.git/hooks/.pre-commit.local does NOT already exist, move HOOK_DST to
+      .git/hooks/.pre-commit.local (chain once), then install the managed hook. Else (no existing hook, or
+      .pre-commit.local already present) just copy the managed hook into place. Both the installed hook and
+      any .pre-commit.local are chmod +x (0o755). The whole .git/hooks step is skipped when <target>/.git
+      is absent. The marker string lives in Layout.swift.
+  - id: D5-session-hook-json-shapes-and-merge
+    status: closed
+    choice: >-
+      Claude .claude/settings.json gets a SessionStart hook of shape
+      {"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"ai-sdd update --check"}]}]}}
+      (no matcher key — Claude's SessionStart entry needs none). Codex .codex/hooks.json gets
+      {"hooks":{"SessionStart":[{"matcher":"startup|resume","hooks":[{"type":"command","command":"ai-sdd update --check"}]}]}}.
+      Idempotent merge: read the existing file as JSON (treat missing/empty/unparseable as {}), navigate to
+      hooks.SessionStart (creating the path without disturbing sibling keys), and append the managed entry
+      ONLY if no existing SessionStart entry already contains a hook whose command equals
+      `ai-sdd update --check`; otherwise leave it. Unrelated top-level keys and unrelated SessionStart
+      entries are preserved. Serialize with JSONSerialization (sortedKeys, prettyPrinted) for stable
+      output. The command string `ai-sdd update --check`, the SessionStart key, the Codex matcher
+      "startup|resume", and both file paths live in Layout.swift.
+  - id: D6-version-stamp-source
+    status: closed
+    choice: >-
+      Step 4 writes the injected version string (from AISDDVersion.current) verbatim to
+      <target>/.ai-sdd/VERSION (no trailing newline framing beyond the raw value). The path is a new
+      Layout literal (versionStampFile = "VERSION" under the home). The engine does not parse or validate
+      it here — SemanticVersion reasoning is a downstream concern; seed just stamps the running value.
+  - id: D7-doc-edits-scope
+    status: closed
+    choice: >-
+      Convert QUICKSTART.md's seeding instructions (the `scripts/bootstrap.sh /path/to/your-repo` block and
+      the surrounding prose, the self-hosting line, and the machine-wide note) to `ai-sdd seed [TARGET]`,
+      describing the binary-native no-clone flow and the additional SessionStart-hook + VERSION outputs.
+      README.md currently has no scripts/bootstrap.sh reference; if it documents seeding/onboarding at all,
+      align it to `ai-sdd seed`, otherwise leave it untouched. Do not delete scripts/bootstrap.sh (manual
+      checklist) and do not edit scripts/ or .github/ here.
+  - id: D8-test-strategy-temp-fixture
+    status: closed
+    choice: >-
+      Add Tests/AISDDEngineTests/SeederTests.swift (Swift Testing: @Test/#expect/#require), each test over
+      a fresh FileManager.temporaryDirectory subdir (UUID-named, removed in defer) — never the real repo.
+      Cover: (a) a fresh seed writes all four artifact groups (skills+symlinks, hook source+install,
+      both agent session configs, VERSION) and the skill set equals EmbeddedFramework.skillIds(); (b) a
+      second seed produces no duplicate symlinks and no duplicate SessionStart hook entries and refreshes
+      the managed hook without re-chaining; (c) a pre-existing foreign .git/hooks/pre-commit is moved to
+      .pre-commit.local exactly once and preserved across a second seed; (d) an existing unrelated key in
+      .claude/settings.json / .codex/hooks.json is preserved through the merge; (e) VERSION equals the
+      injected version string. A temp git dir is created by making a <target>/.git/hooks directory (no real
+      git invocation needed). Assert exact typed errors where the API throws.
+
+files:
+  - Sources/AISDDCLI/CLI.swift
+  - Sources/AISDDEngine/Seeder.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/SeederTests.swift
+  - QUICKSTART.md
+  - README.md
+
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd \(AISDDVersion.current)",
-        subcommands: [Cheatsheet.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Compile.self, Graph.self, Plan.self, Surface.self, DriftCommand.self]
+        subcommands: [Cheatsheet.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Compile.self, Graph.self, Plan.self, Surface.self, Seed.self, DriftCommand.self]
     )
 }
 
@@ -743,6 +743,35 @@ struct Surface: ParsableCommand {
                 ? "✓ surfaces already reconciled"
                 : "✓ reconciled \(changes) surface link(s)")
         }
+    }
+}
+
+// MARK: - seed
+
+/// `ai-sdd seed [TARGET]` — the binary-native, no-clone successor to `scripts/bootstrap.sh`. It
+/// idempotently reconciles a target repo entirely from the embedded framework: materializes the skills
+/// + agent symlinks, installs/refreshes the pre-commit integrity hook (chaining a foreign hook once),
+/// merges a SessionStart `ai-sdd update --check` hook into the Claude/Codex agent configs, and stamps
+/// `.ai-sdd/VERSION`. The version value is injected here (`AISDDVersion.current`) so the engine stays
+/// free of the gitignored CLI build product.
+struct Seed: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Seed the ai-sdd toolkit into a repo from the embedded framework (no clone; idempotent)."
+    )
+    @Argument(help: "Target repo to seed (its factory home is <TARGET>/.ai-sdd). Default: current directory.")
+    var target: String = "."
+
+    func run() throws {
+        let targetURL = URL(fileURLWithPath: target, isDirectory: true).standardizedFileURL
+        print("==> Seeding ai-sdd into \(targetURL.path)")
+        let reports = try Seeder.reconcile(target: targetURL, version: AISDDVersion.current)
+        for report in reports {
+            print("  • \(report.title)")
+            print("      \(report.detail)")
+        }
+        print("✓ seeded \(targetURL.path)")
+        print("  Commit .ai-sdd/ and .agents/skills/ so collaborators inherit the toolkit.")
+        print("  Next: run the /ai-sdd-bootstrap skill to author the factory.")
     }
 }
 
