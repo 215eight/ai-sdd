@@ -127,7 +127,7 @@ To work on it from source:
 swift test                                     # run the engine test suite
 swift build -c release                         # compile the release binary
 ./scripts/install.sh                           # macOS: build + put ai-sdd on your PATH (idempotent)
-ai-sdd --version                               # → ai-sdd 0.4.0
+ai-sdd --version                               # → ai-sdd 0.5.0
 ```
 
 Using ai-sdd in another repo doesn't require Swift — build the binary once and copy it onto your PATH.

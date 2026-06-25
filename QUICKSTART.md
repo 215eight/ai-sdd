@@ -56,7 +56,7 @@ cp "$(swift build -c release --show-bin-path)/ai-sdd" \
 scope`, so this must succeed anywhere:
 
 ```sh
-ai-sdd --version        # → ai-sdd 0.4.0   (if "command not found", fix your PATH)
+ai-sdd --version        # → ai-sdd 0.5.0   (if "command not found", fix your PATH)
 ai-sdd cheatsheet       # print the diagram-driven workflow cheatsheet — travels with the binary
 ```
 
