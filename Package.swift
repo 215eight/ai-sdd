@@ -22,9 +22,16 @@ let package = Package(
         // Declarative spec types (Codable) + runtime types. No dependencies.
         .target(name: "AISDDModels"),
         // The deterministic engine: spec loader (JSON + YAML), validator, Scheduler, Reducer.
+        // Embeds the framework skills + the `pre-commit` integrity-hook source as bundle resources
+        // (copied via symlinks under Resources/ that point at the repo-root source of truth) so the
+        // binary can reconcile a repo with no source clone. Read back through `Bundle.module`.
         .target(
             name: "AISDDEngine",
-            dependencies: ["AISDDModels", .product(name: "Yams", package: "Yams")]
+            dependencies: ["AISDDModels", .product(name: "Yams", package: "Yams")],
+            resources: [
+                .copy("Resources/skills"),
+                .copy("Resources/hooks")
+            ]
         ),
         // The CLI the agent drives (Mode B): validate / start / next / submit.
         .executableTarget(

@@ -35,6 +35,37 @@ public enum Layout {
     /// The marker file every surfaceable skill must contain.
     static let skillManifestFile = "SKILL.md"
 
+    // MARK: - Embedded-framework resource literals (EmbeddedFramework / Bundle.module)
+    //
+    // The binary embeds the framework skills + the `pre-commit` integrity-hook source as SwiftPM
+    // resources of the `AISDDEngine` target (copied via symlinks under `Sources/AISDDEngine/Resources/`
+    // that point at the repo-root `skills/`/`hooks/` source of truth). These are the names the
+    // resources land under inside `Bundle.module`, kept here so `EmbeddedFramework` and its tests
+    // never inline a path string (the conventions mandate path names live in `Layout.swift`).
+
+    /// The bundled resource directory holding every embedded skill (`<skill>/SKILL.md`), as it appears
+    /// in `Bundle.module`. Matches the `.copy("Resources/skills")` basename in `Package.swift`.
+    public static let embeddedSkillsResourceDir = "skills"
+
+    /// The bundled resource directory holding the integrity-hook source, as it appears in
+    /// `Bundle.module`. Matches the `.copy("Resources/hooks")` basename in `Package.swift`.
+    public static let embeddedHookResourceDir = "hooks"
+
+    /// The integrity-hook file name within the embedded `hooks` resource dir (`hooks/pre-commit`).
+    public static let embeddedHookFile = "pre-commit"
+
+    /// The canonical framework skills embedded by this slice, sorted. The runtime accessor derives the
+    /// live set from the bundle (so it self-updates when a later slice adds a skill); this list is the
+    /// expected-id baseline the tests assert against. `ai-sdd-update` is added by a later slice.
+    public static let embeddedFrameworkSkillIds = [
+        "ai-sdd-bootstrap",
+        "ai-sdd-cheatsheet",
+        "ai-sdd-compile-schema",
+        "ai-sdd-plan",
+        "ai-sdd-plan-program",
+        "ai-sdd-run"
+    ]
+
     /// The agent→native-skill-dir table — the *one* declarative place this mapping lives. Adding a
     /// coding agent is a one-line edit here. Each dir is two levels below the repo root, so every
     /// surfaced symlink shares the same relative target (`skillSurfaceTarget`).

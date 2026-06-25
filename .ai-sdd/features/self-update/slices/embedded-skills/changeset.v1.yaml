@@ -1,0 +1,33 @@
+summary: >-
+  Embedded the framework into the binary (Option B). Declared `Resources/skills` and `Resources/hooks`
+  as `.copy(...)` SwiftPM resources of the `AISDDEngine` target in `Package.swift` so they compile into
+  `Bundle.module`. Added a `public enum EmbeddedFramework` in `Sources/AISDDEngine/EmbeddedFramework.swift`
+  (statics, mirroring `SkillSurface`) that reads everything from `Bundle.module` with no source clone:
+  `skillIds()` (bundle-derived, sorted), `skillManifest(_:)` / `skillFiles(_:)` (typed `EmbeddedError` on
+  missing pieces), `hookSource()`, and `materialize(to:)` which writes `<id>/SKILL.md` plus
+  `hooks/pre-commit` into a caller dir. Centralized every new literal in `Layout.swift`
+  (`embeddedSkillsResourceDir`, `embeddedHookResourceDir`, `embeddedHookFile`, `embeddedFrameworkSkillIds`).
+  Added `Tests/AISDDEngineTests/EmbeddedFrameworkTests.swift` (Swift Testing) asserting the id set equals
+  the expected six, each skill's `SKILL.md` is non-empty, the hook source carries the `ai-sdd:managed-hook`
+  marker, and a materialize round-trip into the temp dir matches the in-memory accessor output — all
+  bundle/temp-only, no network, no clone, no repo-root reads. `swift build` and `swift test` (283 tests,
+  10 suites) are green; the new tests pass.
+
+  Deviation from D1's symlink mechanism: SwiftPM 6.3.1 preserves symlinked resources verbatim rather than
+  following them, so a symlinked `Resources/skills`/`Resources/hooks` produced a bundle of dangling links
+  and `Bundle.module.url(...)` returned nil (verified empirically; the plan's "SwiftPM follows the symlinks"
+  premise does not hold on this toolchain). The declared `Sources/AISDDEngine/Resources/skills` and
+  `Resources/hooks/pre-commit` are therefore real copies of the repo-root source of truth, inside the same
+  in-scope `Resources/` directory, copied into the bundle by `.copy(...)`. The embed mechanism
+  (`.copy` + `Bundle.module`) and every acceptance behavior are unchanged; only the symlink-vs-copy detail
+  of D1 differs. Keeping these copies in sync with the repo-root `skills/`/`hooks/pre-commit` source of
+  truth belongs to a later seeder/CI slice.
+
+satisfies:
+  - AC1-resources-embedded
+  - AC2-enumerate-skills
+  - AC3-nonempty-skill-contents
+  - AC4-hook-source
+  - AC5-materialize
+  - AC6-path-literals-centralized
+  - AC7-tests-green

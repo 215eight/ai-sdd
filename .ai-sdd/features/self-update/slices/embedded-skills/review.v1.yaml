@@ -1,0 +1,98 @@
+schema: review.v1
+run: self-update
+slice: embedded-skills
+
+verdict: approve
+summary: >-
+  Review of slice embedded-skills against feature-plan.v1 (7 acceptance ids) and changeset.v1.
+  Independently verified: swift build clean; swift test 283 tests / 10 suites green; the new
+  EmbeddedFrameworkTests (4 cases) pass; swift run ai-sdd validate .ai-sdd valid. The produced
+  Bundle.module physically contains the `skills` tree (six skill dirs, each with a non-empty
+  SKILL.md) and `hooks/pre-commit` (carrying the `ai-sdd:managed-hook` marker), proving the embed
+  works with no source clone. The D1 symlink->copy deviation is accepted on the merits (see notes):
+  no acceptance id depends on the symlink detail, and the copies are currently byte-for-byte in sync
+  with the repo-root source of truth. All path literals are centralized in Layout.swift; engine logic
+  and tests sit in the conventionally-correct targets. APPROVE.
+
+items:
+  - id: AC1-resources-embedded
+    verdict: pass
+    notes: >-
+      Package.swift declares `.copy("Resources/skills")` and `.copy("Resources/hooks")` on the
+      AISDDEngine target. swift build succeeds; the produced bundle
+      (.build/arm64-apple-macosx/debug/ai-sdd_AISDDEngine.bundle) physically contains the `skills`
+      tree (six skill subdirs, each with SKILL.md — e.g. ai-sdd-bootstrap is 13961 bytes) and
+      hooks/pre-commit. The bundle entries are real files, not dangling links, so the resources are
+      genuinely compiled in. Satisfied.
+  - id: AC2-enumerate-skills
+    verdict: pass
+    notes: >-
+      EmbeddedFramework.skillIds() enumerates the bundled `skills` subdirs that carry a SKILL.md,
+      sorted, reading only via Bundle.module (no repo-root/clone access). Test skillIdsMatchExpected
+      asserts equality with Layout.embeddedFrameworkSkillIds and passes — returning exactly the six
+      ids ai-sdd-bootstrap, ai-sdd-cheatsheet, ai-sdd-compile-schema, ai-sdd-plan, ai-sdd-plan-program,
+      ai-sdd-run.
+  - id: AC3-nonempty-skill-contents
+    verdict: pass
+    notes: >-
+      skillManifest(_:) returns each skill's SKILL.md from the bundle; test
+      everySkillHasNonEmptyManifest iterates every enumerated id and asserts non-empty. Passes;
+      independently confirmed the bundled manifests are sized (e.g. 13961 bytes).
+  - id: AC4-hook-source
+    verdict: pass
+    notes: >-
+      hookSource() returns the bundled pre-commit source. Test hookSourceHasMarker asserts non-empty
+      AND contains the `ai-sdd:managed-hook` marker; passes. Verified independently the bundled hook
+      contains the marker.
+  - id: AC5-materialize
+    verdict: pass
+    notes: >-
+      materialize(to:) writes every skill as skills/<id>/SKILL.md (plus any other carried files,
+      preserving relative layout) and hooks/pre-commit into a caller dir, reading exclusively from the
+      bundle. Test materializeRoundTrips writes to a temp dir and asserts written contents equal the
+      in-memory accessor output for each skill and the hook; passes.
+  - id: AC6-path-literals-centralized
+    verdict: pass
+    notes: >-
+      Layout.swift defines embeddedSkillsResourceDir, embeddedHookResourceDir, embeddedHookFile, and
+      embeddedFrameworkSkillIds. Inspected EmbeddedFramework.swift and EmbeddedFrameworkTests.swift:
+      both reference these (and the pre-existing skillManifestFile) rather than inlining strings.
+      Satisfies the Naming/layering convention.
+  - id: AC7-tests-green
+    verdict: pass
+    notes: >-
+      Independently ran swift build (clean), swift test (283 tests / 10 suites, all green, no
+      regressions), swift test --filter EmbeddedFrameworkTests (4 pass), and
+      swift run ai-sdd validate .ai-sdd (valid). Tests touch only Bundle.module and a temp dir — no
+      network, no clone, no repo-root reads.
+
+conventions:
+  satisfied: true
+  notes: >-
+    EmbeddedFramework lives in Sources/AISDDEngine (engine behavior), tests in
+    Tests/AISDDEngineTests, the typed EmbeddedError replaces any-Error, and every new path/name literal
+    is centralized in Layout.swift — all matching swift.md. Resources copies are currently byte-for-byte
+    in sync with the repo-root skills/ and hooks/pre-commit source of truth (diff -rq across all six
+    skills and the hook: in sync). Minor non-blocking doc-accuracy nit: the header docstrings in
+    EmbeddedFramework.swift and the Layout.swift "Embedded-framework resource literals" comment still
+    describe the symlink mechanism, which is now stale given the copy-based reality; worth correcting in
+    the follow-up sync/seeder slice.
+
+decisions:
+  - id: D1-deviation-ruling
+    notes: >-
+      D1 deviation (symlink -> real copy) ACCEPTED on the merits. SwiftPM 6.3.1 preserves symlinked
+      resources verbatim rather than following them, so the plan's symlink premise would have produced a
+      bundle of dangling links and a non-functional accessor; switching to real copies inside the
+      in-scope Sources/AISDDEngine/Resources/ directory is what makes every acceptance behavior pass. The
+      embed mechanism (.copy + Bundle.module) and the public accessor surface are exactly as planned. No
+      acceptance id depends on the symlink-vs-copy detail, and "no duplication" was a D1 implementation
+      note, not an acceptance criterion.
+  - id: sync-obligation
+    notes: >-
+      CARRIED, non-blocking. The embedded copies under Resources/skills and Resources/hooks/pre-commit
+      are now duplicates of the repo-root source of truth and can drift independently. They are currently
+      in sync. A later seeder/CI slice must keep them resynced; recommend a deterministic check (e.g. a CI
+      step diffing Resources/ against the repo root) so drift is caught automatically.
+
+rework: []

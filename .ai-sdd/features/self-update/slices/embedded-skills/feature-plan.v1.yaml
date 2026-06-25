@@ -1,0 +1,139 @@
+summary: >-
+  Make the `ai-sdd` binary the self-contained carrier of the framework (Option B) by embedding the
+  framework skill set and the `hooks/pre-commit` integrity-hook source into the `AISDDEngine` target as
+  SwiftPM resources compiled into the binary, plus a typed `EmbeddedFramework` accessor in `AISDDEngine`
+  that reads them back out of `Bundle.module` at runtime (in-memory contents) and materializes them to a
+  target directory — so the binary can reconcile a repo with NO source clone on disk. `skills/` and
+  `hooks/pre-commit` at the repo root remain the single source of truth; symlinks under a new
+  `Sources/AISDDEngine/Resources/` directory pull them into the bundle at build time (a SwiftPM-followed
+  symlink copies the real root directories — verified, no extra build script needed). All new path
+  literals (resource subdir names, embedded skill ids, hook resource name) are centralized in
+  `Layout.swift` per the swift conventions. Swift Testing unit tests assert the accessor enumerates the
+  expected skill ids and returns non-empty `SKILL.md` and hook contents purely from the bundled
+  resources (no network, no clone, no repo-root filesystem reads).
+
+scope:
+  in:
+    - Declare `skills/` and `hooks/pre-commit` as SwiftPM resources of the `AISDDEngine` target via
+      `.copy(...)` entries pointing at symlinks under `Sources/AISDDEngine/Resources/` that target the
+      repo-root `skills/` and `hooks/` directories (source of truth unchanged).
+    - A new `EmbeddedFramework` accessor in `AISDDEngine` that, from `Bundle.module`, (a) enumerates the
+      embedded framework skill ids, (b) returns each skill's files as in-memory contents, (c) returns the
+      embedded `pre-commit` hook source, and (d) materializes any/all of these to a caller-supplied
+      directory. No assumption that an ai-sdd source clone exists on disk.
+    - Centralize the new path/name literals (Resources subdir, skills resource dir name, hook resource
+      name, the embedded framework skill id list) in `Layout.swift`.
+    - Swift Testing unit tests in `Tests/AISDDEngineTests` asserting the accessor returns the expected
+      skill ids and non-empty `SKILL.md` + hook contents from the bundle, plus a materialize round-trip
+      to a temp dir.
+  out:
+    - "`ai-sdd seed` / `ai-sdd update` subcommands and any CLI surface (delivered by later slices
+      `seed-command`, `update-check`, `update-apply`, `update-skill`)."
+    - "The `ai-sdd-update` skill (added to the embedded set by the `update-skill` slice — this slice
+      embeds the six skills that exist today)."
+    - Tag-derived versioning / `Version.swift` (`tag-derived-version` slice).
+    - SessionStart hooks, `.ai-sdd/VERSION` stamp, GitHub release wiring, `scripts/` and `.github/`
+      changes (manual-infra, outside factory file scope).
+    - Network access, checksum verification, binary self-replacement.
+
+acceptance:
+  - id: AC1-resources-embedded
+    description: >-
+      `Package.swift` declares the framework skills and the `pre-commit` hook source as resources of the
+      `AISDDEngine` target, and `swift build` succeeds, producing a `Bundle.module` that contains the
+      `skills` directory tree and the hook source.
+  - id: AC2-enumerate-skills
+    description: >-
+      `EmbeddedFramework.skillIds()` (or equivalent accessor) returns exactly the expected framework
+      skill ids — `ai-sdd-bootstrap`, `ai-sdd-cheatsheet`, `ai-sdd-compile-schema`, `ai-sdd-plan`,
+      `ai-sdd-plan-program`, `ai-sdd-run` — read from the bundle with no repo-root or clone filesystem
+      access.
+  - id: AC3-nonempty-skill-contents
+    description: >-
+      For every embedded skill, the accessor returns its `SKILL.md` as non-empty contents read from the
+      bundle.
+  - id: AC4-hook-source
+    description: >-
+      The accessor returns the embedded `pre-commit` hook source as non-empty contents that include the
+      managed-hook marker line (`ai-sdd:managed-hook`).
+  - id: AC5-materialize
+    description: >-
+      A materialize-to-directory helper writes every embedded skill (preserving the `<id>/SKILL.md`
+      layout) and the hook source into a caller-supplied (e.g. temporary) directory, and the written
+      files match the in-memory accessor contents.
+  - id: AC6-path-literals-centralized
+    description: >-
+      The Resources subdir name, the embedded-skills resource dir name, the hook resource name, and the
+      embedded framework skill id list are defined in `Layout.swift`; the accessor and tests reference
+      those literals rather than inlining strings.
+  - id: AC7-tests-green
+    description: >-
+      `swift build` and `swift test` are green; the new Swift Testing unit tests for the accessor pass
+      with no network and no source clone present.
+
+decisions:
+  - id: D1-bundling-mechanism
+    status: closed
+    decision: >-
+      Embed via SwiftPM `resources: [.copy(...)]` on the existing `AISDDEngine` target, reading them at
+      runtime through `Bundle.module`. Because `skills/` and `hooks/` are repo-root siblings of
+      `Sources/` and SwiftPM requires resources to live within the target's directory tree, the
+      implementer creates a `Sources/AISDDEngine/Resources/` directory containing two symlinks
+      (`skills -> ../../../skills` and `hooks -> ../../../hooks`) and declares `.copy("Resources/skills")`
+      and `.copy("Resources/hooks")`. SwiftPM follows the symlinks and copies the real root directories
+      into `Bundle.module` at build time. Verified empirically: a target with a symlinked `Resources/`
+      subdir copies the real directory tree into the bundle and builds cleanly. This keeps the repo-root
+      `skills/` and `hooks/pre-commit` as the single source of truth (no duplicated content, no extra
+      gen script). Rejected: a separate `path: "."` resource target (overlaps `Sources/`, invalid);
+      copying skill content into the target (duplicates source of truth, drift risk).
+  - id: D2-accessor-location-and-shape
+    status: closed
+    decision: >-
+      The accessor lives in a new file `Sources/AISDDEngine/EmbeddedFramework.swift` as a `public enum
+      EmbeddedFramework` with static members (mirroring the existing `SkillSurface` deterministic-helper
+      style). Surface: `skillIds() -> [String]` (sorted), a per-skill files/`SKILL.md` accessor returning
+      manifest contents, `hookSource() -> Data` for the `pre-commit` source, and
+      `materialize(to: URL, ...) throws` to write skills (as `<id>/SKILL.md`) and the hook into a target
+      dir. All reads go through `Bundle.module`; the type makes no assumption that a source clone exists
+      on disk. Rejected: putting it on the CLI target (engine logic belongs in `AISDDEngine` per
+      conventions) or an instance type (existing deterministic helpers are enums of statics).
+  - id: D3-skill-set-scope
+    status: closed
+    decision: >-
+      Embed the six framework skills that exist in `skills/` today (`ai-sdd-bootstrap`,
+      `ai-sdd-cheatsheet`, `ai-sdd-compile-schema`, `ai-sdd-plan`, `ai-sdd-plan-program`, `ai-sdd-run`).
+      The seventh, `ai-sdd-update`, is added to the set by the later `update-skill` slice and is out of
+      scope here. The runtime enumeration is derived from the bundle contents (subdirs of the bundled
+      `skills` dir), with the canonical expected-id list centralized in `Layout.swift` so tests assert
+      against it; this keeps the set self-updating when `update-skill` adds its skill while still being
+      explicitly testable.
+  - id: D4-path-literal-centralization
+    status: closed
+    decision: >-
+      Add to `Layout.swift`: the Resources subdir name and the two bundled resource directory names
+      (e.g. `embeddedSkillsResourceDir = "skills"`, `embeddedHookResourceDir = "hooks"`, hook file name
+      `pre-commit`), and the canonical expected framework-skill id list. The accessor and tests reference
+      these rather than inlining strings, satisfying the `Naming/layering` convention (path names
+      centralized in `Layout.swift`).
+  - id: D5-tests-bundle-only
+    status: closed
+    decision: >-
+      Add a new test file `Tests/AISDDEngineTests/EmbeddedFrameworkTests.swift` using Swift Testing
+      (`@Test`/`#expect`/`#require`, `@testable import AISDDEngine`) that asserts: skill ids equal the
+      expected set, each skill's `SKILL.md` is non-empty, the hook source is non-empty and contains the
+      managed-hook marker, and a materialize round-trip into `FileManager`'s temp dir writes the expected
+      files whose contents equal the in-memory accessor output. Tests touch only the bundle and a temp
+      dir — no network, no clone, no repo-root reads.
+
+files:
+  - Package.swift
+  - Sources/AISDDEngine/EmbeddedFramework.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Sources/AISDDEngine/Resources/
+  - Tests/AISDDEngineTests/EmbeddedFrameworkTests.swift
+
+tests:
+  - swift build
+  - swift test
+  - swift test --filter EmbeddedFrameworkTests
+  - swift run ai-sdd validate .ai-sdd
