@@ -42,6 +42,11 @@ private func versionStampURL() -> URL {
     workspace().appendingPathComponent(Layout.versionStampPath)
 }
 
+/// The on-PATH install path of the running binary (`~/.local/bin/ai-sdd`) the apply path self-replaces.
+private func updateInstallURL() -> URL {
+    Layout.updateInstallURL(home: FileManager.default.homeDirectoryForCurrentUser)
+}
+
 /// Print the shared stderr update banner: read ONLY the cached verdict (never fetch) plus the DC5
 /// drift state, render via `UpdateBanner`, and write each line to stderr — never stdout — so a
 /// command's `--json` stdout stays clean. Wired into `status` and `next`. Fully fail-soft: a missing
@@ -827,10 +832,9 @@ struct Update: ParsableCommand {
     @Flag(name: .long, help: "Detect-only: print a stderr notice if a newer release exists, then exit 0 (fail-soft).")
     var check = false
 
-    func run() {
+    func run() throws {
         guard check else {
-            // The apply path lands in the update-apply slice; until then bare `update` is a no-op hint.
-            print("ai-sdd update: apply mode not yet implemented — use `ai-sdd update --check`")
+            try runApply()
             return
         }
 
@@ -841,6 +845,64 @@ struct Update: ParsableCommand {
             cacheFile: updateCacheURL(), fetcher: UpdateCheck.urlSession)
         emitUpdateBanner()
     }
+
+    /// The bare-`ai-sdd update` apply path: resolve → download → verify → atomic self-replace →
+    /// reseed via `UpdateApply`, binding the real network / filesystem / home + cwd / reseed seams and
+    /// the injected running version (`AISDDVersion.current`). The success summary + already-up-to-date
+    /// message go to STDERR (never stdout); a typed failure becomes a clear stderr line + a non-zero
+    /// exit. The engine owns the flow; the CLI owns the concrete URLs and `Seeder.reconcile`.
+    private func runApply() throws {
+        let workspaceURL = workspace()
+        let workDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai-sdd-update-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: workDir) }
+
+        do {
+            let outcome = try UpdateApply.apply(
+                runningVersion: AISDDVersion.current,
+                installPath: updateInstallURL(),
+                workDir: workDir,
+                reseed: { version in
+                    _ = try Seeder.reconcile(target: workspaceURL, version: version)
+                })
+            switch outcome {
+            case let .alreadyUpToDate(running, _):
+                stderr("ai-sdd \(running) is already up to date.")
+            case let .applied(from, to):
+                stderr("✓ updated ai-sdd \(from) -> \(to) (binary replaced, factory reseeded).")
+            }
+        } catch let error as UpdateApply.ApplyError {
+            stderr("✗ ai-sdd update failed: \(message(for: error))")
+            throw ExitCode.failure
+        }
+    }
+
+    /// One clear one-line stderr message per typed apply error (D5).
+    private func message(for error: UpdateApply.ApplyError) -> String {
+        switch error {
+        case .assetResolutionFailed:
+            return "could not resolve the latest release (offline, no published release, or missing asset)."
+        case let .runningVersionUnparseable(version):
+            return "the running version '\(version)' is a dev build — cannot self-update."
+        case let .downloadFailed(which):
+            return "failed to download the \(which)."
+        case .checksumMalformed:
+            return "the checksum sidecar was malformed."
+        case let .checksumMismatch(expected, actual):
+            return "checksum mismatch — aborted (expected \(expected), got \(actual)); binary unchanged."
+        case .extractFailed:
+            return "failed to extract the release archive."
+        case .moveFailed:
+            return "failed to replace the binary; the current binary is unchanged."
+        case .reseedFailed:
+            return "the binary was replaced but reseeding failed — run `ai-sdd seed`."
+        }
+    }
+}
+
+/// Write a single line to stderr (never stdout), so a command's `--json` stdout stays clean.
+private func stderr(_ line: String) {
+    FileHandle.standardError.write(Data("\(line)\n".utf8))
 }
 
 // MARK: - drift

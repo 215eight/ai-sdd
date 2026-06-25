@@ -1,0 +1,146 @@
+schema: review.v1
+run: self-update
+slice: update-apply
+
+verdict: approve
+
+summary: >-
+  The apply half of `ai-sdd update` is implemented cleanly and matches the plan's acceptance contract.
+  A pure AISDDEngine helper (UpdateApply) drives resolve -> up-to-date-check -> download -> sha256
+  verify -> extract -> atomic same-dir self-replace -> reseed entirely over injected seams
+  (AssetResolver, Downloader, Checksum, Extractor, Mover, Reseeder), with a typed ApplyError enum and
+  an Outcome (alreadyUpToDate / applied). The two safety-critical invariants hold and are genuinely
+  asserted on real bytes: the sha256 verify happens BEFORE any extract/move (step 4 of 7), aborting
+  fail-closed with the install-path binary byte-for-byte unchanged and no reseed / VERSION rewrite;
+  and the self-replace stages a temp file in the SAME dir as the target then renames it (the single
+  commit point), so any pre-rename failure leaves the original binary intact. UpdateCheck is extended
+  with a typed ResolvedAssets + AssetResolver seam and a pure resolveAssets(from:) parser. All asset /
+  sidecar / install-path literals are centralized in Layout. The CLI fills the bare-update branch:
+  binds the real seams + AISDDVersion.current + Seeder.reconcile, routes the vCURRENT -> vLATEST
+  summary and every message to STDERR only, and maps each typed error to a clear one-line message +
+  non-zero exit. swift build, full swift test (320 tests incl. UpdateApplyTests), and
+  swift run ai-sdd validate .ai-sdd are all green. Conventions hold. APPROVE.
+
+items:
+  - id: resolve-assets
+    verdict: pass
+    notes: >-
+      UpdateCheck.resolveAssets(from:) parses tag_name + the two named assets' browser_download_url
+      into a typed ResolvedAssets; a missing tag or either missing asset yields nil. The injected
+      AssetResolver returning nil surfaces as the typed ApplyError.assetResolutionFailed (never a
+      crash) in apply() step 1. Tests resolveAssetsFromFixturePayload, resolveAssetsMissingSidecarYieldsNil,
+      resolveAssetsMissingTagYieldsNil, and assetResolutionFailureSurfacesTypedError all pass.
+  - id: checksum-verify-pass
+    verdict: pass
+    notes: >-
+      Success path: downloader returns tarball + a sidecar whose recorded sha256 matches; apply()
+      extracts via the injected extractor, atomically moves the unpacked binary onto the install path,
+      and invokes reseed once with the stamped tag. successPathReplacesBinaryAndReseedsOnce asserts the
+      install file now holds the new binary fixture bytes, outcome == .applied(from: 0.5.0, to: 0.6.0),
+      and reseeder.calls == ["0.6.0"].
+  - id: checksum-mismatch-aborts
+    verdict: pass
+    notes: >-
+      CRITICAL. Verify (step 4) precedes extract (5) and move (6); on mismatch apply() throws
+      ApplyError.checksumMismatch BEFORE touching the install path. checksumMismatchAbortsBinaryUntouched
+      asserts on REAL bytes that the install file still equals the original, that the extractor was
+      never invoked (extractorCalled.value == false), and that reseed was not called — i.e. it asserts
+      "binary untouched", not merely that an error threw. VERSION is only stamped via the post-move
+      reseed hook, so it is also untouched. The CLI maps this to an explicit checksum-mismatch stderr
+      message + non-zero exit.
+  - id: download-failure-aborts
+    verdict: pass
+    notes: >-
+      A nil from the tarball or sidecar download throws ApplyError.downloadFailed(which:) before any
+      extract / move / reseed. tarballDownloadFailureAbortsUntouched asserts original install bytes
+      preserved and no reseed; sidecarDownloadFailureAborts covers the sidecar branch. The CLI exits
+      non-zero with a clear message.
+  - id: atomic-replace-same-dir
+    verdict: pass
+    notes: >-
+      fileSystemMover stages .ai-sdd-update-<uuid> in target.deletingLastPathComponent() (same dir ->
+      atomic rename on one filesystem), copies + chmods 0755, then replaceItemAt (or moveItem if the
+      target is absent); any error removes the staged temp and throws moveFailed, leaving the target
+      intact. The rename is the single commit point; verify/download/extract all precede it.
+      moveFailureLeavesOriginalIntact injects a failing mover and asserts the original install bytes are
+      preserved and no reseed ran.
+  - id: version-stamp-after-replace
+    verdict: pass
+    notes: >-
+      stampedVersion(forTag:) normalizes the resolved tag to X.Y.Z (strips a single leading v),
+      matching the verbatim form Seeder.stampVersion writes to .ai-sdd/VERSION. apply() passes this to
+      reseed only after a committed move. reseedReceivesStampedTagForm asserts a v2.0.0 tag reseeds as
+      2.0.0; the CLI binds reseed to Seeder.reconcile(target:version:) which stamps VERSION with that
+      value.
+  - id: already-up-to-date-noop
+    verdict: pass
+    notes: >-
+      apply() compares the resolved tag to the running version via SemanticVersion; not strictly newer
+      returns .alreadyUpToDate with no download / extract / move / reseed. alreadyUpToDateIsNoOp asserts
+      the downloader was never called, no reseed, and the install path was never created. The CLI prints
+      a clear message and exits 0. (Bonus: a dev / unparseable running version fails closed via
+      runningVersionUnparseable, asserted by devRunningVersionFailsClosed and mapped to a non-zero exit.)
+  - id: summary-to-stderr
+    verdict: pass
+    notes: >-
+      The CLI runApply routes the "✓ updated ai-sdd <from> -> <to>" summary, the already-up-to-date
+      line, and every failure message through stderr(_:) (FileHandle.standardError) — never stdout —
+      mirroring the update-check banner discipline, keeping a command's --json stdout clean.
+  - id: build-and-test-green
+    verdict: pass
+    notes: >-
+      Verified after ./scripts/gen-version.sh: swift build complete; swift test 320 tests in 14 suites
+      passed (UpdateApplyTests suite green); swift run ai-sdd validate .ai-sdd reports valid (3 nodes,
+      3 edges, 4 workers, 8 checks). Tests use Swift Testing (@Test / #expect / #require) with exact
+      typed ApplyError equality and exercise every path over injected seams + UUID temp dirs — no real
+      network, no real ~/.local/bin.
+
+conventions:
+  satisfied: true
+  notes: >-
+    Engine behavior in Sources/AISDDEngine (UpdateApply + UpdateCheck additions), CLI surface + all I/O
+    in Sources/AISDDCLI, tests in Tests/AISDDEngineTests using Swift Testing. The engine does NOT
+    import the gitignored CLI version product; runningVersion is injected as a String (AISDDVersion
+    appears only in doc comments). All asset/sidecar names and install-path segments are centralized in
+    Layout.swift (updateAssetName, updateAssetChecksumName, updateInstallDir, updateInstallBinaryName,
+    updateInstallURL) and referenced via Layout, never inline. Uses an exact typed ApplyError enum
+    (Equatable/Sendable) rather than any Error, per the test convention.
+  seam_defaults_note: >-
+    The engine ships default real seam impls (urlSessionDownloader, defaultChecksum, tarExtractor,
+    fileSystemMover) as statics, whereas D1's prose says "the CLI binds the real implementations".
+    Judged NOT a defect: this exactly mirrors the already-accepted UpdateCheck pattern (which ships
+    urlSession / urlSessionAssetResolver as engine statics), the engine stays pure by construction
+    (apply() takes all seams as parameters; tests inject fakes and never exercise the defaults), and the
+    CLI genuinely binds the impure boundaries it owns (Seeder.reconcile, the concrete install URL under
+    the user home, and the temp workDir).
+
+decisions:
+  - id: checksum-abort-safety-verified
+    notes: >-
+      Confirmed the order in apply(): (4) verify sha256 throws checksumMismatch BEFORE (5) extract and
+      (6) move; the test asserts the pre-existing install binary is byte-for-byte unchanged AND the
+      extractor was never called — a genuine untouched-binary assertion, not just an error-thrown check.
+  - id: atomic-replace-single-commit-point
+    notes: >-
+      The mover stages in the SAME dir as the target then renames (replaceItemAt / moveItem), with the
+      rename as the single commit point; a staging/move failure removes the temp and throws moveFailed,
+      and moveFailureLeavesOriginalIntact proves the original bytes survive. VERSION is stamped only by
+      the post-move reseed hook, so every pre-rename abort path leaves VERSION untouched.
+  - id: engine-purity-and-no-real-effects
+    notes: >-
+      apply() drives all effects through injected closures; tests use fakes + UUID temp dirs and a
+      pre-seeded temp install file, so no test hits the real network or real ~/.local/bin. The engine
+      never imports the gitignored CLI version product.
+
+caveats:
+  - >-
+    The live download round-trip is correctly out of scope (no published GitHub release yet;
+    release.yml is manual infra). Acceptance is judged over the injected seams + unit tests, to be
+    validated live at the m2 milestone once a release is published.
+  - >-
+    Working tree is on branch dashboard-canonical-snapshot (not the run's working branch), with
+    UpdateApply.swift / UpdateApplyTests.swift as untracked-new and Layout/UpdateCheck/CLI modified.
+    The implementation under review is fully present and green; flagging the branch state for the
+    committer of this slice.
+
+rework: []

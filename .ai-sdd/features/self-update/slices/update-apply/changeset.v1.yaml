@@ -1,0 +1,30 @@
+summary: >-
+  Implemented the apply half of `ai-sdd update` (bare, no `--check`). Added a pure `UpdateApply`
+  engine enum driving resolve -> up-to-date-check -> download -> sha256-verify -> extract ->
+  atomic same-dir self-replace -> reseed entirely over injected seams (AssetResolver, Downloader,
+  Checksum, Extractor, Mover, Reseeder), with a typed `ApplyError` enum and an `Outcome`
+  (alreadyUpToDate / applied). Checksum mismatch and every pre-rename failure abort fail-closed,
+  leaving the install-path binary and `.ai-sdd/VERSION` byte-for-byte untouched. Extended
+  `UpdateCheck` with a typed `ResolvedAssets` plus an `AssetResolver` seam (and a pure
+  `resolveAssets(from:)` parser) that turns the same anonymous `releases/latest` payload into the
+  tarball + `.sha256` download URLs. Centralized the asset / sidecar / install-path literals in
+  `Layout`. Filled the bare-`update` branch in the CLI: it binds the real URLSession/CryptoKit/tar/
+  FileManager/`Seeder.reconcile` seams and `AISDDVersion.current`, prints the `vCURRENT -> vLATEST`
+  summary (and the already-up-to-date / failure messages) to STDERR, and maps each typed error to a
+  clear one-line stderr message + a non-zero ExitCode. Added Swift Testing coverage over injected
+  seams + temp dirs (no real network, no real `~/.local/bin`): asset resolution, success replace +
+  single reseed with the stamped tag, checksum mismatch abort (binary untouched, no extract/reseed),
+  tarball/sidecar download failure, move-seam failure (original intact), already-up-to-date no-op,
+  dev-build fail-closed, and sidecar sha256 parsing. `swift build`, `swift test` (320 tests), and
+  `swift run ai-sdd validate .ai-sdd` are all green.
+
+satisfies:
+  - resolve-assets
+  - checksum-verify-pass
+  - checksum-mismatch-aborts
+  - download-failure-aborts
+  - atomic-replace-same-dir
+  - version-stamp-after-replace
+  - already-up-to-date-noop
+  - summary-to-stderr
+  - build-and-test-green

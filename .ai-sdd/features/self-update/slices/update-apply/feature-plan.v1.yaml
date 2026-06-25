@@ -1,0 +1,181 @@
+summary: >-
+  Implement the apply half of `ai-sdd update` (bare, no `--check`): resolve the latest GitHub
+  release's macOS universal tarball + its sha256 sidecar for `215eight/ai-sdd`, download both to a
+  temp dir, verify the checksum and ABORT fail-closed on mismatch (current binary and `.ai-sdd/VERSION`
+  left untouched), self-replace the on-PATH binary at `~/.local/bin/ai-sdd` via an atomic same-dir
+  rename, then re-run `Seeder.reconcile` to refresh skills/hooks and stamp the new `.ai-sdd/VERSION`.
+  A concise `vCURRENT -> vLATEST` summary goes to stderr; any download/checksum/extract/move failure
+  exits non-zero with a clear message; an already-up-to-date binary is a no-op with a clear message.
+  All effects (asset-URL resolution, byte download, checksum, archive extraction, filesystem move,
+  reseed) run on INJECTED seams so tests exercise success / checksum-mismatch / download-failure /
+  no-op paths over fixtures with NO real network and NO touching of the real `~/.local/bin`. The
+  engine stays pure: it never references the gitignored CLI version product, never calls `Date()` /
+  `URLSession` directly, and never reaches the real home — the CLI binds all of those.
+
+scope:
+  in:
+    - "A new pure engine helper `UpdateApply` in Sources/AISDDEngine/ (a public enum of statics,
+       shaped like UpdateCheck / Seeder), driving resolve -> download -> verify -> extract ->
+       atomic-move -> reseed entirely over injected seams."
+    - "Extending the existing releases/latest resolution / ReleaseFetcher seam from UpdateCheck so the
+       same anonymous endpoint also yields the tarball + .sha256 asset download URLs (a typed
+       ResolvedAssets)."
+    - "New Layout literals: the asset file name ai-sdd-macos-universal.tar.gz, its .sha256 sidecar name,
+       and the on-PATH install path segments .local/bin/ai-sdd (the CLI resolves the concrete URL under
+       the user home)."
+    - "Filling the bare-update placeholder branch in the Update command in Sources/AISDDCLI/CLI.swift to
+       call UpdateApply, binding the real network / filesystem / home dir / reseed seams and the injected
+       version (AISDDVersion.current); printing the summary to stderr and mapping a typed failure to a
+       non-zero ExitCode with a clear message."
+    - "A typed error model + result type (already-up-to-date no-op vs applied-update) the CLI maps to
+       exit codes and messages."
+    - "New Swift Testing tests under Tests/AISDDEngineTests/ covering: success path (binary replaced,
+       reseed invoked, new VERSION stamped), checksum mismatch -> abort with binary + VERSION
+       untouched, download failure, asset-resolution failure, and already-up-to-date no-op."
+  out:
+    - "The /ai-sdd-update confirmation wrapper skill + its standalone reseed commit (next slice
+       update-skill)."
+    - "The `ai-sdd update --check` detect path and the stderr banner (already shipped in update-check;
+       this slice does not change them, only reuses the resolver seam)."
+    - "Manual release infrastructure: .github/workflows/release.yml, scripts/release.sh,
+       scripts/gen-version.sh — outside the factory's declarable file scope; not built here."
+    - "PATH / shell-rc edits (first-install only). Update only swaps the binary file."
+    - "macOS code signing / notarization; Linux / Windows binaries."
+    - "A live end-to-end download round-trip against a real published release — there is no published
+       release yet (release.yml is manual infra not built in this slice), so acceptance is expressed
+       over the injected seams + a structured dry sequence, validated live at the m2 milestone once a
+       release is published."
+
+acceptance:
+  - id: resolve-assets
+    description: >-
+      Given a releases/latest JSON payload (fixture) for 215eight/ai-sdd, the resolver returns a typed
+      ResolvedAssets carrying the latest tag plus the download URLs for the ai-sdd-macos-universal.tar.gz
+      asset and its .sha256 sidecar. A payload missing either asset, or a non-200 / malformed body (via
+      the injected fetcher), yields a typed resolution failure that the apply flow surfaces as a clear
+      non-zero error — not a crash.
+  - id: checksum-verify-pass
+    description: >-
+      On the success path (injected downloader returns tarball bytes plus a sidecar whose recorded sha256
+      matches the tarball), UpdateApply proceeds: it extracts via the injected extractor, atomically moves
+      the unpacked binary into the injected install path, and invokes the injected reseed hook with the
+      resolved target version. The test asserts the install path now holds the new binary fixture and the
+      reseed hook was called exactly once with the expected version.
+  - id: checksum-mismatch-aborts
+    description: >-
+      When the downloaded sidecar's sha256 does NOT match the tarball bytes, UpdateApply aborts
+      fail-closed BEFORE any move: it throws a typed checksum-mismatch error, the pre-existing binary at
+      the install path is byte-for-byte unchanged, no reseed hook is invoked, and .ai-sdd/VERSION is not
+      rewritten. The CLI maps this to a non-zero exit with an explicit checksum-mismatch message.
+  - id: download-failure-aborts
+    description: >-
+      When the injected downloader fails for the tarball or the sidecar (returns nil / throws), the flow
+      aborts with a typed download error, performs no extract / move / reseed, leaves the current binary
+      and .ai-sdd/VERSION untouched, and the CLI exits non-zero with a clear message.
+  - id: atomic-replace-same-dir
+    description: >-
+      The self-replace writes the new binary to a temp file in the SAME directory as the target install
+      path and then renames it into place (atomic on a single filesystem); a failure during staging
+      (before the rename) leaves the original target file intact. A test exercising a move-seam failure
+      asserts the original install-path bytes are preserved and a typed move error is thrown.
+  - id: version-stamp-after-replace
+    description: >-
+      After a successful replace, the reseed hook is invoked with the version derived from the resolved
+      release tag (normalized to the stamp form Seeder writes), so the new .ai-sdd/VERSION reflects the
+      just-installed release. The test asserts the version passed to the injected reseed hook equals the
+      resolved tag's stamped form.
+  - id: already-up-to-date-noop
+    description: >-
+      When the resolved latest release is not strictly newer than the running version (reusing the same
+      SemanticVersion comparison as UpdateCheck), UpdateApply performs NO download / extract / move /
+      reseed and returns an already-up-to-date outcome; the CLI prints a clear already-up-to-date message
+      and exits 0.
+  - id: summary-to-stderr
+    description: >-
+      A successful apply prints a concise vCURRENT -> vLATEST summary line to STDERR (never stdout),
+      mirroring the update-check banner's stderr discipline, so a command's --json stdout stays clean.
+  - id: build-and-test-green
+    description: >-
+      swift build, swift test, and swift run ai-sdd validate .ai-sdd are green; the new tests use Swift
+      Testing (@Test / #expect / #require) with exact typed errors and exercise every path over injected
+      seams and temp dirs (no real network, no real ~/.local/bin).
+
+decisions:
+  - id: D1-seams
+    question: "What injected seams drive the apply flow so the engine stays pure and tests never hit the network or the real install path?"
+    answer: >-
+      UpdateApply takes injected closures mirroring UpdateCheck's ReleaseFetcher and CheckRunner.shell
+      style: (1) an asset resolver / ReleaseFetcher that turns the releases/latest URL into a typed
+      ResolvedAssets (tag + tarball URL + sidecar URL); (2) a Downloader (URL -> Data?, or throwing)
+      fetching raw bytes for a URL; (3) a checksum verifier computing the sha256 of bytes and comparing
+      it to the parsed sidecar value (default uses CryptoKit SHA256); (4) an archive extractor
+      (tarballURL, destDir -> binaryURL) (default shells tar via the CheckRunner.shell pattern); (5) a
+      filesystem mover performing the same-dir temp-write-then-rename. The CLI binds the real
+      implementations (URLSession, CryptoKit, tar, FileManager); tests inject fakes that return fixtures
+      and count invocations. No real network and no real ~/.local/bin in any test.
+    status: closed
+  - id: D2-atomic-replace
+    question: "What is the self-replace strategy and the partial-failure guarantee?"
+    answer: >-
+      Stage the unpacked binary to a temp file in the SAME directory as the target install path, then
+      atomically rename it over the target (FileManager.replaceItemAt / POSIX rename) — atomic on a single
+      filesystem and safe while the current process runs (it replaces the file, not the running image).
+      Any failure before the rename (download / checksum / extract / staging) leaves the current binary
+      and .ai-sdd/VERSION byte-for-byte untouched; the rename is the single commit point.
+    status: closed
+  - id: D3-version-stamp
+    question: "How is the version to stamp derived after the replace?"
+    answer: >-
+      From the resolved release tag (normalized to the same X.Y.Z stamp form Seeder.stampVersion writes),
+      passed to the injected reseed hook. This avoids spawning the just-installed binary to ask its
+      --version (an extra process + a seam that would touch the real filesystem); the tag is the
+      authoritative version the release publishes and the engine already parses tags with SemanticVersion.
+    status: closed
+  - id: D4-reseed-hook
+    question: "How does the engine re-run seeding after replacing the binary without depending on the CLI?"
+    answer: >-
+      The reseed is an injected hook (version: String) throws -> Void (the CLI binds it to
+      Seeder.reconcile(target: cwd, version:)). The engine never imports the gitignored CLI version
+      product; the CLI supplies both the running version (AISDDVersion.current, for the up-to-date
+      comparison and the summary's vCURRENT) and the reseed closure. Tests inject a recording hook.
+    status: closed
+  - id: D5-error-model
+    question: "What is the typed error model and how does the CLI map it to exit codes / messages?"
+    answer: >-
+      A single typed enum on UpdateApply (per the swift conventions: exact errors, not any Error) with
+      cases for asset-resolution failure, download failure, checksum mismatch, extract failure, and move
+      failure; plus a non-error already-up-to-date outcome carried in the result type. The CLI catches the
+      typed error, writes a one-line clear message to stderr, and throws ExitCode.failure (non-zero). The
+      already-up-to-date and success outcomes exit 0.
+    status: closed
+  - id: D6-layout-literals
+    question: "Where do the asset name, sidecar name, and install path live?"
+    answer: >-
+      In Layout.swift (the conventions mandate all on-disk path / artifact names live there, never
+      inline): the asset file name ai-sdd-macos-universal.tar.gz, its .sha256 sidecar name (derived from
+      the asset name), and the install path segments .local/bin/ai-sdd (the CLI resolves the concrete URL
+      under FileManager.homeDirectoryForCurrentUser, mirroring how it binds the update-cache URL). The
+      engine references these literals via Layout, never inline strings.
+    status: closed
+  - id: D7-test-strategy
+    question: "What is the test strategy given there is no published release to download from?"
+    answer: >-
+      Swift Testing over injected seams + temp dirs only. Fixtures stand in for the release JSON, the
+      tarball bytes, and the sidecar; the success path uses a sidecar whose sha256 matches the tarball
+      fixture, the mismatch path uses a deliberately wrong sidecar. A pre-seeded temp install-path file
+      stands in for the current ~/.local/bin/ai-sdd so the untouched-on-abort invariant is asserted on
+      real bytes. The live download round-trip is explicitly NOT smoke-tested here (no published release);
+      it is validated at the m2 milestone once release.yml publishes an artifact.
+    status: closed
+
+files:
+  - "Sources/AISDDEngine/UpdateApply.swift"
+  - "Sources/AISDDEngine/UpdateCheck.swift"
+  - "Sources/AISDDEngine/Layout.swift"
+  - "Sources/AISDDCLI/CLI.swift"
+  - "Tests/AISDDEngineTests/UpdateApplyTests.swift"
+
+tests:
+  - "swift build"
+  - "swift test"
+  - "swift run ai-sdd validate .ai-sdd"

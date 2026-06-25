@@ -39,6 +39,83 @@ public enum UpdateCheck {
     /// single-wall-clock-boundary pattern in `GraphRenderer` / dashboards).
     public typealias Clock = @Sendable () -> Date
 
+    // MARK: - Resolved assets (apply-path seam)
+
+    /// The typed result of resolving `releases/latest` into the download URLs the apply path needs:
+    /// the latest tag plus the URLs of the macOS universal tarball asset and its `.sha256` sidecar.
+    /// `UpdateApply` drives the apply flow over this; `UpdateCheck`'s detect path keeps using the
+    /// lighter `ReleaseFetcher` (tag only).
+    public struct ResolvedAssets: Equatable, Sendable {
+        /// The release tag (`tag_name`, e.g. `v0.6.0`) — the authoritative version the release ships.
+        public let tag: String
+        /// The browser download URL of the `ai-sdd-macos-universal.tar.gz` asset.
+        public let tarballURL: URL
+        /// The browser download URL of the asset's `.sha256` checksum sidecar.
+        public let checksumURL: URL
+
+        public init(tag: String, tarballURL: URL, checksumURL: URL) {
+            self.tag = tag
+            self.tarballURL = tarballURL
+            self.checksumURL = checksumURL
+        }
+    }
+
+    /// The apply-path resolver seam: turn the `releases/latest` `url` into a typed `ResolvedAssets`,
+    /// or `nil` on ANY failure (offline, non-200, malformed JSON, either asset missing). Mirrors
+    /// `ReleaseFetcher`'s injected-closure shape; the apply flow surfaces a `nil` as a typed
+    /// resolution error (never a crash). The default (`urlSessionAssetResolver`) performs the same
+    /// anonymous GET as `urlSession` and parses `tag_name` + the named assets' `browser_download_url`.
+    public typealias AssetResolver = @Sendable (_ url: URL) -> ResolvedAssets?
+
+    /// The default `AssetResolver`: an anonymous GET of `releases/latest`, parsing `tag_name` and the
+    /// `assets[]` array for the two named asset download URLs. Any error (launch, non-200, empty body,
+    /// malformed JSON, a missing asset) collapses to `nil`. Reuses the same request shape as `urlSession`.
+    public static let urlSessionAssetResolver: AssetResolver = { url in
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue(Layout.updateUserAgent, forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 5
+
+        final class Box: @unchecked Sendable { var payload: Data? }
+        let box = Box()
+        let semaphore = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+            if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+                box.payload = data
+            }
+            semaphore.signal()
+        }
+        task.resume()
+        semaphore.wait()
+
+        guard let payload = box.payload,
+              let obj = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
+            return nil
+        }
+        return resolveAssets(from: obj)
+    }
+
+    /// Parse a `releases/latest` JSON object into `ResolvedAssets`, or `nil` if `tag_name` is missing
+    /// or either named asset (the tarball or its `.sha256` sidecar) has no parseable download URL.
+    /// Pure over the decoded object so tests can drive the resolver from a fixture without a network.
+    static func resolveAssets(from obj: [String: Any]) -> ResolvedAssets? {
+        guard let tag = obj["tag_name"] as? String, !tag.isEmpty,
+              let assets = obj["assets"] as? [[String: Any]] else { return nil }
+
+        func downloadURL(named name: String) -> URL? {
+            for asset in assets where (asset["name"] as? String) == name {
+                if let raw = asset["browser_download_url"] as? String, let u = URL(string: raw) {
+                    return u
+                }
+            }
+            return nil
+        }
+
+        guard let tarballURL = downloadURL(named: Layout.updateAssetName),
+              let checksumURL = downloadURL(named: Layout.updateAssetChecksumName) else { return nil }
+        return ResolvedAssets(tag: tag, tarballURL: tarballURL, checksumURL: checksumURL)
+    }
+
     // MARK: - Cache record
 
     /// The small JSON object persisted at `~/.cache/ai-sdd/last-check`: the last fetch timestamp and

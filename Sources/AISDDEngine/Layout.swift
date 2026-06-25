@@ -278,6 +278,36 @@ public enum Layout {
         home.appendingPathComponent(updateCacheDir, isDirectory: true)
             .appendingPathComponent(updateCacheFile)
     }
+
+    // MARK: - Update-apply asset / install-path literals (UpdateApply)
+    //
+    // The release-asset file names the apply path downloads and the on-PATH install location it
+    // self-replaces. Centralized here (one place per literal, per the conventions) so the engine
+    // never inlines a path/name string; the CLI resolves the concrete install URL under the user
+    // home, mirroring how it binds the update-cache URL.
+
+    /// The macOS universal release-asset file name the apply path downloads from `releases/latest`.
+    /// `release.yml` (manual infra, out of this slice's scope) publishes this asset name.
+    public static let updateAssetName = "ai-sdd-macos-universal.tar.gz"
+
+    /// The checksum sidecar file name for the asset — the asset name plus a `.sha256` extension. The
+    /// resolver matches the release asset whose name equals this; its body is the expected sha256.
+    public static let updateAssetChecksumName = "\(updateAssetName).sha256"
+
+    /// The on-PATH install directory segment under the user home (`~/.local/bin`). The CLI resolves
+    /// the concrete dir under `FileManager.homeDirectoryForCurrentUser`.
+    public static let updateInstallDir = ".local/bin"
+
+    /// The installed binary file name (`ai-sdd`) inside the install dir.
+    public static let updateInstallBinaryName = "ai-sdd"
+
+    /// The on-PATH install path of the binary under the user's home (`~/.local/bin/ai-sdd`). The
+    /// apply path self-replaces this file via a same-dir temp-write-then-rename. Injected into the
+    /// engine so tests point it at a temp dir; the CLI binds this default.
+    public static func updateInstallURL(home: URL) -> URL {
+        home.appendingPathComponent(updateInstallDir, isDirectory: true)
+            .appendingPathComponent(updateInstallBinaryName)
+    }
 }
 
 /// Type-safe paths for one Run inside a store root: `<root>/<runId>/…`
