@@ -1,0 +1,27 @@
+summary: >-
+  Added the agent-facing `/ai-sdd-update` framework skill — the apply-on-confirm wrapper teammates
+  invoke to update the ai-sdd framework binary + skills — and wired it into the binary's embedded
+  skill set so `ai-sdd seed` delivers it to every adopter. Authored the source
+  `skills/ai-sdd-update/SKILL.md` (frontmatter `name: ai-sdd-update`, triggering `description`, house
+  style) specifying the four-step contract: run `ai-sdd update --check` and show the current-to-latest
+  version transition; proceed ONLY on explicit confirmation (no changes on decline or when up-to-date);
+  run `ai-sdd update`; commit the reseed as its own standalone commit messaged
+  `chore(ai-sdd): update framework to vX.Y.Z` (deliberately NOT `[<feature>] <slice>:`, so it clears
+  the integrity hook), closing with a note that the next command / skill invocation picks up the new
+  binary + skills with no hard restart. Added the byte-identical embedded copy
+  `Sources/AISDDEngine/Resources/skills/ai-sdd-update/SKILL.md` (the bundled artifact), extended
+  `Layout.embeddedFrameworkSkillIds` from six to seven (kept sorted, `ai-sdd-update` appended), and
+  reinforced `EmbeddedFrameworkTests` with explicit count==7 + membership assertions. `swift build`,
+  `swift test` (320 tests, all green), and `swift run ai-sdd validate .ai-sdd` all pass; the source and
+  embedded SKILL.md are byte-identical; a fresh `ai-sdd seed` materializes seven skills including
+  `ai-sdd-update`, linked under both `.agents` and `.claude`.
+
+satisfies:
+  - AC1-skill-source-authored
+  - AC2-apply-on-confirm-never-auto
+  - AC3-standalone-non-feature-commit
+  - AC4-agent-agnostic-house-style
+  - AC5-embedded-copy-synced
+  - AC6-baseline-six-to-seven
+  - AC7-embedded-tests-green
+  - AC8-build-test-validate-green

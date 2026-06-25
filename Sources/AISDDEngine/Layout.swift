@@ -56,14 +56,15 @@ public enum Layout {
 
     /// The canonical framework skills embedded by this slice, sorted. The runtime accessor derives the
     /// live set from the bundle (so it self-updates when a later slice adds a skill); this list is the
-    /// expected-id baseline the tests assert against. `ai-sdd-update` is added by a later slice.
+    /// expected-id baseline the tests assert against.
     public static let embeddedFrameworkSkillIds = [
         "ai-sdd-bootstrap",
         "ai-sdd-cheatsheet",
         "ai-sdd-compile-schema",
         "ai-sdd-plan",
         "ai-sdd-plan-program",
-        "ai-sdd-run"
+        "ai-sdd-run",
+        "ai-sdd-update"
     ]
 
     /// The agent→native-skill-dir table — the *one* declarative place this mapping lives. Adding a

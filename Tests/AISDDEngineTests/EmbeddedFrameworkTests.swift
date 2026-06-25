@@ -8,6 +8,9 @@ struct EmbeddedFrameworkTests {
     @Test("enumerates exactly the expected framework skill ids from the bundle")
     func skillIdsMatchExpected() {
         #expect(EmbeddedFramework.skillIds() == Layout.embeddedFrameworkSkillIds)
+        // Seven framework skills, including ai-sdd-update.
+        #expect(EmbeddedFramework.skillIds().count == 7)
+        #expect(EmbeddedFramework.skillIds().contains("ai-sdd-update"))
     }
 
     @Test("every embedded skill returns a non-empty SKILL.md from the bundle")

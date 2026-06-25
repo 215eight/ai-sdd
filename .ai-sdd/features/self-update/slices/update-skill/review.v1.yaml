@@ -1,0 +1,117 @@
+schema: review.v1
+run: self-update
+slice: update-skill
+
+verdict: approve
+
+summary: >-
+  Independently verified the update-skill slice against the plan's eight acceptance ids. The two
+  SKILL.md files are byte-identical (`diff` exits 0); the source carries `name: ai-sdd-update` plus a
+  triggering description and the full four-step apply-on-confirm contract (check → confirm → apply →
+  standalone `chore(ai-sdd): update framework to vX.Y.Z` commit) with the never-auto-apply rule stated
+  twice and the no-hard-restart closing note. `Layout.embeddedFrameworkSkillIds` is seven, sorted, with
+  `ai-sdd-update` appended after `ai-sdd-run`; `EmbeddedFrameworkTests` adds explicit count==7 +
+  membership assertions. Functionally confirmed: `./scripts/gen-version.sh && swift build` green,
+  `swift test` green (320 tests, 14 suites), `swift run ai-sdd validate .ai-sdd` valid, and a fresh
+  `ai-sdd seed` into a temp git repo materialized all seven skills including `ai-sdd-update`, linked
+  under both `.agents` and `.claude`, byte-identical to the source. Conventions hold. APPROVE.
+
+items:
+  - id: AC1-skill-source-authored
+    verdict: pass
+    notes: >-
+      skills/ai-sdd-update/SKILL.md has frontmatter `name: ai-sdd-update` and a triggering
+      `description` mentioning updating the ai-sdd framework and `/ai-sdd-update`. Body specifies all
+      four steps: (1) `ai-sdd update --check` showing the current-to-latest transition; (2) proceed only
+      on explicit confirmation, no changes on decline; (3) `ai-sdd update`; (4) the standalone
+      `chore(ai-sdd): update framework to vX.Y.Z` reseed commit. Closes with the no-hard-restart note
+      (next command / skill invocation picks up the new binary + freshly-seeded skills).
+  - id: AC2-apply-on-confirm-never-auto
+    verdict: pass
+    notes: >-
+      "Never auto-apply" is unmistakable — stated in a dedicated paragraph and again in step 2 ("you
+      never run `ai-sdd update` without the teammate's explicit go-ahead"). Up-to-date reports and stops
+      with no changes (step 1); an explicit decline (or anything short of a clear yes) makes no changes
+      and stops (step 2). No path applies without an explicit confirmation.
+  - id: AC3-standalone-non-feature-commit
+    verdict: pass
+    notes: >-
+      Instructs exactly one standalone commit with the literal `chore(ai-sdd): update framework to
+      vX.Y.Z`, explicitly noting it does NOT match the `[<feature>] <slice>:` pattern the integrity hook
+      guards, so it clears the hook, and "never fold the reseed into a teammate's in-flight feature
+      commit". The conventional-commit form is correct and safe.
+  - id: AC4-agent-agnostic-house-style
+    verdict: pass
+    notes: >-
+      Explicitly agent-agnostic ("works the same under Claude Code or Codex — no host-specific
+      assumptions"; shell from repo root, on-PATH `ai-sdd` with `.build/debug/ai-sdd` fallback).
+      Frontmatter shape and tone match sibling `ai-sdd-*` skills (compared against ai-sdd-run:
+      em-dash-rich description closing with a "Use when …" clause and "Agent-agnostic (claude-code or
+      codex)").
+  - id: AC5-embedded-copy-synced
+    verdict: pass
+    notes: >-
+      `diff skills/ai-sdd-update/SKILL.md Sources/AISDDEngine/Resources/skills/ai-sdd-update/SKILL.md`
+      produces no output (exit 0) — byte-identical. The embedded entry is a real file copy (not a
+      symlink), matching decision D3 and the existing embedded-skills layout. The bundled artifact
+      adopters receive equals the source of truth.
+  - id: AC6-baseline-six-to-seven
+    verdict: pass
+    notes: >-
+      Layout.embeddedFrameworkSkillIds now lists seven ids with `ai-sdd-update` appended after
+      `ai-sdd-run`, preserving alphabetical sort. Matches the seven bundle subdirectories under
+      Sources/AISDDEngine/Resources/skills.
+  - id: AC7-embedded-tests-green
+    verdict: pass
+    notes: >-
+      EmbeddedFrameworkTests passes. skillIdsMatchExpected compares skillIds() to the baseline and adds
+      explicit `count == 7` and `contains("ai-sdd-update")` assertions; the per-skill non-empty manifest
+      and materialize round-trip tests iterate skillIds() and thus cover all seven. Confirmed green in
+      the full run.
+  - id: AC8-build-test-validate-green
+    verdict: pass
+    notes: >-
+      After ./scripts/gen-version.sh: swift build complete; swift test reports 320 tests in 14 suites
+      all passing; swift run ai-sdd validate .ai-sdd reports the ai-sdd-feature pipeline valid (3 nodes,
+      3 edges, 4 workers, 8 checks). A fresh `ai-sdd seed` into a temp git repo materialized all seven
+      skills including ai-sdd-update, linked under .agents/skills and .claude/skills, byte-identical to
+      source.
+
+conventions:
+  satisfied: true
+  notes: >-
+    The new skill id was added to the existing centralized Layout.embeddedFrameworkSkillIds baseline; no
+    inline path literals were introduced (path names stay in Layout.swift per the naming/layering
+    convention). Added test assertions use Swift Testing (#expect), consistent with the suite. No lint
+    command was invented — verification relied on swift build + swift test, honoring the open-gap lint
+    convention. The slice correctly leaves .ai-sdd/skills surfacing to seed/surface (decision D5) and
+    does not touch scripts/ or .github/ infra.
+
+decisions:
+  - id: byte-identical-verified
+    notes: >-
+      Ran `diff skills/ai-sdd-update/SKILL.md Sources/AISDDEngine/Resources/skills/ai-sdd-update/SKILL.md`
+      directly — no output, exit 0. The embedded copy is a real file (ls confirms a regular SKILL.md, not
+      a symlink), so SwiftPM bundles exactly the source bytes adopters receive.
+  - id: skill-contract-safe
+    notes: >-
+      Read the full SKILL.md: it checks via `ai-sdd update --check`, gates the apply on explicit
+      confirmation (never auto, no changes on decline or up-to-date), runs `ai-sdd update` only on
+      confirm, and lands a standalone `chore(ai-sdd): update framework to vX.Y.Z` commit deliberately
+      shaped to clear the integrity hook, with a no-hard-restart closing note. Contract is correct and
+      safe.
+  - id: embedding-wiring-functionally-verified
+    notes: >-
+      Beyond the static baseline check, confirmed end-to-end: a fresh `.build/debug/ai-sdd seed` into a
+      mktemp git repo materialized all seven framework skills including ai-sdd-update under
+      .ai-sdd/skills/, symlinked into both .agents/skills and .claude/skills, with seeded content
+      byte-identical to the repo-root source.
+
+caveats:
+  - >-
+    The new SKILL.md files (skills/ai-sdd-update/ and Sources/AISDDEngine/Resources/skills/ai-sdd-update/)
+    are untracked-new; only Layout.swift and EmbeddedFrameworkTests.swift show as modified in `git diff
+    --stat`. The implementation is fully present and green — flagging for the committer to `git add` the
+    two new directories so the slice commit includes them.
+
+rework: []
