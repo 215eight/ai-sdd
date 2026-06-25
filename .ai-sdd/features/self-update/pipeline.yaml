@@ -1,0 +1,38 @@
+apiVersion: ai-sdd/v1
+kind: Pipeline
+metadata: { name: self-update, version: 1 }
+spec:
+  # Agent-driven framework distribution & update (Option B: the binary carries the framework).
+  # Phase m1 (distribution foundation): embedded-skills ∥ tag-derived-version, then seed-command
+  # (the bootstrap.sh successor) depends on both. The manual m1-distribution gate validates that a
+  # prebuilt binary seeds a repo with NO clone. Phase m2 (detect + apply): update-check → update-apply
+  # → update-skill, gated by the manual m2-detect-apply checkpoint (the end-to-end detect→confirm→apply
+  # loop across Claude + Codex). Manual-infra companions (release.yml, gen-version.sh, release.sh,
+  # bootstrap.sh deletion) are a separate checklist — `.github/` + `scripts/` are out of factory scope.
+  semantics: enabler
+  nodes:
+    - { id: embedded-skills, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: tag-derived-version, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: seed-command, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: m1-distribution, worker: milestone-gate, owner: [215eight] }
+    - { id: update-check, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: update-apply, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: update-skill, kind: pipeline, pipeline: ../.., stack: swift }
+    - { id: m2-detect-apply, worker: milestone-gate, owner: [215eight] }
+  edges:
+    # m1: seed depends on the two foundations
+    - { from: embedded-skills, to: seed-command }
+    - { from: tag-derived-version, to: seed-command }
+    # m1 gate depends on every phase-1 slice
+    - { from: embedded-skills, to: m1-distribution }
+    - { from: tag-derived-version, to: m1-distribution }
+    - { from: seed-command, to: m1-distribution }
+    # m1 gate unblocks phase 2
+    - { from: m1-distribution, to: update-check }
+    # m2 chain
+    - { from: update-check, to: update-apply }
+    - { from: update-apply, to: update-skill }
+    # m2 gate depends on every phase-2 slice
+    - { from: update-check, to: m2-detect-apply }
+    - { from: update-apply, to: m2-detect-apply }
+    - { from: update-skill, to: m2-detect-apply }

@@ -1,0 +1,18 @@
+apiVersion: ai-sdd/v1
+kind: Worker
+metadata: { name: milestone-gate }
+spec:
+  # A milestone is a validation flow with inputs and outputs — it fits the pipeline concept like any
+  # other node (ADR-0028). This is the MANUAL variant: a human validates the work (e.g. brings a
+  # client and connects to the system) and records the verdict as a validation-result.v1 artifact.
+  # The structural check enforces `outcome == pass`; downstream features depend on this node.
+  #
+  # To AUTOMATE it (as the system matures), swap only this node's kind/checks — inputs and outputs are
+  # unchanged: set `workerKind: transform` with a skill that runs the harness, and add a deterministic
+  # check that brings the system up and runs the client, e.g.
+  #     command: "docker compose -f tests/integration/compose.yaml up --abort-on-container-exit"
+  # gated on exit code. See docs/milestones.md.
+  workerKind: human
+  produces: [{ schema: validation-result.v1 }]
+  task: { skill: validate-milestone }   # what the human does; records validation-result.v1
+  checks: [validation-result.structure]

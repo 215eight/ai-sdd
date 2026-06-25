@@ -88,6 +88,8 @@ fi
 # 3. Compile the release binary
 # ---------------------------------------------------------------------------
 step "Compiling $BIN_NAME (release)"
+info "Stamping version from git (git describe → Version.swift)"
+"$SCRIPT_DIR/gen-version.sh"
 info "swift build -c release  (first build downloads dependencies — this can take a few minutes)"
 swift build -c release
 

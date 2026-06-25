@@ -74,4 +74,6 @@ fastlane/test_output
 .claude/*
 !.claude/skills/
 .codex/
+# Versioning Files
+Sources/AISDDCLI/Version.swift
 # ai-sdd:end
