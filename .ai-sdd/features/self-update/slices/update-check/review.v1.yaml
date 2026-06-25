@@ -1,0 +1,125 @@
+schema: review.v1
+run: self-update
+slice: update-check
+
+verdict: approve
+
+summary: >-
+  The detect half of self-update is implemented cleanly and matches the plan's acceptance contract.
+  A pure AISDDEngine helper (UpdateCheck) resolves/compares versions through injected seams (network
+  fetcher, clock value, cache file URL, running version, stamp path) and is fully fail-soft; a pure
+  UpdateBanner renderer turns a verdict + DC5 drift state into zero-or-more lines that the CLI routes
+  to stderr only. Functionally verified: `ai-sdd next --json` emits valid JSON on stdout with stderr
+  empty; `ai-sdd update --check` is silent and exits 0 with no published release; the banner uses a
+  cache-only (non-fetching) path; the live dev binary (3edc95c-dirty) is correctly NOT nudged even
+  with a seeded "behind" cache. swift build, full swift test (307 tests incl. UpdateCheckTests), and
+  swift run ai-sdd validate .ai-sdd are all green. Conventions hold (engine/CLI/test layering; all
+  path and URL literals centralized in Layout.swift; Swift Testing with #expect/#require; no Date() in
+  the engine). APPROVE.
+
+items:
+  - id: AC1-check-behind-notice
+    verdict: pass
+    notes: >-
+      UpdateCheck.verdict returns .behind(latestTag:) when latest > running; UpdateBanner.lines emits
+      exactly one notice line for .behind. Test behindWhenLatestNewer asserts both the verdict and a
+      single banner line. The CLI's `update --check` fetches then routes the line to stderr.
+  - id: AC2-check-uptodate-silent
+    verdict: pass
+    notes: >-
+      verdict() returns .upToDate for equal/older latest; UpdateBanner.lines returns [] for .upToDate.
+      Test upToDateWhenEqualOrOlder covers "0.5.0", "v0.5.0", "0.4.9" against running 0.5.0, all silent.
+  - id: AC3-failsoft-silent
+    verdict: pass
+    notes: >-
+      Every fallible step collapses to .unknown / no-advisory: the fetcher returns nil on any failure
+      (non-200, malformed JSON, missing tag_name), an unparseable tag → .unknown, cache read/write and
+      stamp read are try?-swallowed. Verified live: `ai-sdd update --check` with no published release is
+      silent and exits 0. Test fetchErrorIsSilent covers nil-fetch and unparseable-tag.
+  - id: AC4-cache-suppresses-network
+    verdict: pass
+    notes: >-
+      check() reads the cache and, within the staleness window, reuses cached.latestTag and SKIPS the
+      fetcher. Test cacheHitSuppressesNetwork uses a CountingFetcher and asserts calls stays at 1 across
+      a second check (+1h). A non-negative age guard (>= 0) also prevents a clock-skew bypass.
+  - id: AC5-cache-miss-fetches-and-writes
+    verdict: pass
+    notes: >-
+      On miss/stale/corrupt, check() calls fetcher(Layout.latestReleaseURL) and writeCache persists
+      {checkedAt: now, latestTag}. Tests cacheMissFetchesAndWrites, staleCacheRefetches, and
+      corruptCacheIsMiss each assert calls==1 and (where applicable) the rewritten record's timestamp + tag.
+  - id: AC6-banner-stderr-only
+    verdict: pass
+    notes: >-
+      emitUpdateBanner writes each line via FileHandle.standardError.write only; never stdout.
+      Functionally verified: `ai-sdd next self-update --json 2>/dev/null` parses as valid JSON (39 lines
+      on stdout) with stderr empty. The banner call site uses a non-fetching cache-only path
+      (fetcher: { _ in nil }), so a banner never blocks on the network.
+  - id: AC7-drift-advisory
+    verdict: pass
+    notes: >-
+      binaryNewerThanStamp returns true only when the running release strictly exceeds the parsed
+      .ai-sdd/VERSION stamp; equal/dev/missing/unparseable stamp → false (fail-soft via try?). Test
+      driftAdvisoryWhenBinaryNewer covers newer→true, equal→false, dev→false, and the independent banner
+      line; missingStampNoAdvisory covers the absent stamp.
+  - id: AC8-dev-build-skips-nudge
+    verdict: pass
+    notes: >-
+      check() guards on SemanticVersion(runningVersion)?.isRelease; a dev suffix (-rc/+build) or an
+      unparseable string → .unknown with no fetch. Test devBuildSkipsNudge covers rc/build/sha/unknown/""
+      against a v9.9.9 latest, asserting .unknown, fetcher.calls==0, and an empty banner. Independently
+      confirmed live: the dev binary 3edc95c-dirty emits no notice even with a seeded behind-cache.
+  - id: AC9-injected-seams-pure
+    verdict: pass
+    notes: >-
+      UpdateCheck.swift imports only Foundation, never the gitignored CLI Version product; the network is
+      the ReleaseFetcher closure, time is the injected `now: Date`, the cache is the injected cacheFile
+      URL, and the running version + stamp path are injected. The CLI binds the real clock,
+      URLSession.shared, home (~/.cache) and cwd (.ai-sdd/VERSION). Tests use a CountingFetcher + fixed t0
+      + UUID temp cache and never touch the real network/clock/~/.cache.
+  - id: AC10-build-test-validate-green
+    verdict: pass
+    notes: >-
+      Verified after ./scripts/gen-version.sh: `swift build` complete; `swift test` 307 tests in 13
+      suites passed (UpdateCheckTests suite passed); `swift run ai-sdd validate .ai-sdd` reports valid
+      (3 nodes, 3 edges, 4 workers, 8 checks).
+
+conventions:
+  satisfied: true
+  notes: >-
+    Engine logic in Sources/AISDDEngine (UpdateCheck/UpdateBanner), CLI surface + all I/O in
+    Sources/AISDDCLI, tests in Tests/AISDDEngineTests using Swift Testing (@Test/#expect/#require). The
+    engine never calls Date() — the single { Date() } binding lives in the CLI (private let clock) and is
+    passed in. All repo slug / releases-latest URL / user-agent / cache dir+file / 24h window literals and
+    updateCacheURL(home:) live in Layout.swift; UpdateCheck and the CLI carry no inline path/URL strings
+    (only the JSON value-shape keys tag_name/Accept in the default fetcher). swift build / swift test /
+    ai-sdd validate .ai-sdd run clean.
+
+decisions:
+  - id: stdout-cleanliness-verified
+    notes: >-
+      `ai-sdd next self-update --json 2>/dev/null | python3 -m json.tool` parses; stderr is empty for the
+      same command. The banner writes exclusively to FileHandle.standardError, and its call site uses a
+      cache-only fetcher ({ _ in nil }) so it can never block on the network.
+  - id: failsoft-verified-live
+    notes: >-
+      With no published release for 215eight/ai-sdd, `ai-sdd update --check` is silent and exits 0; the
+      code path (fetcher nil → .unknown → empty banner) proves it, not just the run.
+  - id: dev-build-skip-is-load-bearing-here
+    notes: >-
+      The local binary is a dev build (3edc95c-dirty), so the live .behind path cannot be exercised
+      end-to-end on this machine — by design (AC8). I seeded a fresh "behind" cache (latestTag v99.0.0)
+      and confirmed the dev binary still emits nothing, which positively exercises the dev-skip guard. The
+      .behind → one-line → stderr seam is proven by UpdateCheckTests (running 0.5.0 + cached v0.6.0).
+
+caveats:
+  - >-
+    The live behind-notice cannot be smoke-tested on this machine because the binary is a dev build
+    (correct per AC8). Once a release is published and a release binary installed, a manual smoke of the
+    live notice is worthwhile but not blocking — the seam is unit-tested.
+  - >-
+    verdict() does not require the latest tag to be a clean release, so a latest pre-release tag (e.g.
+    v0.6.0-rc.1) would compare on core only and could nudge. Not part of the acceptance contract, and the
+    releases/latest endpoint excludes pre-releases, so this is benign — noting it for the update-apply slice.
+
+rework: []

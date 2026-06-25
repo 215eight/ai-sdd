@@ -1,0 +1,170 @@
+summary: >-
+  Add `ai-sdd update --check` (the detect half of self-update) plus a shared stderr update banner.
+  A pure engine helper resolves the latest GitHub release tag of the public repo 215eight/ai-sdd via
+  the anonymous releases/latest API, compares it to the running binary version using the existing
+  SemanticVersion type, and renders a single notice line when the binary is behind. The result is
+  persisted to a per-user cache (~/.cache/ai-sdd/last-check) so a second check within ~1 day reads the
+  cached verdict instead of hitting the network. All network, clock, and cache I/O are injected seams
+  (mirroring CheckRunner.shell / RunStore's injected closures), keeping the engine pure and testable;
+  any failure is fail-soft (silent, exit 0). A shared banner helper prints the cached "behind" notice
+  and the DC5 binary-newer-than-stamp drift advisory to stderr only (never stdout), and is wired into
+  the user-facing status and next commands so JSON stdout stays clean. The full `update` apply path is
+  a later slice; the Update subcommand is shaped so --check is one mode and apply slots in without
+  restructuring.
+
+scope:
+  in:
+    - "`ai-sdd update --check` subcommand (detect mode only) under AISDDCLI, structured so a later slice adds the bare-`update` apply mode without restructuring."
+    - "A pure UpdateCheck engine helper that resolves the latest release tag (injected fetcher), compares versions via SemanticVersion, and returns a typed verdict (upToDate / behind / unknown), fail-soft on any error."
+    - "A ReleaseFetcher injected seam (a Sendable closure type, mirroring CheckRunner.execute) plus a default URLSession-backed implementation hitting the anonymous releases/latest endpoint and parsing tag_name."
+    - "A cache layer reading/writing ~/.cache/ai-sdd/last-check (last fetch timestamp + resolved latest version); only fetches when the cache is older than the staleness window, else returns the cached verdict."
+    - "An injected clock seam (a Sendable `() -> Date` closure) so the engine never calls Date() directly (per conventions); the CLI binds the real clock."
+    - "A drift advisory (DC5): when the running binary version is NEWER than the seeded `.ai-sdd/VERSION` stamp, the helper/banner emits a soft reseed advisory; equal versions emit nothing."
+    - "A shared UpdateBanner helper that, from the cached verdict, renders at most the behind-notice and/or the drift advisory; the status and next commands route its lines to stderr."
+    - "Path/URL/literal additions in Layout.swift: cache dir + file names, the public repo slug, the releases/latest API URL, and the staleness window constant."
+    - "Swift Testing coverage over the injected fetcher + clock + temp cache: behind / ahead / equal, cache hit vs miss, fetch error → silent, drift advisory, and stdout/stderr separation."
+  out:
+    - "The `ai-sdd update` apply path (download, checksum-verify, self-replace, reseed) — the next slice (update-apply)."
+    - "The `/ai-sdd-update` skill (update-skill slice)."
+    - "Tag-derived versioning / generated Version.swift / git describe — delivered by the m1 tag-derived-version slice; this slice consumes the existing SemanticVersion helper and the injected AISDDVersion.current value as-is."
+    - "Editing SessionStart hook installation or seed behavior — seed already installs the `ai-sdd update --check` command string; this slice only makes that command meaningful."
+    - "Wiring the banner into commands beyond status and next (validate/start/etc.) — out of scope to keep the change focused; the helper is reusable if a later slice wants more surfaces."
+    - "Any change to `.github/`, `scripts/`, or `.gitignore` (outside the factory's declarable file scope; manual-infra checklist)."
+    - "Code signing / notarization, Linux/Windows binaries, auto-apply without confirmation."
+
+acceptance:
+  - id: AC1-check-behind-notice
+    description: >-
+      When the resolved latest release is newer than the running binary version, `ai-sdd update --check`
+      emits exactly one notice line (an update-available / run /ai-sdd-update message).
+  - id: AC2-check-uptodate-silent
+    description: >-
+      When the resolved latest release equals (or is older than) the running binary version,
+      `ai-sdd update --check` prints nothing and exits 0.
+  - id: AC3-failsoft-silent
+    description: >-
+      Any network, parse, or API error during the check (offline, non-200, malformed JSON, unparseable
+      tag) results in no output and exit 0 — the check never blocks a session.
+  - id: AC4-cache-suppresses-network
+    description: >-
+      A second `ai-sdd update --check` within the staleness window performs NO network fetch and reuses
+      the cached verdict; verified in tests via an injected fetcher that records call counts.
+  - id: AC5-cache-miss-fetches-and-writes
+    description: >-
+      When the cache is absent or older than the staleness window, the check fetches via the injected
+      fetcher and persists the new timestamp + resolved latest version to the cache file.
+  - id: AC6-banner-stderr-only
+    description: >-
+      When the cached verdict is "behind", the shared banner prints its notice to stderr; stdout is
+      untouched, so `ai-sdd next --json` still emits clean, parseable JSON on stdout.
+  - id: AC7-drift-advisory
+    description: >-
+      When the running binary version is NEWER than the `.ai-sdd/VERSION` stamp, the check/banner emits
+      the soft reseed advisory (DC5); when the versions are equal, it emits nothing for that advisory.
+  - id: AC8-dev-build-skips-nudge
+    description: >-
+      A dev/non-release running version (SemanticVersion.isDev, or an unparseable version string) does
+      not produce the behind-notice, so dev builds are not nudged.
+  - id: AC9-injected-seams-pure
+    description: >-
+      The check logic lives in AISDDEngine and reads the network only through an injected ReleaseFetcher,
+      time only through an injected clock closure, and the cache through an injected path; tests exercise
+      it without touching the real network, real clock, or the real ~/.cache directory.
+  - id: AC10-build-test-validate-green
+    description: >-
+      `swift build`, `swift test`, and `swift run ai-sdd validate .ai-sdd` are green after the change.
+
+decisions:
+  - id: D1-update-subcommand-shape
+    status: closed
+    choice: >-
+      Add a new `struct Update: ParsableCommand` (commandName "update") with a `@Flag --check`, registered
+      in the AISDD subcommands list. In this slice `--check` is the only implemented mode and runs the
+      detect path by delegating to the engine UpdateCheck helper and writing its rendered notice to
+      stderr. Invoking bare `ai-sdd update` (no flag) is reserved for the apply mode and for now prints a
+      short "not yet implemented — use --check" line (exit 0), so the later update-apply slice fills in the
+      apply branch by replacing that placeholder, with no restructuring of the command or the subcommand
+      registration. The check command always exits 0.
+  - id: D2-check-logic-in-engine
+    status: closed
+    choice: >-
+      The check/compare/cache logic is a pure helper in AISDDEngine — a `public enum UpdateCheck` of
+      statics, shaped like Seeder/SkillSurface/Drift (no stored state, all effects injected). It returns a
+      typed verdict value (an `UpdateVerdict` with cases such as upToDate / behind(latestTag) / unknown,
+      plus an optional drift advisory flag). The CLI owns Date(), URLSession, the real home/cwd dirs, and
+      the stdout/stderr printing; the engine references none of them directly and never imports the
+      gitignored CLI Version file — the running version string is injected (exactly as Seeder already
+      takes AISDDVersion.current as a parameter).
+  - id: D3-release-fetcher-seam
+    status: closed
+    choice: >-
+      Define a `ReleaseFetcher` seam as a `@Sendable` closure type that resolves the latest release tag,
+      mirroring `CheckRunner.execute`'s injected-closure pattern. Signature shape: `(_ url: URL) -> String?`
+      — returns the tag string on success, nil on any failure (fail-soft). A default static
+      implementation (e.g. `UpdateCheck.fetchLatestTag` / `ReleaseFetcher.urlSession`) performs a
+      synchronous anonymous GET of the releases/latest endpoint and parses `tag_name`; all errors collapse
+      to nil. Tests inject a closure returning a fixed tag (or nil for the error case) and counting
+      invocations. The endpoint URL + repo slug live as Layout literals; no auth token is sent.
+  - id: D4-cache-format-location-staleness
+    status: closed
+    choice: >-
+      The cache lives at ~/.cache/ai-sdd/last-check (DC3) as a small JSON object holding the last fetch
+      timestamp and the resolved latest version string. The staleness window is ~1 day (a named constant in
+      Layout, e.g. 24h expressed in seconds). Read flow: if the cache exists and (now - its timestamp) <
+      window, use the cached latest version as the verdict source and SKIP the fetch; else fetch, then write
+      the new timestamp + version. The cache file URL is INJECTED into the engine (default resolved from the
+      user home dir via Layout literals) so tests point it at a temp dir. `now` comes from the injected
+      clock seam — a `@Sendable () -> Date` closure, default `{ Date() }`, bound by the CLI — so the engine
+      never calls Date() directly (per the swift conventions, mirroring the GraphRenderer / RunStore
+      single-wall-clock-boundary pattern). A corrupt/unreadable/missing cache is treated as a miss
+      (fail-soft); a cache write failure is swallowed.
+  - id: D5-banner-location-and-callers
+    status: closed
+    choice: >-
+      Add a shared `UpdateBanner` helper: an engine-side pure renderer that turns a verdict (+ drift state)
+      into zero-or-more notice lines, plus a thin CLI call site that writes those lines to
+      FileHandle.standardError. The `status` and `next` commands call it at the start of their run(). The
+      banner reads ONLY the cached verdict (it never triggers a network fetch itself — staying cheap and
+      non-blocking) and writes ONLY to stderr, never stdout, preserving clean `--json` stdout. Both the
+      behind-notice and the DC5 drift advisory are emitted through this single helper.
+  - id: D6-version-stamp-drift-source
+    status: closed
+    choice: >-
+      The DC5 drift advisory compares the running binary version (injected AISDDVersion.current, parsed via
+      SemanticVersion) against the seeded stamp read from `<repo>/.ai-sdd/VERSION`
+      (Layout.versionStampPath, resolved under the workspace/cwd). When the binary parses to a clean
+      release strictly greater than the stamp's parsed version, emit the soft reseed advisory; on equal
+      versions, a missing/unparseable stamp, or a dev binary, emit nothing. Reading the stamp is fail-soft
+      (absent → no advisory).
+  - id: D7-test-strategy
+    status: closed
+    choice: >-
+      Add Tests/AISDDEngineTests/UpdateCheckTests.swift (Swift Testing: @Test/#expect/#require), exercising
+      the pure UpdateCheck/UpdateBanner helpers with an injected fetcher (counting calls + returning
+      fixed/nil tags), an injected fixed clock, and a temp cache file URL (UUID-named under
+      FileManager.temporaryDirectory, removed in defer). Cases: behind → one notice; ahead/equal → silent;
+      fetch error / unparseable tag → verdict unknown + silent; cache-hit within window → fetcher NOT
+      called; cache-miss (absent or stale) → fetcher called once + cache file written with timestamp +
+      version; drift advisory present when binary > stamp and absent when equal; dev/unparseable running
+      version → no behind-notice; and a banner-render assertion over the returned line set (the engine
+      helper returns the lines; the CLI contract routes them to stderr). Assert exact typed errors where
+      the API throws.
+  - id: D8-failsoft-everywhere
+    status: closed
+    choice: >-
+      Every fallible step (fetch, JSON parse, tag parse, cache read/write, stamp read) is fail-soft: it
+      collapses to a non-blocking outcome (verdict unknown / no advisory) and never throws out of the
+      command, so `ai-sdd update --check` and every banner-bearing command always exit 0 with respect to
+      the check. The command's own exit code is success regardless of the check result.
+
+files:
+  - Sources/AISDDCLI/CLI.swift
+  - Sources/AISDDEngine/UpdateCheck.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Tests/AISDDEngineTests/UpdateCheckTests.swift
+
+tests:
+  - swift build
+  - swift test
+  - swift run ai-sdd validate .ai-sdd
+  - swift run ai-sdd check .ai-sdd/schemas/feature-plan.schema.yaml .ai-sdd/artifacts/feature-plan.v1.yaml

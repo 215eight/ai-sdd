@@ -1,0 +1,38 @@
+summary: >-
+  Added `ai-sdd update --check` (the detect half of self-update) plus a shared stderr update banner.
+  A new pure `UpdateCheck` engine enum (Sources/AISDDEngine/UpdateCheck.swift) resolves the latest
+  release tag of the public repo 215eight/ai-sdd via the anonymous GitHub releases/latest API, compares
+  it to the injected running version (AISDDVersion.current) through the existing SemanticVersion type,
+  and returns a typed Verdict (behind / upToDate / unknown). All effects are injected seams — a
+  `ReleaseFetcher` @Sendable closure (default `urlSession` = anonymous synchronous GET parsing tag_name;
+  tests pass a counting fake), an injected clock value, and an injected cache file URL — so the engine
+  never calls Date(), never touches the real ~/.cache, and never imports the gitignored CLI Version
+  product. The cache lives at ~/.cache/ai-sdd/last-check as a small JSON record {checkedAt, latestTag};
+  a second check within the ~1-day staleness window reuses the cached tag and performs NO network
+  fetch. Every fallible step (fetch, JSON/tag parse, cache read/write, stamp read) is fail-soft —
+  collapses to .unknown / no advisory and never throws — so the command always exits 0. A shared
+  `UpdateBanner` pure renderer turns a verdict + the DC5 drift state (binary newer than .ai-sdd/VERSION,
+  read via UpdateCheck.binaryNewerThanStamp) into zero-or-more lines; the CLI's emitUpdateBanner() reads
+  ONLY the cached verdict (never fetches) and writes those lines to FileHandle.standardError, wired into
+  the status and next commands so `ai-sdd next --json` keeps a clean, parseable stdout. A new
+  `Update` ParsableCommand exposes `--check` (registered in the subcommands list) and reserves bare
+  `ai-sdd update` for the next slice's apply path via a replaceable placeholder branch. Layout.swift
+  gained the repo slug, releases/latest URL, user-agent, cache dir/file names, the 24h staleness window,
+  and an updateCacheURL(home:) helper. New Swift Testing coverage
+  (Tests/AISDDEngineTests/UpdateCheckTests.swift) exercises the pure helpers over an injected
+  counting fetcher + fixed clock + temp cache: behind/ahead/equal, dev-build skip, fetch error +
+  unparseable tag, cache hit suppresses network, cache miss + stale + corrupt cache refetch & persist,
+  the DC5 drift advisory (present when binary > stamp, absent on equal/dev/missing stamp), and the
+  banner line set.
+
+satisfies:
+  - AC1-check-behind-notice
+  - AC2-check-uptodate-silent
+  - AC3-failsoft-silent
+  - AC4-cache-suppresses-network
+  - AC5-cache-miss-fetches-and-writes
+  - AC6-banner-stderr-only
+  - AC7-drift-advisory
+  - AC8-dev-build-skips-nudge
+  - AC9-injected-seams-pure
+  - AC10-build-test-validate-green

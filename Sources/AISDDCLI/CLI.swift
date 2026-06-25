@@ -12,7 +12,7 @@ struct AISDD: ParsableCommand {
         commandName: "ai-sdd",
         abstract: "Spec-driven software factory engine (deterministic planner; agents do the work via skills).",
         version: "ai-sdd \(AISDDVersion.current)",
-        subcommands: [Cheatsheet.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Compile.self, Graph.self, Plan.self, Surface.self, Seed.self, DriftCommand.self]
+        subcommands: [Cheatsheet.self, Validate.self, Start.self, Status.self, Next.self, Submit.self, Check.self, Scope.self, Cover.self, Compile.self, Graph.self, Plan.self, Surface.self, Seed.self, Update.self, DriftCommand.self]
     )
 }
 
@@ -26,6 +26,37 @@ private func runStore() -> RunStore {
 /// The directory the agent works in (and where deterministic checks run) — the current directory.
 private func workspace() -> URL {
     URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+}
+
+/// The injected clock the CLI binds for every engine seam (`@Sendable () -> Date`) — the one place
+/// the CLI reads the wall clock for the update-check, so the engine never calls `Date()` directly.
+private let clock: UpdateCheck.Clock = { Date() }
+
+/// The default update-check cache file under the user's home (`~/.cache/ai-sdd/last-check`).
+private func updateCacheURL() -> URL {
+    Layout.updateCacheURL(home: FileManager.default.homeDirectoryForCurrentUser)
+}
+
+/// The seeded `.ai-sdd/VERSION` stamp under the current workspace (DC5 drift source).
+private func versionStampURL() -> URL {
+    workspace().appendingPathComponent(Layout.versionStampPath)
+}
+
+/// Print the shared stderr update banner: read ONLY the cached verdict (never fetch) plus the DC5
+/// drift state, render via `UpdateBanner`, and write each line to stderr — never stdout — so a
+/// command's `--json` stdout stays clean. Wired into `status` and `next`. Fully fail-soft: a missing
+/// cache / stamp simply yields no lines.
+private func emitUpdateBanner() {
+    // Read-only verdict from the cache: reuse a fresh-enough cached tag, but never trigger a network
+    // fetch from a banner (cheap + non-blocking). An empty fetcher closure guarantees no network.
+    let verdict = UpdateCheck.check(
+        runningVersion: AISDDVersion.current, now: clock(),
+        cacheFile: updateCacheURL(), fetcher: { _ in nil })
+    let drift = UpdateCheck.binaryNewerThanStamp(
+        runningVersion: AISDDVersion.current, stampFile: versionStampURL())
+    for line in UpdateBanner.lines(verdict: verdict, binaryNewerThanStamp: drift) {
+        FileHandle.standardError.write(Data("\(line)\n".utf8))
+    }
 }
 
 private func encodeJSON<T: Encodable>(_ value: T) throws -> String {
@@ -311,6 +342,7 @@ struct Status: ParsableCommand {
     var name: String
 
     func run() throws {
+        emitUpdateBanner()
         let runId = try resolveRun(name: name)
         let store = runStore()
         let meta = try store.meta(of: runId)
@@ -775,6 +807,42 @@ struct Seed: ParsableCommand {
     }
 }
 
+// MARK: - update
+
+/// `ai-sdd update [--check]` — the self-update surface. This slice ships the DETECT half only:
+/// `--check` resolves the latest published release of the public repo, compares it to the running
+/// binary version via the pure `UpdateCheck` engine helper, and writes a one-line "behind" notice
+/// (plus the DC5 drift advisory) to STDERR. It is fully fail-soft — any network/parse/cache error is
+/// silent and the command always exits 0.
+///
+/// The command is shaped so the next slice (`update-apply`) fills in the bare-`ai-sdd update` apply
+/// path by replacing the placeholder branch below — no restructuring of the command or its
+/// registration. The version, clock, cache path, and stamp path are all bound here (the CLI owns the
+/// real `Date()` / `URLSession` / home + cwd dirs); the engine references none of them.
+struct Update: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "update",
+        abstract: "Check for (and, in a later slice, apply) a newer ai-sdd release. --check is detect-only; always exits 0."
+    )
+    @Flag(name: .long, help: "Detect-only: print a stderr notice if a newer release exists, then exit 0 (fail-soft).")
+    var check = false
+
+    func run() {
+        guard check else {
+            // The apply path lands in the update-apply slice; until then bare `update` is a no-op hint.
+            print("ai-sdd update: apply mode not yet implemented — use `ai-sdd update --check`")
+            return
+        }
+
+        // Detect: resolve the verdict (real network via URLSession on a cache miss), then emit the
+        // banner from the now-current cache. Every step is fail-soft; the command always exits 0.
+        _ = UpdateCheck.check(
+            runningVersion: AISDDVersion.current, now: clock(),
+            cacheFile: updateCacheURL(), fetcher: UpdateCheck.urlSession)
+        emitUpdateBanner()
+    }
+}
+
 // MARK: - drift
 
 /// `ai-sdd drift [<dir>]` — a read-only detector for the deterministic drift kinds of ADR-0033
@@ -938,6 +1006,7 @@ struct Next: ParsableCommand {
     var node: String?
 
     func run() throws {
+        emitUpdateBanner()
         let runId = try resolveRun(name: name)
         let store = runStore()
         let meta = try store.meta(of: runId)

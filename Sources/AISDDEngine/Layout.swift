@@ -244,6 +244,40 @@ public enum Layout {
     /// The literal command string a seeded SessionStart hook runs — seed installs only the STRING;
     /// the `ai-sdd update --check` command itself is a later slice.
     public static let updateCheckCommand = "ai-sdd update --check"
+
+    // MARK: - Update-check path / endpoint literals (UpdateCheck)
+    //
+    // The repo slug, the anonymous `releases/latest` endpoint, the per-user cache location, and the
+    // staleness window the `UpdateCheck` engine helper reads. Centralized here (one place per literal,
+    // per the conventions) so the engine never inlines a path/URL string; the CLI binds the concrete
+    // cache file under the user home and the stamp under the workspace.
+
+    /// The public repo slug whose latest release the update-check resolves (`owner/repo`).
+    public static let updateRepoSlug = "215eight/ai-sdd"
+
+    /// The anonymous GitHub `releases/latest` endpoint for the public repo. No auth token is sent.
+    public static let latestReleaseURL = URL(string:
+        "https://api.github.com/repos/\(updateRepoSlug)/releases/latest")!
+
+    /// The User-Agent the anonymous GET sends (GitHub's API requires one for unauthenticated calls).
+    public static let updateUserAgent = "ai-sdd-update-check"
+
+    /// The per-user cache dir for the update check (`~/.cache/ai-sdd`, DC3).
+    public static let updateCacheDir = ".cache/ai-sdd"
+
+    /// The cache file name holding the last fetch timestamp + resolved latest version (`last-check`).
+    public static let updateCacheFile = "last-check"
+
+    /// The staleness window in seconds (~1 day): within it a check reuses the cached verdict and
+    /// performs NO network fetch (D4).
+    public static let updateStalenessWindow: TimeInterval = 24 * 60 * 60
+
+    /// The default update-check cache file URL under the user's home (`~/.cache/ai-sdd/last-check`).
+    /// Injected into the engine so tests point it at a temp dir; the CLI binds this default.
+    public static func updateCacheURL(home: URL) -> URL {
+        home.appendingPathComponent(updateCacheDir, isDirectory: true)
+            .appendingPathComponent(updateCacheFile)
+    }
 }
 
 /// Type-safe paths for one Run inside a store root: `<root>/<runId>/…`
