@@ -1,0 +1,139 @@
+#!/bin/sh
+# ai-sdd:managed-hook pre-commit integrity tripwire — do not edit this marker line
+#
+# ai-sdd run-integrity tripwire (slice: precommit-tripwire).
+#
+# Catches the git-boundary bypass case: a commit whose subject matches
+# `[<feature>] <slice>:` but has no recorded `nodeCompleted` event for <slice>
+# is refused, so "forgot to submit" fails loudly instead of silently diverging
+# the ledger from main.
+#
+# The marker line above (`ai-sdd:managed-hook`) is what the ai-sdd-bootstrap
+# install step detects for idempotence: it must remain the second line so a
+# re-bootstrap recognizes an already-installed integrity hook and does NOT
+# re-rename it into `.pre-commit.local`.
+#
+# `git commit --no-verify` skips ALL hooks (git semantics), so it bypasses this
+# tripwire entirely; that path is documented and intentional. Whenever this hook
+# IS reached on a matched subject it emits a one-line stderr warning so a run /
+# bypass is visible in logs.
+#
+# POSIX sh only — no bashisms.
+
+set -u
+
+# When installed into .git/hooks/, git invokes the pre-commit hook with NO
+# arguments and the commit message has not been written yet. We therefore read
+# the staged commit subject from the prepared commit-message source when one is
+# available ($1 is the path to the message file when this script is exercised
+# directly or chained from prepare-commit-msg/commit-msg), and otherwise fall
+# back to `git`-derived sources. The test harness passes the message file as $1.
+COMMIT_MSG_FILE="${1:-}"
+
+# When the integrity check passes (or there is nothing to enforce), delegate to a
+# chained foreign hook if one was preserved at install time, preserving its exit
+# code; otherwise exit 0. `$0` is the installed `.git/hooks/pre-commit`, so its
+# sibling `.pre-commit.local` is the renamed pre-existing hook (see the bootstrap
+# install step). When run from the test harness (no .pre-commit.local sibling)
+# this simply exits 0.
+delegate_then_exit() {
+  _self_dir=$(dirname -- "$0")
+  if [ -x "${_self_dir}/.pre-commit.local" ]; then
+    "${_self_dir}/.pre-commit.local" "$@"
+    exit $?
+  fi
+  exit 0
+}
+
+read_subject() {
+  # 1. explicit message file argument (test harness + commit-msg chaining)
+  if [ -n "${COMMIT_MSG_FILE}" ] && [ -f "${COMMIT_MSG_FILE}" ]; then
+    head -n 1 "${COMMIT_MSG_FILE}"
+    return 0
+  fi
+  # 2. a message file git left in the repo (-m / -F / -t flows)
+  if [ -n "${GIT_DIR:-}" ] && [ -f "${GIT_DIR}/COMMIT_EDITMSG" ]; then
+    head -n 1 "${GIT_DIR}/COMMIT_EDITMSG"
+    return 0
+  fi
+  if [ -f ".git/COMMIT_EDITMSG" ]; then
+    head -n 1 ".git/COMMIT_EDITMSG"
+    return 0
+  fi
+  # 3. nothing to inspect — emit empty subject (hook passes through)
+  printf '%s' ''
+}
+
+SUBJECT="$(read_subject)"
+
+# Parse `[<feature>] <slice>: …`. Feature and slice are the two tokens; anything
+# that does not match the `[f] s:` shape passes through untouched.
+FEATURE=""
+SLICE=""
+case "${SUBJECT}" in
+  '['*'] '*':'*)
+    # feature = text between the first [ and ]
+    FEATURE="${SUBJECT#[}"
+    FEATURE="${FEATURE%%]*}"
+    # remainder after "] "
+    REST="${SUBJECT#*] }"
+    # slice = text up to the first ':'
+    SLICE="${REST%%:*}"
+    ;;
+  *)
+    # Not a managed `[feature] slice:` subject — nothing to enforce; delegate.
+    delegate_then_exit "$@"
+    ;;
+esac
+
+# Guard against a malformed parse (empty feature or slice) — pass through rather
+# than block on something we could not understand.
+if [ -z "${FEATURE}" ] || [ -z "${SLICE}" ]; then
+  delegate_then_exit "$@"
+fi
+
+# We have a managed subject: this hook is authoritative for it. Make the run
+# visible in logs (the success path must not change exit code because of this).
+printf 'ai-sdd: integrity hook reached for [%s] %s: (commit with --no-verify to bypass)\n' \
+  "${FEATURE}" "${SLICE}" >&2
+
+# `ai-sdd` must be reachable for the operator to act on a refusal (the refusal
+# message tells them to run `ai-sdd submit`). If it is missing, fail clearly
+# rather than passing silently.
+if ! command -v ai-sdd >/dev/null 2>&1; then
+  printf 'ai-sdd: install ai-sdd or use --no-verify\n' >&2
+  exit 1
+fi
+
+EVENTS_DIR=".ai-sdd/runs/${FEATURE}/events"
+
+# Determine "submitted": some event JSON file under the feature's events dir
+# carries this slice (a `"slice" : "<slice>"` field) together with a
+# `nodeCompleted` event. The on-disk shape is pretty-printed JSON with a space
+# around the colon, but we tolerate compact JSON too. Each event is a separate
+# file, so a per-file AND of the two signals is the deterministic completion
+# marker described in the plan.
+slice_submitted() {
+  _slice="$1"
+  _dir="$2"
+  [ -d "${_dir}" ] || return 1
+  for _f in "${_dir}"/*.json; do
+    # guard the literal-glob case (no .json files present)
+    [ -e "${_f}" ] || continue
+    if grep -Eq "\"slice\"[[:space:]]*:[[:space:]]*\"${_slice}\"" "${_f}" \
+       && grep -q "nodeCompleted" "${_f}"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if slice_submitted "${SLICE}" "${EVENTS_DIR}"; then
+  # Integrity check passed — delegate to any chained hook, else exit 0.
+  delegate_then_exit "$@"
+fi
+
+# No completion event found — refuse with the exact, copy-pasteable error.
+printf 'slice "%s" of feature "%s" was not submitted — run `ai-sdd submit %s` first\n' \
+  "${SLICE}" "${FEATURE}" "${FEATURE}" >&2
+exit 1

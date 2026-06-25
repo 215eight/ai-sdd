@@ -66,40 +66,33 @@ ai-sdd cheatsheet       # print the diagram-driven workflow cheatsheet — trave
 
 ---
 
-## Step 2 — Make the framework skills available to your agent (one-time)
+## Step 2 — Seed the ai-sdd toolkit into your repo (one-time)
 
-`ai-sdd-bootstrap` is itself a **skill**, so it can't install itself — something must make it
-discoverable first. That's this one-time seed. The framework skills (`ai-sdd-bootstrap`, `ai-sdd-plan`,
-`ai-sdd-plan-program`, `ai-sdd-compile-schema`, `ai-sdd-run`, `ai-sdd-cheatsheet`) are a **toolkit you point at a repo** —
-not part of any one project. Seed them so your agent discovers them through **its own native skill
-mechanism** (not via prose in a docs file). Each agent has a skill dir; symlink the framework skills in:
-
-**Copy** the skills *into* the repo (under `.ai-sdd/skills/`) and point the agent dirs at that in-repo
-copy — so once committed, the links resolve for everyone, not just on the setter-upper's machine:
+`ai-sdd-bootstrap` is itself a **skill**, so it can't install itself — something must make it (and the
+other framework skills) discoverable first, and put the integrity pre-commit hook in place. That's this
+one-time, **idempotent** seed. From your **ai-sdd clone**, point the seeder at the repo you want to adopt:
 
 ```sh
-AISDD=/path/to/ai-sdd          # the toolkit source — ONLY whoever sets up needs this clone
-TARGET=/path/to/your-repo      # the repo you want to bootstrap
-
-mkdir -p "$TARGET/.ai-sdd/skills" "$TARGET/.agents/skills" "$TARGET/.claude/skills"
-for s in ai-sdd-bootstrap ai-sdd-plan ai-sdd-plan-program ai-sdd-compile-schema ai-sdd-run ai-sdd-cheatsheet; do
-  cp -R "$AISDD/skills/$s" "$TARGET/.ai-sdd/skills/$s"            # vendor INTO the repo (committed)
-  ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.agents/skills/$s"   # Codex → in-repo (committed)
-  ln -sfn "../../.ai-sdd/skills/$s" "$TARGET/.claude/skills/$s"   # Claude Code → in-repo (local)
-done
+scripts/bootstrap.sh /path/to/your-repo     # run with no arg and it prompts (default: cwd)
 ```
 
-This makes `$TARGET` **self-contained**: the skills live in `.ai-sdd/skills/` and the agent dirs link to
-them *inside the repo* (relative links). Commit `.ai-sdd/` and `.agents/skills/` and anyone who clones
-the repo has the skills with **no ai-sdd clone of their own** — they only install the `ai-sdd` binary on
-PATH (a tool, like git). `ai-sdd-bootstrap` (Step 3) then adds the generated factory (schemas, workers,
-checks) and the per-role worker skills alongside, and validates.
+It vendors the framework skills (`ai-sdd-bootstrap`, `ai-sdd-plan`, `ai-sdd-plan-program`,
+`ai-sdd-compile-schema`, `ai-sdd-run`, `ai-sdd-cheatsheet`) into `<repo>/.ai-sdd/skills/`, points each
+agent's skill dir (`.agents/skills`, `.claude/skills`) at that in-repo copy with relative symlinks, and
+installs the pre-commit integrity hook into `<repo>/.git/hooks/` (chaining any existing hook). The ai-sdd
+home is auto-derived from the script's own location — only the target repo is needed.
 
-- **Self-hosting** (bootstrapping the ai-sdd repo itself)? `$AISDD` and `$TARGET` are the same repo and
-  the skills already live in `./skills`, so the `.agents/skills` symlinks are already committed — skip
-  this step and go to Step 3.
-- **Machine-wide instead** (across many repos)? Symlink into your user skill dirs:
-  `~/.agents/skills/` (Codex) and `~/.claude/skills/` (Claude Code).
+This makes the repo **self-contained**: commit `.ai-sdd/` and `.agents/skills/` and anyone who clones it
+has the toolkit with **no ai-sdd clone of their own** — they only install the `ai-sdd` binary on PATH (a
+tool, like git). Re-running `scripts/bootstrap.sh` later refreshes the vendored skills + hook
+idempotently (it only adds what's missing and never clobbers). `ai-sdd-bootstrap` (Step 3) then authors
+the generated factory (schemas, workers, checks) from your codebase and validates.
+
+- **Self-hosting** (the ai-sdd repo itself)? `scripts/bootstrap.sh .` — or skip, since `./skills` and the
+  committed `.agents/skills` symlinks already exist.
+- **Machine-wide instead** (across many repos)? Symlink the framework skills into your user skill dirs
+  `~/.agents/skills/` (Codex) and `~/.claude/skills/` (Claude Code) by hand; the per-repo hook still
+  comes from `scripts/bootstrap.sh`.
 
 ---
 

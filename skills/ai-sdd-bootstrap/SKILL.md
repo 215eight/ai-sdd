@@ -55,6 +55,7 @@ gap` status. That record seeds the discovery eval set (see *Discovery quality* b
   schemas/               per-artifact schema-metadata (fields/rules/judge) — see ai-sdd-compile-schema
   conventions/<stack>.md the house style, bootstrapped FROM the codebase (not hand-invented)
   skills/                worker skills + the copied framework skills (below)
+  hooks/pre-commit       the git-boundary integrity tripwire, vendored by scripts/bootstrap.sh (§4 / §6a)
   stacks/ traits/ resources/   design-only specs (engine ignores today) if modeling the full factory
   runs/  artifacts/       runtime — gitignored
 ```
@@ -83,13 +84,14 @@ The review schema's invariants (all items `pass`, overall `verdict == approve`) 
 **deterministic, blocking gate** — see [ai-sdd-compile-schema](../ai-sdd-compile-schema/SKILL.md);
 the reviewer *is* the judge, captured and enforced structurally, no judge-runner required.
 
-## 4. Copy the framework skills (provider-neutral source)
+## 4. Framework skills + integrity hook (vendored by `scripts/bootstrap.sh`)
 
-Copy the framework skills from the ai-sdd install's `skills/` into `.ai-sdd/skills/`:
-`ai-sdd-plan` (the feature planner), `ai-sdd-plan-program` (the program planner — multi-feature graphs
-with milestones + owners), `ai-sdd-run` (the driver), `ai-sdd-compile-schema` (the gate compiler), and
-`ai-sdd-bootstrap` itself (so re-bootstrap needs no external clone). They live alongside the worker
-skills — one neutral home. Copying (not symlinking to the install) is what makes the repo self-contained.
+The framework skills (`ai-sdd-plan`, `ai-sdd-plan-program`, `ai-sdd-run`, `ai-sdd-compile-schema`,
+`ai-sdd-bootstrap`) and the integrity pre-commit hook source (`.ai-sdd/hooks/pre-commit`) are **not
+authored here** — they are fixed artifacts the deterministic seeder `scripts/bootstrap.sh <repo>` vendors
+into `.ai-sdd/skills/` and `.ai-sdd/hooks/` (the same step that made *this* skill discoverable; QUICKSTART
+Step 2). Copying (not symlinking to the install) is what makes the repo self-contained; re-run the seeder
+to refresh them after an upgrade. This skill's job is the **authored** factory below.
 
 ## 5. Compile the gates
 
@@ -138,71 +140,20 @@ can't drift.
 
 The engine itself is already neutral: `ai-sdd` is a CLI any agent calls over a shell.
 
-## 6a. Install the git-boundary integrity tripwire (`.git/hooks/pre-commit`)
+## 6a. The git-boundary integrity tripwire (`.git/hooks/pre-commit`)
 
-The committed factory ships a POSIX-shell pre-commit hook at `.ai-sdd/hooks/pre-commit`. It is the
-one mechanism that catches work reaching git *outside* the `ai-sdd-run` loop: a commit whose subject
-matches `[<feature>] <slice>:` but has no recorded `nodeCompleted` event for `<slice>` is refused, so
-"forgot to submit" fails loudly instead of silently diverging the ledger from main.
+The committed factory ships a POSIX-shell pre-commit hook at `.ai-sdd/hooks/pre-commit`. It catches work
+reaching git *outside* the `ai-sdd-run` loop: a commit whose subject matches `[<feature>] <slice>:` but
+has no recorded `nodeCompleted` event for `<slice>` is refused, so "forgot to submit" fails loudly
+instead of silently diverging the ledger from main.
 
-`.git/hooks/` is **per-clone runtime state outside the factory file manifest** (the `.gitignore`
-managed block declares the committed set; `.git/` is never committed), so the copy into
-`.git/hooks/pre-commit` is a **bootstrap-runtime install step**, not a committed file — mirroring the
-`ai-sdd surface` manual-runtime pattern. Install it idempotently and chain (never clobber) any
-pre-existing hook:
-
-```sh
-# Install / refresh the ai-sdd integrity pre-commit hook. Idempotent: safe to
-# re-run on every bootstrap. Detects an already-installed managed hook by its
-# marker so it never duplicates or self-chains.
-SRC=.ai-sdd/hooks/pre-commit
-DST=.git/hooks/pre-commit
-MARKER='ai-sdd:managed-hook'
-
-mkdir -p .git/hooks
-if [ -f "$DST" ] && grep -q "$MARKER" "$DST"; then
-  # An ai-sdd-managed hook is already installed — just refresh it in place.
-  # Do NOT re-rename it into .pre-commit.local (that would self-chain / stack).
-  cp "$SRC" "$DST"
-elif [ -f "$DST" ]; then
-  # A foreign (non-managed) pre-commit hook exists — preserve it by chaining:
-  # rename it to .pre-commit.local, then install the managed hook on top.
-  # Don't overwrite an existing .pre-commit.local (a prior chain stays intact).
-  if [ ! -e .git/hooks/.pre-commit.local ]; then
-    mv "$DST" .git/hooks/.pre-commit.local
-  fi
-  cp "$SRC" "$DST"
-else
-  # Fresh install.
-  cp "$SRC" "$DST"
-fi
-chmod +x "$DST"
-[ -e .git/hooks/.pre-commit.local ] && chmod +x .git/hooks/.pre-commit.local
-```
-
-**Chaining contract.** The installed integrity hook runs the integrity check **first** (so the
-tripwire is authoritative), then delegates to `.git/hooks/.pre-commit.local` when that file is
-present, **preserving its exit code** — the commit is rejected if either the integrity check or the
-chained hook fails. If you maintain the managed hook's tail, the delegation block is:
-
-```sh
-# (appended to the managed hook, after the integrity check passes)
-if [ -x "$(dirname "$0")/.pre-commit.local" ]; then
-  "$(dirname "$0")/.pre-commit.local" "$@"
-  exit $?
-fi
-```
-
-**Idempotence marker.** The committed hook carries `# ai-sdd:managed-hook …` on its **second line**.
-The install step keys off that marker: a re-bootstrap sees the managed hook already in place, refreshes
-it with `cp`, and **does not** re-rename it into `.pre-commit.local`. A previously chained foreign hook
-in `.pre-commit.local` is therefore preserved across any number of re-bootstraps. **`git commit
---no-verify` bypasses the hook entirely** (git skips all hooks) — that path is intentional; whenever the
-hook *is* reached on a matched subject it logs a one-line stderr warning so the bypass/run is visible.
-
-> The `.git/hooks/pre-commit` install is a **manual runtime step** (like `ai-sdd surface`): the slice
-> ships the committed source (`.ai-sdd/hooks/pre-commit`) plus these instructions; the factory file
-> manifest cannot and does not declare `.git/`.
+**Installed by `scripts/bootstrap.sh`, not here.** That deterministic seeder (§4 / QUICKSTART Step 2)
+vendors the source into `.ai-sdd/hooks/pre-commit` and installs `.git/hooks/pre-commit` — idempotently,
+chaining any pre-existing hook into `.pre-commit.local` (whose exit code is preserved), keyed off an
+`# ai-sdd:managed-hook` marker so re-runs refresh rather than re-chain. `.git/` is per-clone runtime state
+outside the factory file manifest, so this is a runtime step; `git commit --no-verify` bypasses it
+intentionally. To (re)install or refresh after an upgrade, **re-run `scripts/bootstrap.sh <repo>`** — do
+not run hook-install shell here.
 
 ## 7. Ignore runtime + per-agent surfacing, then validate
 

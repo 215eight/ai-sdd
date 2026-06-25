@@ -14,6 +14,10 @@
 #   5. add ~/.local/bin to your PATH in your shell's rc file (idempotent)
 #
 # Re-running is safe: every step is idempotent.
+#
+# This installs only the ENGINE BINARY. To vendor the ai-sdd toolkit (framework
+# skills + the integrity pre-commit hook) INTO a repo you want to adopt, use
+# `scripts/bootstrap.sh <target-repo>` — a separate, per-repo, idempotent seeder.
 
 set -euo pipefail
 
