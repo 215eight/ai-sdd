@@ -1,0 +1,26 @@
+milestone: m1-distribution
+outcome: pass
+criteria:
+  - { id: C1-tag-derived-version, status: pass }
+  - { id: C2-seed-no-clone, status: pass }
+  - { id: C3-skill-surfacing, status: pass }
+  - { id: C4-integrity-hook-chaining, status: pass }
+  - { id: C5-both-agent-sessionstart-hooks, status: pass }
+  - { id: C6-version-stamp, status: pass }
+  - { id: C7-idempotency, status: pass }
+evidence: >-
+  Manual validation by owner 215eight on branch dashboard-canonical-snapshot.
+  Built + installed the new binary via scripts/install.sh (Swift 6.3.1) →
+  ~/.local/bin/ai-sdd reporting "ai-sdd bd50160" (tag-derived via git describe;
+  dev value, no release tag yet). Ran `ai-sdd seed` from the installed binary in
+  a FRESH repo (~/aisdd-seed-test) with no ai-sdd clone present: materialized 6
+  framework skills + 12 agent symlinks (.agents/.claude → ../../.ai-sdd/skills),
+  installed the managed pre-commit hook chaining a planted foreign hook once to
+  .pre-commit.local, installed SessionStart hooks for Claude (.claude/settings.json,
+  no matcher) and Codex (.codex/hooks.json, matcher "startup|resume") both running
+  "ai-sdd update --check", and stamped .ai-sdd/VERSION = bd50160. A second seed was
+  idempotent: symlinks already reconciled, managed hook refreshed in place, agent
+  hooks "up to date" (SessionStart entries stayed at 1), foreign hook still chained
+  once. Scope note: the prebuilt-release download + self-replace round-trip is
+  deferred to m2 (update-apply) + the manual release.yml; m1 validates the
+  distribution foundation only.
