@@ -1,0 +1,23 @@
+summary: >-
+  Made `ai-sdd --version` tag-derived. Renamed the CLI entry file
+  Sources/AISDDCLI/main.swift -> Sources/AISDDCLI/CLI.swift (git rename) to leave Swift
+  top-level-code mode so the `@main` target can hold a second source file, and changed
+  CommandConfiguration(version:) from the hardcoded "ai-sdd 0.5.0" literal to
+  "ai-sdd \(AISDDVersion.current)", interpolating the gitignored generated symbol
+  (scripts/gen-version.sh emits Sources/AISDDCLI/Version.swift, run before building).
+  Added the pure SemanticVersion helper in AISDDEngine (Sources/AISDDEngine/Version.swift):
+  a Comparable value type with a failable parse that tolerates a leading `v`, semver-compares
+  on major.minor.patch, exposes isRelease/isDev (any pre-release/build/describe suffix => dev),
+  and fails closed (malformed input => nil "unknown", never a crash). Added Swift Testing
+  coverage in Tests/AISDDEngineTests/VersionTests.swift. Layout.swift was left unchanged (no
+  centralized literal was required, per D6). Verification: `swift build` succeeded (no `'main'
+  attribute cannot be used in a module that contains top-level code` error), `swift test` passed
+  all 289 tests including the new VersionTests suite, and `.build/debug/ai-sdd --version` printed
+  `ai-sdd 3fdf641-dirty` (the expected dev `git describe` value with no release tag present).
+
+satisfies:
+  - A1-version-tag-derived
+  - A2-entry-file-renamed
+  - A3-version-helpers
+  - A4-helper-tests
+  - A5-build-and-test-green
