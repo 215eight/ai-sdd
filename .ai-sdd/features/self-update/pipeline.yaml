@@ -18,6 +18,10 @@ spec:
     - { id: update-check, kind: pipeline, pipeline: ../.., stack: swift }
     - { id: update-apply, kind: pipeline, pipeline: ../.., stack: swift }
     - { id: update-skill, kind: pipeline, pipeline: ../.., stack: swift }
+    # Forward correction (amendment 2026-06-26): the m2 live round-trip exposed that `.copy` resources
+    # ship a SEPARATE ai-sdd_AISDDEngine.bundle a relocated lone binary can't find — seed/update crash
+    # for real adopters. Truly embed resources in the binary; m2 re-validates after this lands.
+    - { id: embed-resources-inline, kind: pipeline, pipeline: ../.., stack: swift }
     - { id: m2-detect-apply, worker: milestone-gate, owner: [215eight] }
   edges:
     # m1: seed depends on the two foundations
@@ -32,7 +36,10 @@ spec:
     # m2 chain
     - { from: update-check, to: update-apply }
     - { from: update-apply, to: update-skill }
-    # m2 gate depends on every phase-2 slice
+    # forward-correction slice: builds on the latest code, gates m2
+    - { from: update-skill, to: embed-resources-inline }
+    # m2 gate depends on every phase-2 slice (incl. the embedding fix)
     - { from: update-check, to: m2-detect-apply }
     - { from: update-apply, to: m2-detect-apply }
     - { from: update-skill, to: m2-detect-apply }
+    - { from: embed-resources-inline, to: m2-detect-apply }

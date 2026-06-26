@@ -96,3 +96,14 @@ Also out of scope:
 Human approved DC1–DC6 in session, with one change: **DC2 → delete `bootstrap.sh`** (no thin shim).
 Slices generated below; manual-infra steps tracked on a separate checklist handed alongside the run.
 
+### Amendment 2026-06-26 (forward correction) — APPROVED
+The **m2 live round-trip** (install released v0.6.0 → publish v0.6.1 → `ai-sdd update`) exposed a
+distribution-breaking bug: `embedded-skills` used SwiftPM `.copy` resources, which ship a **separate
+`ai-sdd_AISDDEngine.bundle`** that a relocated/downloaded lone binary can't find (`Bundle.module` fatal
+error) — so `seed`/`update` crash for every real adopter. m1 passed only because it ran a locally-built
+binary with the bundle co-located. The milestone correctly caught it; **m2 = FAIL, left pending**.
+
+| # | Decision | Resolution | Status |
+|---|---|---|---|
+| DC7 | Fix the embedding | Add forward-correction slice **`embed-resources-inline`** (`embedded-skills` is completed/immutable): genuinely embed the 7 skills + hook in the compiled binary (prefer an in-package mechanism — `.embedInCode` or a build plugin — over a manual `scripts/` generator), drop the `.copy` bundle + `Sources/AISDDEngine/Resources/` copies, keep `EmbeddedFramework`'s API. **New acceptance = a relocation test:** a lone binary with no `.build`/bundle/clone must `seed` successfully (locally verifiable — no GitHub release needed). `m2-detect-apply` now `depends_on` this slice and re-validates after it. | closed |
+
