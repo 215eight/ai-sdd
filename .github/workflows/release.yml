@@ -30,6 +30,17 @@ jobs:
         with:
           fetch-depth: 0      # git describe needs full history + tags, not a shallow checkout
 
+      - name: Require the tag to be on main
+        shell: bash
+        run: |
+          # A tag push fires regardless of which branch the commit lives on. Only release
+          # tags whose commit is contained in main, so a tag cut on a feature branch can't ship.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag '$GITHUB_REF_NAME' (commit $GITHUB_SHA) is not on main — refusing to release"
+            exit 1
+          fi
+
       - name: Generate version + build universal binary
         shell: bash
         run: |
