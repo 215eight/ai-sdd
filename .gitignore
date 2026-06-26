@@ -76,4 +76,6 @@ fastlane/test_output
 .codex/
 # Versioning Files
 Sources/AISDDCLI/Version.swift
+# Generated embedded framework resources (built from skills/ + hooks/ by scripts/gen-embedded-resources.sh)
+Sources/AISDDEngine/Generated/EmbeddedFrameworkData.swift
 # ai-sdd:end

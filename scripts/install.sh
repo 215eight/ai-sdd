@@ -90,6 +90,8 @@ fi
 step "Compiling $BIN_NAME (release)"
 info "Stamping version from git (git describe → Version.swift)"
 "$SCRIPT_DIR/gen-version.sh"
+info "Packing framework skills + hook into the binary (→ EmbeddedFrameworkData.swift)"
+"$SCRIPT_DIR/gen-embedded-resources.sh"
 info "swift build -c release  (first build downloads dependencies — this can take a few minutes)"
 swift build -c release
 

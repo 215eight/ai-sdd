@@ -34,6 +34,7 @@ jobs:
         shell: bash
         run: |
           ./scripts/gen-version.sh
+          ./scripts/gen-embedded-resources.sh
           swift build -c release --arch arm64 --arch x86_64
           BIN_DIR="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
           echo "BIN_DIR=$BIN_DIR" >> "$GITHUB_ENV"
