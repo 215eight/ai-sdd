@@ -1,0 +1,23 @@
+summary: >-
+  Replaced the SwiftPM .copy resource-bundle mechanism (which shipped a separate
+  ai-sdd_AISDDEngine.bundle a relocated lone binary could not find, crashing seed/update with a
+  Bundle.module fatal error) with genuine in-binary embedding. EmbeddedFramework now decodes the 7
+  framework skills' SKILL.md and the pre-commit hook source from base64 literals in the gitignored,
+  generated EmbeddedFrameworkData enum compiled into the AISDDEngine target — no Bundle.module, no
+  sibling bundle. Its public API (skillIds, skillManifest, skillFiles, hookSource, materialize(to:))
+  and typed EmbeddedError cases are byte-for-byte preserved, so Seeder and the update reseed path are
+  untouched. Package.swift drops the .copy("Resources/skills"/"Resources/hooks") declarations so the
+  target produces NO resource bundle; Layout.swift drops the dead bundle-name framing while retaining
+  the materialized-layout names (embeddedSkillsResourceDir / embeddedHookResourceDir / embeddedHookFile)
+  Seeder + materialize still use; Sources/AISDDEngine/Resources/ is deleted; and the
+  EmbeddedFrameworkTests are updated for the compiled-in mechanism with a test asserting all 7 ids +
+  non-empty SKILL.md + hook are served purely from compiled-in data with no bundle on disk. Verified:
+  swift build + swift test (323 tests) green, validate green, and the relocation test prints
+  RELOCATION_OK (a lone copied binary seeds all 7 skills + the hook with no ai-sdd_AISDDEngine.bundle).
+
+satisfies:
+  - AC1-relocation-seed
+  - AC2-compiled-in-unit
+  - AC3-no-bundle-no-resources-dir
+  - AC4-api-stable
+  - AC5-green-toolchain

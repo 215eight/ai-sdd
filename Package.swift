@@ -22,16 +22,13 @@ let package = Package(
         // Declarative spec types (Codable) + runtime types. No dependencies.
         .target(name: "AISDDModels"),
         // The deterministic engine: spec loader (JSON + YAML), validator, Scheduler, Reducer.
-        // Embeds the framework skills + the `pre-commit` integrity-hook source as bundle resources
-        // (copied via symlinks under Resources/ that point at the repo-root source of truth) so the
-        // binary can reconcile a repo with no source clone. Read back through `Bundle.module`.
+        // Embeds the framework skills + the `pre-commit` integrity-hook source as base64 literals in a
+        // gitignored generated source (Generated/EmbeddedFrameworkData.swift, packed from the repo-root
+        // source of truth by scripts/gen-embedded-resources.sh) compiled directly into this target — so
+        // a relocated lone binary needs NO sibling resource bundle. No `.copy` resources, no Bundle.module.
         .target(
             name: "AISDDEngine",
-            dependencies: ["AISDDModels", .product(name: "Yams", package: "Yams")],
-            resources: [
-                .copy("Resources/skills"),
-                .copy("Resources/hooks")
-            ]
+            dependencies: ["AISDDModels", .product(name: "Yams", package: "Yams")]
         ),
         // The CLI the agent drives (Mode B): validate / start / next / submit.
         .executableTarget(

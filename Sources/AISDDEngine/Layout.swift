@@ -35,28 +35,27 @@ public enum Layout {
     /// The marker file every surfaceable skill must contain.
     static let skillManifestFile = "SKILL.md"
 
-    // MARK: - Embedded-framework resource literals (EmbeddedFramework / Bundle.module)
+    // MARK: - Embedded-framework materialized-layout literals (EmbeddedFramework)
     //
-    // The binary embeds the framework skills + the `pre-commit` integrity-hook source as SwiftPM
-    // resources of the `AISDDEngine` target (copied via symlinks under `Sources/AISDDEngine/Resources/`
-    // that point at the repo-root `skills/`/`hooks/` source of truth). These are the names the
-    // resources land under inside `Bundle.module`, kept here so `EmbeddedFramework` and its tests
-    // never inline a path string (the conventions mandate path names live in `Layout.swift`).
+    // The binary compiles the framework skills + the `pre-commit` integrity-hook source in as base64
+    // literals (gitignored generated `EmbeddedFrameworkData`, packed from the repo-root `skills/`/
+    // `hooks/` source of truth). These names describe the MATERIALIZED on-disk layout
+    // `EmbeddedFramework.materialize(to:)` writes under a seed target's `.ai-sdd` (and that `Seeder`
+    // reads back), kept here so `EmbeddedFramework` and its tests never inline a path string (the
+    // conventions mandate path names live in `Layout.swift`).
 
-    /// The bundled resource directory holding every embedded skill (`<skill>/SKILL.md`), as it appears
-    /// in `Bundle.module`. Matches the `.copy("Resources/skills")` basename in `Package.swift`.
+    /// The materialized directory holding every embedded skill (`<skill>/SKILL.md`) under a target's home.
     public static let embeddedSkillsResourceDir = "skills"
 
-    /// The bundled resource directory holding the integrity-hook source, as it appears in
-    /// `Bundle.module`. Matches the `.copy("Resources/hooks")` basename in `Package.swift`.
+    /// The materialized directory holding the integrity-hook source under a target's home.
     public static let embeddedHookResourceDir = "hooks"
 
-    /// The integrity-hook file name within the embedded `hooks` resource dir (`hooks/pre-commit`).
+    /// The integrity-hook file name within the materialized `hooks` dir (`hooks/pre-commit`).
     public static let embeddedHookFile = "pre-commit"
 
     /// The canonical framework skills embedded by this slice, sorted. The runtime accessor derives the
-    /// live set from the bundle (so it self-updates when a later slice adds a skill); this list is the
-    /// expected-id baseline the tests assert against.
+    /// live set from the compiled-in pack (so it self-updates when a later slice adds a skill); this
+    /// list is the expected-id baseline the tests assert against.
     public static let embeddedFrameworkSkillIds = [
         "ai-sdd-bootstrap",
         "ai-sdd-cheatsheet",

@@ -1,104 +1,64 @@
 import Foundation
 
-/// The framework — the skill set + the `pre-commit` integrity-hook source — embedded into the binary
-/// as SwiftPM bundle resources, so the tool can reconcile a repo with NO ai-sdd source clone on disk.
+/// The framework — the skill set + the `pre-commit` integrity-hook source — compiled into the binary
+/// as base64 literals (the GITIGNORED, generated `EmbeddedFrameworkData`), so the tool can reconcile a
+/// repo with NO ai-sdd source clone AND no sibling resource bundle on disk.
 ///
-/// The repo-root `skills/` and `hooks/pre-commit` remain the single source of truth; symlinks under
-/// `Sources/AISDDEngine/Resources/` pull them into `Bundle.module` at build time (declared as
-/// `.copy(...)` resources in `Package.swift`). Every read here goes through `Bundle.module` — this
-/// type makes no assumption that the repo-root files exist at runtime.
+/// The repo-root `skills/` and `hooks/pre-commit` remain the single source of truth;
+/// `scripts/gen-embedded-resources.sh` (manual infra, sibling to `gen-version.sh`) packs them into the
+/// generated `EmbeddedFrameworkData` enum the `AISDDEngine` target compiles in. Every read here decodes
+/// from that compiled-in data — no `Bundle.module`, no relocated-bundle lookup — so a lone, relocated
+/// `ai-sdd` binary (no `.build`, no `ai-sdd_AISDDEngine.bundle`, no clone) can seed and update.
 ///
 /// Shaped like the other deterministic helpers (`SkillSurface`): a `public enum` of statics, no state.
 public enum EmbeddedFramework {
     /// A failure reading or materializing an embedded resource. Typed (per the swift conventions:
     /// prefer exact errors over `any Error`) so callers can branch on the missing piece.
     public enum EmbeddedError: Error, Equatable {
-        /// The bundled `skills` resource directory is missing — the binary was built without the
-        /// `.copy("Resources/skills")` resource, or the bundle is corrupt.
+        /// The compiled-in skills pack is empty — the binary was built without the generated
+        /// `EmbeddedFrameworkData` source (run `scripts/gen-embedded-resources.sh` before building).
         case skillsResourceMissing
-        /// A named skill (or its `SKILL.md`) is absent from the bundle.
+        /// A named skill is absent from the compiled-in pack, or its base64 `SKILL.md` failed to decode.
         case skillMissing(String)
-        /// The bundled `hooks/pre-commit` source is missing.
+        /// The compiled-in `pre-commit` hook source is absent or failed to base64-decode.
         case hookResourceMissing
-    }
-
-    // MARK: - Bundle locations
-
-    /// The bundled `skills` directory URL inside `Bundle.module`, or nil if the resource is absent.
-    private static var skillsRootURL: URL? {
-        Bundle.module.url(forResource: Layout.embeddedSkillsResourceDir, withExtension: nil)
-    }
-
-    /// The bundled `hooks/pre-commit` source URL inside `Bundle.module`, or nil if absent.
-    private static var hookSourceURL: URL? {
-        Bundle.module.url(forResource: Layout.embeddedHookFile, withExtension: nil,
-                          subdirectory: Layout.embeddedHookResourceDir)
     }
 
     // MARK: - Enumeration
 
-    /// The embedded framework skill ids, read from the bundle — the subdirectories of the bundled
-    /// `skills` dir that contain a `SKILL.md`. Sorted, deduplicated. Derived from bundle contents so
-    /// the set self-updates when a later slice embeds another skill. Empty if the resource is absent.
+    /// The embedded framework skill ids, read from the compiled-in pack — sorted, deduplicated. Derived
+    /// from `EmbeddedFrameworkData.skills` so the set self-updates when a later slice embeds another
+    /// skill. Empty if the generated pack is absent. Matches `Layout.embeddedFrameworkSkillIds`.
     public static func skillIds() -> [String] {
-        guard let root = skillsRootURL else { return [] }
-        let fm = FileManager.default
-        let entries = (try? fm.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-        return entries.compactMap { entry -> String? in
-            let manifest = entry.appendingPathComponent(Layout.skillManifestFile)
-            guard (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
-                  fm.fileExists(atPath: manifest.path) else { return nil }
-            return entry.lastPathComponent
-        }.sorted()
+        Array(Set(EmbeddedFrameworkData.skills.map(\.id))).sorted()
     }
 
     // MARK: - Per-skill contents
 
-    /// The bundle URL of a skill's directory, validating it exists and carries a `SKILL.md`.
-    private static func skillDirURL(_ id: String) throws -> URL {
-        guard let root = skillsRootURL else { throw EmbeddedError.skillsResourceMissing }
-        let dir = root.appendingPathComponent(id, isDirectory: true)
-        let manifest = dir.appendingPathComponent(Layout.skillManifestFile)
-        guard FileManager.default.fileExists(atPath: manifest.path) else {
+    /// One embedded skill's `SKILL.md` contents, base64-decoded from the compiled-in pack.
+    public static func skillManifest(_ id: String) throws -> Data {
+        guard !EmbeddedFrameworkData.skills.isEmpty else { throw EmbeddedError.skillsResourceMissing }
+        guard let entry = EmbeddedFrameworkData.skills.first(where: { $0.id == id }),
+              let data = Data(base64Encoded: entry.base64) else {
             throw EmbeddedError.skillMissing(id)
         }
-        return dir
+        return data
     }
 
-    /// One embedded skill's `SKILL.md` contents, read from the bundle.
-    public static func skillManifest(_ id: String) throws -> Data {
-        let manifest = try skillDirURL(id).appendingPathComponent(Layout.skillManifestFile)
-        return try Data(contentsOf: manifest)
-    }
-
-    /// Every file under one embedded skill's directory, keyed by its path relative to the skill dir
-    /// (e.g. `SKILL.md`, or a nested `reference/foo.md`). Read from the bundle.
+    /// Every file under one embedded skill, keyed by its path relative to the skill dir. Each framework
+    /// skill is exactly one `SKILL.md`, so this is a single-entry map keyed by `Layout.skillManifestFile`.
     public static func skillFiles(_ id: String) throws -> [String: Data] {
-        let dir = try skillDirURL(id)
-        let fm = FileManager.default
-        var files: [String: Data] = [:]
-        let base = dir.standardizedFileURL.path
-        let enumerator = fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey])
-        while let item = enumerator?.nextObject() as? URL {
-            guard (try? item.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
-            else { continue }
-            var relative = item.standardizedFileURL.path
-            if relative.hasPrefix(base) {
-                relative = String(relative.dropFirst(base.count))
-                relative = relative.drop(while: { $0 == "/" }).description
-            }
-            files[relative] = try Data(contentsOf: item)
-        }
-        return files
+        [Layout.skillManifestFile: try skillManifest(id)]
     }
 
     // MARK: - Hook source
 
-    /// The embedded `pre-commit` integrity-hook source, read from the bundle.
+    /// The embedded `pre-commit` integrity-hook source, base64-decoded from the compiled-in pack.
     public static func hookSource() throws -> Data {
-        guard let url = hookSourceURL else { throw EmbeddedError.hookResourceMissing }
-        return try Data(contentsOf: url)
+        guard let data = Data(base64Encoded: EmbeddedFrameworkData.preCommitHookBase64) else {
+            throw EmbeddedError.hookResourceMissing
+        }
+        return data
     }
 
     // MARK: - Materialize
@@ -106,7 +66,7 @@ public enum EmbeddedFramework {
     /// Write the embedded framework into `directory`: every skill as `<id>/SKILL.md` (and any other
     /// files the skill carries, preserving their relative layout) plus the `pre-commit` hook source as
     /// `<embeddedHookResourceDir>/<embeddedHookFile>`. Intermediate dirs are created; existing files
-    /// are overwritten. Reads exclusively from `Bundle.module` — no source clone required.
+    /// are overwritten. Reads exclusively from the compiled-in pack — no source clone or bundle required.
     public static func materialize(to directory: URL) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)

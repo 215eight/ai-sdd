@@ -1,0 +1,156 @@
+summary: >-
+  Forward-correct the embedded-skills distribution bug: replace the SwiftPM .copy resource bundle
+  (which ships a separate ai-sdd_AISDDEngine.bundle that a relocated lone binary cannot find, crashing
+  seed/update with a Bundle.module fatal error) with genuine in-binary embedding. The 7 framework
+  skills (each exactly one SKILL.md) and the hooks/pre-commit source are packed into a gitignored
+  GENERATED Swift source that the AISDDEngine target compiles in, so a single relocated ai-sdd binary
+  (no .build, no sibling bundle, no clone) can seed and update. EmbeddedFramework keeps its exact
+  public API (skillIds, skillManifest, skillFiles, hookSource, materialize(to:)) so Seeder and the
+  update reseed path are unaffected at the call sites; Sources/AISDDEngine/Resources/ is removed and
+  the .copy resource declarations + dead bundle-name literals are dropped so the AISDDEngine target
+  produces no resource bundle. The mechanism was EMPIRICALLY VERIFIED on Swift 6.3.1 (see D1).
+  MANUAL-INFRA DEPENDENCY (this is NOT an open architecture question, just an out-of-factory-scope
+  file): the pack generator lives in scripts/ (sibling to gen-version.sh), which is outside the
+  factory's declarable file scope. The implementer authors the engine read-side + Package.swift +
+  Layout.swift + tests + the Resources/ deletion + the .gitignore entry; the generator script and its
+  install.sh/release.yml wiring are added by hand on the manual checklist (the generated source is
+  gitignored, exactly like Sources/AISDDCLI/Version.swift).
+
+scope:
+  in:
+    - Rewrite EmbeddedFramework to read the 7 skills' SKILL.md + the hooks/pre-commit source from a
+      compiled-in generated symbol (EmbeddedFrameworkData) instead of Bundle.module, keeping its public
+      API byte-for-byte compatible (skillIds, skillManifest, skillFiles, hookSource, materialize(to:)).
+    - Drop the .copy("Resources/skills") and .copy("Resources/hooks") resource declarations from the
+      AISDDEngine target in Package.swift so the target produces no resource bundle.
+    - Delete Sources/AISDDEngine/Resources/ entirely (the real-copy duplicates of skills/ + hooks/).
+    - Remove the now-dead Bundle.module bundle-name comments/literals in Layout.swift. NOTE
+      embeddedSkillsResourceDir / embeddedHookResourceDir / embeddedHookFile are RETAINED — they name
+      the materialized on-disk layout under a seed target's .ai-sdd (Seeder + materialize still use
+      them); only their "matches the .copy basename in Package.swift" framing changes.
+    - Update Tests/AISDDEngineTests/EmbeddedFrameworkTests.swift for the compiled-in source and add the
+      relocation test (build, copy only the ai-sdd binary into an isolated dir with no .build/bundle/
+      clone, seed a throwaway repo, assert all 7 skills + hook materialize and no bundle is present).
+    - Add a .gitignore entry for the generated embedded-data Swift source.
+  out:
+    - The pack-generator script itself (scripts/gen-embedded-resources.sh) and its install.sh /
+      release.yml wiring (scripts/ + .github/ are outside the factory's declarable file scope — manual
+      infra, tracked on the manual checklist alongside gen-version.sh). See D2.
+    - Any change to Seeder.swift, SkillSurface.swift, or the CLI seed/update commands (the embedded
+      API is unchanged, so they keep working untouched).
+    - GitHub release / release.yml main-guard hardening / superseding the broken v0.6.0/v0.6.1 tags
+      (separate manual steps; the relocation acceptance is locally verifiable with NO release needed).
+    - The update-check / update-apply / update-skill behavior (delivered by prior slices; this slice
+      only changes how the framework bytes are carried inside the binary).
+
+acceptance:
+  - id: AC1-relocation-seed
+    description: >-
+      After swift build, copying ONLY the built ai-sdd executable into an isolated directory that has
+      no .build, no ai-sdd_AISDDEngine.bundle, and no ai-sdd clone, then running ai-sdd seed against a
+      throwaway target repo FROM that isolated directory succeeds and materializes all 7 skills (each
+      <id>/SKILL.md) plus the pre-commit hook, with NO Bundle.module fatal error. Verifiable locally
+      with no GitHub release. (Run ./scripts/gen-version.sh and the embedded-resources generator before
+      building.)
+  - id: AC2-compiled-in-unit
+    description: >-
+      A Swift Testing case asserts EmbeddedFramework.skillIds() returns exactly the 7 ids in
+      Layout.embeddedFrameworkSkillIds (including ai-sdd-update), and each skillManifest(id) and
+      hookSource() returns non-empty data purely from the compiled-in pack, with no resource bundle on
+      disk. The hook source still contains the ai-sdd:managed-hook marker.
+  - id: AC3-no-bundle-no-resources-dir
+    description: >-
+      The AISDDEngine target produces no ai-sdd_AISDDEngine.bundle (the build product dir and a
+      relocated binary's dir have no such bundle), the .copy resource declarations are gone from
+      Package.swift, and Sources/AISDDEngine/Resources/ no longer exists in the tree.
+  - id: AC4-api-stable
+    description: >-
+      EmbeddedFramework's public API (skillIds, skillManifest, skillFiles, hookSource, materialize(to:))
+      is unchanged in signature and observable behavior; Seeder.swift and the CLI update reseed path are
+      not edited, and SeederTests + EmbeddedFrameworkTests pass against the new read side.
+  - id: AC5-green-toolchain
+    description: >-
+      swift build, swift test, and swift run ai-sdd validate .ai-sdd all succeed (after running
+      ./scripts/gen-version.sh and the embedded-resources generator so both gitignored generated Swift
+      sources exist before the build).
+
+decisions:
+  - id: D1-embedding-mechanism
+    status: closed
+    decision: >-
+      Embed via a GITIGNORED GENERATED SWIFT SOURCE built from repo-root skills/ + hooks/pre-commit by a
+      scripts/ generator (sibling to gen-version.sh), compiled into the AISDDEngine target. EMPIRICALLY
+      VERIFIED on Swift 6.3.1 in a throwaway package: a generated enum carrying base64 literals compiles
+      in, the lone relocated binary reads all skills + the hook from it, and NO sibling .bundle is
+      produced. Chosen OVER SwiftPM .embedInCode because .embedInCode keys its generated PackageResources
+      symbol by BASENAME ONLY (verified: a directory rule errors with "multiple resources named
+      SKILL.md", and per-file rules collide on the shared SKILL.md basename) — so .embedInCode would
+      require staging a committed/packed duplicate file under Sources/AISDDEngine/Resources/,
+      reintroducing exactly the source-of-truth duplication + manual-sync caveat this slice removes.
+      (.embedInCode itself was also verified to compile and produce no bundle for a single packed file,
+      so it is the validated fallback if the generated-source path is ever rejected.) The
+      generated-source approach keeps repo-root the single source of truth, ships no bundle, and mirrors
+      the already-proven gen-version.sh -> gitignored Version.swift pattern. Base64-encoding the raw
+      bytes also sidesteps the Yams/Swift backslash-paren interpolation hazard in skill/hook content.
+  - id: D2-manual-infra-generator
+    status: closed
+    decision: >-
+      The generator (scripts/gen-embedded-resources.sh) and its build wiring (the install.sh hook +
+      release.yml step that run it before swift build, exactly as gen-version.sh is wired) are a
+      MANUAL-INFRA DEPENDENCY. scripts/ and .github/ are outside the factory's declarable file scope, so
+      the implementer does NOT author them inside this slice — they go on the manual checklist handed
+      alongside the run (install.sh and release.sh already exist in scripts/ as the precedent). The
+      generated output (Sources/AISDDEngine/Generated/EmbeddedFrameworkData.swift) is gitignored. The
+      implementer authors only the engine read-side that consumes the generated symbol, Package.swift,
+      Layout.swift, the Resources/ deletion, the tests, and the .gitignore entry. The reviewer/runner
+      MUST run the generator (and gen-version.sh) before swift build/test, since both generated sources
+      are gitignored build prerequisites.
+  - id: D3-generated-shape-and-enumeration
+    status: closed
+    decision: >-
+      The generated source declares an internal enum EmbeddedFrameworkData with (a) a list of
+      (id, base64-encoded SKILL.md) pairs for the skills and (b) the base64-encoded pre-commit hook
+      source. EmbeddedFramework decodes these in memory: skillIds() returns the ids sorted (matching the
+      current sorted/dedup contract and Layout.embeddedFrameworkSkillIds), skillManifest(id) decodes the
+      matching pair, skillFiles(id) returns a single-entry map keyed by Layout.skillManifestFile (since
+      each skill is exactly one SKILL.md), hookSource() decodes the hook, and materialize(to:) writes
+      <id>/SKILL.md + hooks/pre-commit under the target using the EXISTING Layout names
+      (embeddedSkillsResourceDir / embeddedHookResourceDir / embeddedHookFile, now the materialized
+      on-disk layout rather than bundle names). The typed EmbeddedError cases (skillsResourceMissing /
+      skillMissing / hookResourceMissing) are retained for the unknown-id / decode-failure paths so the
+      error contract and all callers are unchanged.
+  - id: D4-files-scope
+    status: closed
+    decision: >-
+      The factory-declarable files for this slice are Sources/AISDDEngine/EmbeddedFramework.swift
+      (rewrite the read side), Package.swift (drop the .copy resources), Sources/AISDDEngine/Layout.swift
+      (drop dead bundle-name framing; retain the materialized-layout names), Sources/AISDDEngine/
+      Resources/ (delete the directory), Tests/AISDDEngineTests/EmbeddedFrameworkTests.swift (update +
+      relocation test), and .gitignore (ignore the generated source). Sources/AISDDEngine/Generated/
+      EmbeddedFrameworkData.swift is referenced as the compiled-in symbol but is a gitignored build
+      product generated by the manual-infra script (D2), not authored in-tree.
+  - id: D5-no-new-architecture
+    status: closed
+    decision: >-
+      This is a forward correction of a distribution mechanism, fully resolved by DC7 (requirements
+      Amendment 2026-06-26). No new architecture decision is needed: it stays within the existing
+      deterministic-engine model, Layout-centralized path literals, the AISDDEngine/AISDDCLI/AISDDModels
+      layering, and the established gitignored-generated-source precedent (Version.swift). No ADR change
+      is required.
+
+files:
+  - Sources/AISDDEngine/EmbeddedFramework.swift
+  - Sources/AISDDEngine/Layout.swift
+  - Sources/AISDDEngine/Resources/
+  - Sources/AISDDEngine/Generated/EmbeddedFrameworkData.swift
+  - Package.swift
+  - Tests/AISDDEngineTests/EmbeddedFrameworkTests.swift
+  - .gitignore
+
+tests:
+  - "./scripts/gen-version.sh"
+  - "./scripts/gen-embedded-resources.sh"
+  - "swift build"
+  - "swift test"
+  - "swift run ai-sdd validate .ai-sdd"
+  - "swift build && D=$(mktemp -d) && cp .build/debug/ai-sdd \"$D/\" && R=$(mktemp -d) && git -C \"$R\" init -q && (cd \"$D\" && ./ai-sdd seed \"$R\") && test -f \"$R/.ai-sdd/skills/ai-sdd-update/SKILL.md\" && test -f \"$R/.git/hooks/pre-commit\" && test ! -e \"$D/ai-sdd_AISDDEngine.bundle\""
