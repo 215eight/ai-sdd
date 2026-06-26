@@ -1,0 +1,26 @@
+milestone: m2-detect-apply
+outcome: pass
+criteria:
+  - { id: C1-detect-behind-notice, status: pass }
+  - { id: C2-download-real-release, status: pass }
+  - { id: C3-checksum-verify, status: pass }
+  - { id: C4-atomic-self-replace, status: pass }
+  - { id: C5-reseed-after-replace, status: pass }
+  - { id: C6-end-to-end-roundtrip, status: pass }
+  - { id: C7-relocation-self-contained, status: pass }
+evidence: >-
+  Live end-to-end validation by owner 215eight on branch dashboard-canonical-snapshot,
+  after the embed-resources-inline fix. Two FIXED releases were cut (the broken pre-fix
+  v0.6.0/v0.6.1 were deleted; v0.6.1 re-cut at the fix commit 87a51f8, v0.6.2 at a later
+  fixed commit). Installed the downloaded v0.6.1 RELEASE asset (reports clean "ai-sdd
+  0.6.1"). DETECT: `ai-sdd update --check` emitted "⬆ ai-sdd v0.6.2 is available — run
+  /ai-sdd-update" (after clearing the per-day cache). APPLY: `ai-sdd update` printed
+  "✓ updated ai-sdd 0.6.1 -> 0.6.2 (binary replaced, factory reseeded)"; `ai-sdd
+  --version` → 0.6.2; the reseeded throwaway repo got .ai-sdd/VERSION=0.6.2 + 7 skills —
+  the reseed step that crashed pre-fix now succeeds. C7 (relocation/self-contained) was
+  proven in the embed-resources-inline slice (RELOCATION_OK: a lone copied binary seeds
+  7 skills with no ai-sdd_AISDDEngine.bundle). Full chain verified against real GitHub
+  releases: detect → download → checksum-verify → atomic self-replace → reseed.
+  Note: an explicit `update --check` honoring the 24h cache (a fresh release isn't seen
+  until cache expiry) is a known UX finding flagged for a follow-up (explicit --check
+  should force-refresh).
