@@ -1,0 +1,61 @@
+name: release
+
+# Publish a prebuilt macOS universal `ai-sdd` binary when a vMAJOR.MINOR.PATCH tag is pushed.
+# The tag is the single source of truth: scripts/gen-version.sh derives the binary version from
+# `git describe` (which equals the tag on a clean tagged commit), so `ai-sdd --version` can never
+# drift from the tag. The published asset name MUST stay `ai-sdd-macos-universal.tar.gz` (+ .sha256)
+# — `ai-sdd update` resolves exactly that name from releases/latest (Layout.updateAssetName).
+
+on:
+  push:
+    tags: ['v*']            # permissive trigger; the strict format is enforced in step 1
+
+permissions:
+  contents: write           # required for softprops/action-gh-release to create the Release
+
+jobs:
+  release:
+    runs-on: macos-26       # newest image, pinned (not macos-latest) for reproducibility
+    steps:
+      - name: Validate tag format (vMAJOR.MINOR.PATCH)
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::tag '$TAG' must be vMAJOR.MINOR.PATCH (e.g. v0.6.0) — lowercase v, no leading zeros"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0      # git describe needs full history + tags, not a shallow checkout
+
+      - name: Generate version + build universal binary
+        shell: bash
+        run: |
+          ./scripts/gen-version.sh
+          swift build -c release --arch arm64 --arch x86_64
+          BIN_DIR="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+          echo "BIN_DIR=$BIN_DIR" >> "$GITHUB_ENV"
+
+      - name: Verify the binary version equals the tag
+        shell: bash
+        run: |
+          BUILT="$("$BIN_DIR/ai-sdd" --version | awk '{print $2}')"
+          EXPECTED="${GITHUB_REF_NAME#v}"
+          echo "built: $BUILT   expected: $EXPECTED"
+          [ "$BUILT" = "$EXPECTED" ] || { echo "::error::binary version '$BUILT' != tag '$EXPECTED'"; exit 1; }
+
+      - name: Package + checksum
+        shell: bash
+        run: |
+          tar -czf ai-sdd-macos-universal.tar.gz -C "$BIN_DIR" ai-sdd
+          shasum -a 256 ai-sdd-macos-universal.tar.gz > ai-sdd-macos-universal.tar.gz.sha256
+          cat ai-sdd-macos-universal.tar.gz.sha256
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            ai-sdd-macos-universal.tar.gz
+            ai-sdd-macos-universal.tar.gz.sha256
