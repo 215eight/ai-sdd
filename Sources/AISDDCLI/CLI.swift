@@ -242,7 +242,7 @@ struct Cheatsheet: ParsableCommand {
         ai-sdd cheatsheet    ( $cmd = shell command   /cmd = agent skill )
 
         ── ONE-TIME SETUP ──────────────────────────────────────────────
-          $ swift build -c release  # then put .build/release/ai-sdd on PATH
+          $ ./scripts/install.sh    # build ai-sdd + put it on your PATH
           /ai-sdd-bootstrap         # discover stack, scaffold .ai-sdd/, gate
 
         ── A FEATURE ───────────────────────────────────────────────────
@@ -345,6 +345,8 @@ struct Status: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Show a Run's state and what is runnable now.")
     @Argument(help: "Run id, feature slug, or unique slice name (self-starts a run when none exists).")
     var name: String
+    @Flag(name: .long, help: "Emit the run's state as JSON instead of the human-readable tree.")
+    var json = false
 
     func run() throws {
         emitUpdateBanner()
@@ -359,9 +361,24 @@ struct Status: ParsableCommand {
         guard let (env, _, _) = try? loadValidated(meta.pipelineDir) else {
             let expected = RunResolver.featureDir(workspace: workspace(), feature: runId)
                 .standardizedFileURL.path
+            if json {
+                struct StalePipelineDir: Encodable {
+                    let error = "stale-pipeline-dir"; let run: String
+                    let recordedPipelineDir: String; let expectedFeatureDir: String
+                }
+                print(try encodeJSON(StalePipelineDir(
+                    run: runId, recordedPipelineDir: meta.pipelineDir, expectedFeatureDir: expected)))
+                throw ExitCode.failure
+            }
             print("run \(runId)")
             print("  ⚠ stale pipelineDir: recorded '\(meta.pipelineDir)' does not resolve")
             print("    expected feature dir: \(expected)")
+            return
+        }
+
+        if json {
+            print(try encodeJSON(Self.statusJSON(runId: runId, pipeline: env.spec,
+                                                 name: env.metadata.name, state: state)))
             return
         }
 
@@ -369,6 +386,44 @@ struct Status: ParsableCommand {
             + "\(state.completedNodes.count)/\(env.spec.nodes.count) complete")
         Self.printLevel(pipeline: env.spec, state: state, dir: meta.pipelineDir, indent: "  ")
         if Scheduler.isComplete(state, env.spec) { print("  ✓ done") }
+    }
+
+    /// The `--json` view of a run's top-level state. The `status` field is the engine's verdict the
+    /// driver branches on — `done` / `idle` / `escalated` / `running` — mirroring `next`'s JSON
+    /// convention (a self-started run never reaches here unresolved: `resolveRun` already emits the
+    /// `ambiguous` / `unknown` error shapes). `running` means work is in flight → go to `next`.
+    struct StatusJSON: Encodable {
+        let status: String          // done | running | escalated | idle
+        let run: String
+        let pipeline: String
+        let complete: Int
+        let total: Int
+        let runnable: [String]
+        let inProgress: [String]
+        let escalated: [String]
+        let rework: [String: [String]]
+    }
+
+    static func statusJSON(runId: String, pipeline: PipelineSpec,
+                           name: String, state: RunState) -> StatusJSON {
+        let runnable = Scheduler.runnable(state, pipeline).sorted()
+        let inProgress = state.inProgressNodes.sorted()
+        let escalated = state.escalatedNodes.sorted()
+        let status: String
+        if Scheduler.isComplete(state, pipeline) {
+            status = "done"
+        } else if !runnable.isEmpty || !inProgress.isEmpty {
+            status = "running"
+        } else if !escalated.isEmpty {
+            status = "escalated"
+        } else {
+            status = "idle"
+        }
+        return StatusJSON(
+            status: status, run: runId, pipeline: name,
+            complete: state.completedNodes.count, total: pipeline.nodes.count,
+            runnable: runnable, inProgress: inProgress, escalated: escalated,
+            rework: state.failedChecks.mapValues { $0.sorted() })
     }
 
     /// Print one pipeline level's state, descending into the in-progress slice's sub-pipeline.

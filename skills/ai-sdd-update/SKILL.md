@@ -14,8 +14,8 @@ apply on an explicit human OK** and land the reseed as a clean, standalone commi
 confirmation, no apply — full stop.
 
 **Agent-agnostic:** works the same under Claude Code or Codex — no host-specific assumptions. Run the
-commands over the shell from the repo root; prefer the on-PATH `ai-sdd`, fall back to `.build/debug/ai-sdd`
-when it is not resolvable.
+commands over the shell from the repo root; `ai-sdd` is always on your `PATH` (the installer puts it
+there).
 
 ## The contract (four steps)
 
@@ -24,8 +24,7 @@ when it is not resolvable.
 From the repo root:
 
 ```sh
-ai-sdd update --check               # preferred — the installed, on-PATH binary
-.build/debug/ai-sdd update --check  # fallback — when ai-sdd is not on PATH
+ai-sdd update --check
 ```
 
 Read the result and **show the teammate the version transition** plainly — the current version to the
@@ -48,8 +47,7 @@ the teammate's explicit go-ahead.
 On confirmation, run the apply:
 
 ```sh
-ai-sdd update               # preferred — the installed, on-PATH binary
-.build/debug/ai-sdd update  # fallback — when ai-sdd is not on PATH
+ai-sdd update
 ```
 
 This self-replaces the binary and reseeds the framework skills into the repo. The reseed leaves

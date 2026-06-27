@@ -30,9 +30,7 @@ it everything explicitly (below). State flows through **artifacts + the run stor
 
 ## Setup
 
-```sh
-swift build                                          # → .build/debug/ai-sdd (call directly for clean --json)
-```
+`ai-sdd` is always on your `PATH` (the installer puts it there) — call it directly; there is no build step.
 
 `<name>` is a single argument — a feature slug, an existing run id, or a unique slice name — and the
 engine resolves it the same way everywhere. A bare `<name>` **self-starts** a run when none exists
@@ -46,7 +44,7 @@ discipline*.
 ### 1. Read the ledger — `status`
 Every iteration begins here. The engine ledger, not your memory, says where the run stands.
 ```sh
-.build/debug/ai-sdd status <name> --json
+ai-sdd status <name> --json
 ```
 - `{"status":"done"}` → **stop and report.** This is the *only* signal that authorizes "done" — never
   declare the run finished on your own sense of progress.
@@ -61,7 +59,7 @@ Every iteration begins here. The engine ledger, not your memory, says where the 
 
 ### 2. Ask the engine what's next
 ```sh
-.build/debug/ai-sdd next <name> --json
+ai-sdd next <name> --json
 ```
 A Worker instruction: `slice`, `node`, `task.skill`, `consumes`, `produces`, `checks`, `rework`.
 (`next` resolves and self-starts the same `<name>` and returns the same `done` / `idle` / error
@@ -117,7 +115,7 @@ amendment (a new slice via `ai-sdd-plan`) — don't act on it now.
 
 ### 5. Submit
 ```sh
-.build/debug/ai-sdd submit <name> --json
+ai-sdd submit <name> --json
 ```
 - `advanced: true` → continue.
 - `advanced: false` → a required gate failed (`failed` + `checks[].output`). Loop: the next `next`
@@ -169,6 +167,6 @@ scope when each slice starts from a **clean tree**:
 
 At `done`, summarize per slice from the logged input/output: what each worker produced, which gates
 needed rework (and whether any escalated to a human), and the commit made. Each slice's plan and
-review are browsable at `.ai-sdd/features/<slug>/slices/<slice>/`. `.build/debug/ai-sdd status
+review are browsable at `.ai-sdd/features/<slug>/slices/<slice>/`. `ai-sdd status
 <name>` shows the nested state any time — and remains the authority on whether the run is `done`,
 `idle`, or `escalated`.

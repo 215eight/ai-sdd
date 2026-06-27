@@ -11,12 +11,10 @@ commands of your own; the CLI is the single source of truth.
 
 ## What to do
 
-1. From the **repo root**, run the cheatsheet command. Prefer the on-PATH binary; fall back to the
-   debug build if `ai-sdd` is not resolvable:
+1. From the **repo root**, run the cheatsheet command (`ai-sdd` is always on your `PATH`):
 
    ```sh
-   ai-sdd cheatsheet               # preferred — the installed, on-PATH binary
-   .build/debug/ai-sdd cheatsheet  # fallback — when ai-sdd is not on PATH
+   ai-sdd cheatsheet
    ```
 
 2. **Relay the command's output VERBATIM.** Show exactly what the binary prints. Do not edit,

@@ -27,9 +27,10 @@ it everything explicitly (below). State flows through **artifacts + the run stor
 
 ## Setup
 
+`ai-sdd` is always on your `PATH` (the installer puts it there) — call it directly; there is no build step.
+
 ```sh
-swift build                                          # → .build/debug/ai-sdd (call directly for clean --json)
-.build/debug/ai-sdd start <workspace> --id <slug>   # if no run yet
+ai-sdd start <workspace> --id <slug>   # if no run yet
 ```
 
 **Start from a clean working tree** (everything committed). This is required — see *Scope
@@ -39,7 +40,7 @@ discipline*.
 
 ### 1. Ask the engine what's next
 ```sh
-.build/debug/ai-sdd next <slug> --json
+ai-sdd next <slug> --json
 ```
 `{"status":"done"}` → stop, report. `{"status":"idle"}` → stop, report what it waits on. Otherwise a
 Worker instruction: `slice`, `node`, `task.skill`, `consumes`, `produces`, `checks`, `rework`.
@@ -94,7 +95,7 @@ amendment (a new slice via `ai-sdd-plan`) — don't act on it now.
 
 ### 4. Submit
 ```sh
-.build/debug/ai-sdd submit <slug> --json
+ai-sdd submit <slug> --json
 ```
 - `advanced: true` → continue.
 - `advanced: false` → a required gate failed (`failed` + `checks[].output`). Loop: the next `next`
@@ -144,5 +145,5 @@ scope when each slice starts from a **clean tree**:
 
 At `done`, summarize per slice from the logged input/output: what each worker produced, which gates
 needed rework (and whether any escalated to a human), and the commit made. Each slice's plan and
-review are browsable at `.ai-sdd/features/<slug>/slices/<slice>/`. `.build/debug/ai-sdd status
+review are browsable at `.ai-sdd/features/<slug>/slices/<slice>/`. `ai-sdd status
 <slug>` shows the nested state any time.
